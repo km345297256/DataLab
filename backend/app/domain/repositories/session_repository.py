@@ -1,0 +1,159 @@
+from typing import Optional, Protocol, List
+from datetime import datetime
+from app.domain.models.session import Session, SessionStatus, SessionSummary
+from app.domain.models.file import FileInfo
+from app.domain.models.event import BaseEvent, AgentEvent
+from app.domain.models.execution_environment import ExecutionEnvironmentSnapshot
+from app.domain.models.session_history import SessionHistoryPage
+
+class SessionRepository(Protocol):
+    """Repository interface for Session aggregate"""
+
+    async def save_analysis_checkpoint(self, session_id: str, checkpoint: dict) -> None: ...
+    async def get_analysis_checkpoint(self, session_id: str, checkpoint_id: str) -> dict | None: ...
+    async def claim_analysis_checkpoint(self, session_id: str, checkpoint_id: str,
+                                        user_id: str, client_message_id: str,
+                                        *, expected_source_seq: int) -> dict | None: ...
+    async def is_analysis_checkpoint_current(self, session_id: str, checkpoint_id: str,
+                                             user_id: str, client_message_id: str,
+                                             *, source_seq: int, resume_event_seq: int) -> bool: ...
+    async def clear_analysis_checkpoint(self, session_id: str) -> None: ...
+
+    async def get_history_page(self, session_id: str, *, turns: int = 5,
+                               before_seq: int | None = None) -> SessionHistoryPage:
+        """Load recent whole turns; retain full oversized turns for correctness."""
+        ...
+
+    async def save(self, session: Session) -> None:
+        """Save or update a session"""
+        ...
+
+    async def find_by_id(self, session_id: str) -> Optional[Session]:
+        """Find a session by its ID"""
+        ...
+
+    async def find_by_user_id(self, user_id: str) -> List[Session]:
+        """Find all sessions for a specific user"""
+        ...
+
+    async def find_summaries_by_user_id(self, user_id: str) -> List[SessionSummary]:
+        """Find lightweight session summaries for a user (excludes events/files)"""
+        ...
+
+    async def find_dataset_summaries_by_user_id(
+        self,
+        user_id: str,
+        dataset_id: str,
+    ) -> List[SessionSummary]:
+        """Find sessions that used a specific data-center dataset."""
+        ...
+
+    async def find_by_id_and_user_id(self, session_id: str, user_id: str) -> Optional[Session]:
+        """Find a session by ID and user ID (for authorization)"""
+        ...
+
+    async def find_owned_by_id_and_user_id(self, session_id: str, user_id: str) -> Optional[Session]:
+        """Find a session owned by a specific user"""
+        ...
+
+    async def update_collaborators(self, session_id: str, collaborator_user_ids: List[str]) -> None:
+        """Replace collaborators for a session"""
+        ...
+
+    async def update_title(self, session_id: str, title: str) -> None:
+        """Update the title of a session"""
+        ...
+
+    async def update_title_manually(self, session_id: str, title: str) -> None:
+        """Update and lock a user-selected session title."""
+        ...
+
+    async def update_latest_message(self, session_id: str, message: str, timestamp: datetime) -> None:
+        """Update the latest message of a session"""
+        ...
+
+    async def add_event(self, session_id: str, event: BaseEvent) -> None:
+        """Add an event to a session"""
+        ...
+
+    async def reserve_event_sequence(self, session_id: str, event: BaseEvent) -> int:
+        """Persist and return an immutable producer/payload sequence reservation."""
+        ...
+
+    async def get_events_after(self, session_id: str, seq: int) -> List[AgentEvent]:
+        """Get persisted events whose sequence is greater than ``seq``."""
+        ...
+
+    async def claim_client_message_id(self, session_id: str, client_message_id: str) -> bool:
+        """Atomically claim a client message ID; return false when already claimed."""
+        ...
+
+    async def release_client_message_id(self, session_id: str, client_message_id: str) -> None:
+        """Release a claim when a message failed before it reached the task queue."""
+        ...
+
+    async def get_run_starts(self, session_id: str, *, before_seq: int | None = None, limit: int = 11):
+        """Bounded, newest-first explicit run registrations."""
+        ...
+
+    async def get_run_events(self, session_id: str, run_id: str, *, limit: int = 2001):
+        """Bounded run evidence, excluding private tool payloads."""
+        ...
+
+    async def get_events(self, session_id: str) -> List[AgentEvent]:
+        """Get all events for a session"""
+        ...
+
+    async def add_execution_snapshot(
+        self,
+        snapshot: ExecutionEnvironmentSnapshot,
+    ) -> None:
+        """Persist an immutable, idempotent per-task execution snapshot."""
+        ...
+
+    async def get_execution_snapshots(
+        self,
+        session_id: str,
+    ) -> List[ExecutionEnvironmentSnapshot]:
+        """Return task environments; sessions created before v1 return an empty list."""
+        ...
+
+    async def add_file(self, session_id: str, file_info: FileInfo) -> None:
+        """Add a file to a session"""
+        ...
+
+    async def remove_file(self, session_id: str, file_id: str) -> None:
+        """Remove a file from a session"""
+        ...
+
+    async def get_file_by_path(self, session_id: str, file_path: str) -> Optional[FileInfo]:
+        """Get file by path from a session"""
+        ...
+
+    async def update_status(self, session_id: str, status: SessionStatus) -> None:
+        """Update the status of a session"""
+        ...
+
+    async def update_unread_message_count(self, session_id: str, count: int) -> None:
+        """Update the unread message count of a session"""
+        ...
+
+    async def increment_unread_message_count(self, session_id: str) -> None:
+        """Increment the unread message count of a session"""
+        ...
+
+    async def decrement_unread_message_count(self, session_id: str) -> None:
+        """Decrement the unread message count of a session"""
+        ...
+
+    async def update_shared_status(self, session_id: str, is_shared: bool) -> None:
+        """Update the shared status of a session"""
+        ...
+
+    async def delete(self, session_id: str) -> None:
+        """Delete a session"""
+        ...
+
+    async def get_all(self) -> List[Session]:
+        """Get all sessions"""
+        ...

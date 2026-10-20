@@ -1,0 +1,211 @@
+name: ${COMPOSE_PROJECT_NAME:-datalab}
+
+services:
+  frontend:
+    image: ${FRONTEND_IMAGE:-datalab-frontend:${IMAGE_TAG:-latest}}
+    build:
+      context: ./frontend
+      dockerfile: ${FRONTEND_DOCKERFILE:-Dockerfile}
+      target: production-stage
+    ports:
+      - "${FRONTEND_BIND_HOST:-0.0.0.0}:${FRONTEND_PORT:-10030}:80"
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - datalab-network
+
+  backend:
+    image: ${BACKEND_IMAGE:-datalab-backend:${IMAGE_TAG:-latest}}
+    build:
+      context: .
+      dockerfile: ${BACKEND_DOCKERFILE:-backend/Dockerfile}
+    env_file:
+      - .env
+    environment:
+      AUTH_PROVIDER: none
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DATABASE: ai_dataseek
+      REDIS_HOST: redis
+      MINIO_ENDPOINT: minio:9000
+      MINIO_BUCKET: ai-dataseek-files
+      SANDBOX_ISOLATION: session
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-datalab-sandbox:${IMAGE_TAG:-latest}}
+      SANDBOX_NAME_PREFIX: ${STACK_PREFIX:-datalab}-sandbox
+      SANDBOX_NETWORK: ${STACK_PREFIX:-datalab}-network
+      JUPYTER_IMAGE: ${JUPYTER_IMAGE:-datalab-jupyter:${IMAGE_TAG:-latest}}
+      JUPYTER_NAME_PREFIX: ${STACK_PREFIX:-datalab}-jupyter
+      DATASET_STORAGE_ROOT: /data/datasets
+      DATASET_MANAGED_VOLUME: ${STACK_PREFIX:-datalab}-dataset-data
+      SKILLS_DIR: /app/skills
+      USER_SKILLS_DIR: /data/skills/users
+      ONLYOFFICE_ENABLED: ${ONLYOFFICE_ENABLED:-false}
+      ONLYOFFICE_PUBLIC_ORIGIN: http://office.localhost:${FRONTEND_PORT:-10030}
+      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      ONLYOFFICE_GATEWAY_SECRET: ${ONLYOFFICE_GATEWAY_SECRET:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - dataset-data:/data/datasets
+      - skills-data:/data/skills
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+      jupyter-image:
+        condition: service_completed_successfully
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - datalab-network
+
+  # This one-shot service makes the sandbox image available to the backend.
+  # Analysis sandboxes themselves are created dynamically per session.
+  sandbox-image:
+    image: ${SANDBOX_IMAGE:-datalab-sandbox:${IMAGE_TAG:-latest}}
+    build:
+      context: .
+      dockerfile: ${SANDBOX_DOCKERFILE:-sandbox/Dockerfile}
+    command: ["/bin/true"]
+    restart: "no"
+    networks:
+      - datalab-network
+
+  # One-shot image build. The backend creates one private JupyterLab container
+  # per task, so this service itself never exposes a notebook port.
+  jupyter-image:
+    image: ${JUPYTER_IMAGE:-datalab-jupyter:${IMAGE_TAG:-latest}}
+    build:
+      context: ./jupyter
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    networks:
+      - datalab-network
+
+  # Opt-in experiment only: no user input, data volumes, app network or ports.
+  # This is a readiness gate, not a registered preview plugin. Runs to completion.
+  sqlserver-reader-probe:
+    profiles: [database-readers]
+    image: datalab-sqlserver-reader:2022-cu26
+    platform: linux/amd64
+    build:
+      context: ./deploy/sqlserver-reader
+    network_mode: none
+    read_only: true
+    user: "10001:0"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 4g
+    memswap_limit: 4g
+    cpus: 2
+    pids_limit: 256
+    tmpfs:
+      - /var/opt/mssql:rw,nosuid,nodev,noexec,size=3g,uid=10001,gid=0,mode=0700
+      - /tmp:rw,nosuid,nodev,noexec,size=128m,uid=10001,gid=0,mode=0700
+    logging:
+      driver: json-file
+      options: {max-size: 1m, max-file: "1"}
+    restart: "no"
+
+  mongodb:
+    image: ${MONGODB_IMAGE:-mongo:7.0}
+    volumes:
+      - mongodb-data:/data/db
+    restart: unless-stopped
+    networks:
+      - datalab-network
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7.0}
+    restart: unless-stopped
+    networks:
+      - datalab-network
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+    networks:
+      - datalab-network
+
+  # Opt in with --profile office. No published ports or dataset/host mounts.
+  # This parser must never join the administrator-capable application network.
+  onlyoffice:
+    profiles: [office]
+    image: ${ONLYOFFICE_IMAGE:-onlyoffice/documentserver:9.3.1.2@sha256:290a0a1406a485acc8a6bc20418ac7158c5eec78b4844c218f8f975a9800ddbc}
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
+      JWT_IN_BODY: "true"
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "false"
+      WOPI_ENABLED: "false"
+      METRICS_ENABLED: "false"
+      GENERATE_FONTS: "true"
+    # Docker service discovery still resolves the gateway; unknown DNS names
+    # cannot use the host's public resolver as an exfiltration route.
+    dns: [127.0.0.1]
+    mem_limit: 4g
+    memswap_limit: 4g
+    cpus: 2
+    pids_limit: 512
+    shm_size: 256m
+    # ONLYOFFICE's own converted-copy cache only, never a user dataset mount.
+    # A hard 512 MiB cap is included in the 4 GiB container memory ceiling.
+    tmpfs:
+      - /var/lib/onlyoffice/documentserver/App_Data/cache/files:rw,nosuid,nodev,noexec,size=512m,uid=105,gid=107,mode=0755
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    networks: [onlyoffice-internal]
+
+  office-gateway:
+    profiles: [office]
+    image: datalab-office-gateway:${IMAGE_TAG:-latest}
+    build:
+      context: ./deploy/office-gateway
+    environment:
+      ONLYOFFICE_GATEWAY_SECRET: ${ONLYOFFICE_GATEWAY_SECRET:-}
+    read_only: true
+    user: "101:101"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,uid=101,gid=101,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    dns: [127.0.0.1]
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+    depends_on: [onlyoffice, backend]
+    restart: unless-stopped
+    networks: [datalab-network, onlyoffice-internal]
+
+volumes:
+  mongodb-data:
+    name: ${STACK_PREFIX:-datalab}-mongodb-data
+  minio-data:
+    name: ${STACK_PREFIX:-datalab}-minio-data
+  dataset-data:
+    name: ${STACK_PREFIX:-datalab}-dataset-data
+  skills-data:
+    name: ${STACK_PREFIX:-datalab}-skills-data
+
+networks:
+  datalab-network:
+    name: ${STACK_PREFIX:-datalab}-network
+    driver: bridge
+  onlyoffice-internal:
+    name: ${STACK_PREFIX:-datalab}-onlyoffice-internal
+    driver: bridge
+    internal: true

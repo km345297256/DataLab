@@ -1,0 +1,123 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  closeUnconfirmedSteps,
+  failRunningSteps,
+  findCurrentTurnRunningStep,
+  findCurrentTurnStep,
+  insertTaskExecutionSummary,
+  isLatestAssistantMessage,
+} from '../src/utils/chatTimeline.ts';
+
+const message = (type, content) => ({
+  type,
+  content: {
+    timestamp: 1,
+    ...content,
+  },
+});
+
+test('reused step IDs stay scoped to the latest user turn', () => {
+  const oldStep = { id: '2', description: 'old', status: 'running', tools: [], timestamp: 1 };
+  const newStep = { id: '2', description: 'new', status: 'running', tools: [], timestamp: 2 };
+  const messages = [
+    message('user', { content: 'first request' }),
+    message('step', oldStep),
+    message('assistant', { content: 'Task error: Connection error.' }),
+    message('user', { content: 'continue' }),
+    message('assistant', { content: 'continuing' }),
+    message('step', newStep),
+  ];
+
+  assert.equal(findCurrentTurnStep(messages, '2'), messages[5].content);
+  assert.equal(findCurrentTurnRunningStep(messages), messages[5].content);
+  assert.equal(findCurrentTurnStep(messages, '2').description, 'new');
+});
+
+test('starting a new turn can close stale running steps from older turns', () => {
+  const oldStep = { id: '2', description: 'old', status: 'running', tools: [], timestamp: 1 };
+  const messages = [
+    message('user', { content: 'first request' }),
+    message('step', oldStep),
+    message('assistant', { content: 'Task error: Connection error.' }),
+  ];
+
+  const failed = failRunningSteps(messages, false);
+
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0], messages[1].content);
+  assert.equal(messages[1].content.status, 'failed');
+});
+
+test('an error only fails running steps in the current turn', () => {
+  const oldStep = { id: '2', description: 'old', status: 'running', tools: [], timestamp: 1 };
+  const newStep = { id: '2', description: 'new', status: 'running', tools: [], timestamp: 2 };
+  const messages = [
+    message('user', { content: 'first request' }),
+    message('step', oldStep),
+    message('user', { content: 'continue' }),
+    message('step', newStep),
+  ];
+
+  const failed = failRunningSteps(messages);
+
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0], messages[3].content);
+  assert.equal(messages[1].content.status, 'running');
+  assert.equal(messages[3].content.status, 'failed');
+});
+
+test('a done event closes a running step as unconfirmed, never successful', () => {
+  const oldStep = { id: '1', description: 'old', status: 'running', tools: [], timestamp: 1 };
+  const currentStep = { id: '2', description: 'export', status: 'running', tools: [], timestamp: 2 };
+  const messages = [
+    message('user', { content: 'first request' }),
+    message('step', oldStep),
+    message('user', { content: 'export data' }),
+    message('step', currentStep),
+    message('assistant', { content: 'done' }),
+  ];
+
+  const completed = closeUnconfirmedSteps(messages, 10);
+
+  assert.equal(completed.length, 1);
+  assert.equal(messages[1].content.status, 'running');
+  assert.equal(messages[3].content.status, 'unknown');
+  assert.equal(messages[3].content.ended_at, 10);
+});
+
+test('task summary stores only the rounded elapsed milliseconds', () => {
+  const messages = [
+    message('user', { content: 'analyze', timestamp: 10 }),
+    message('assistant', { content: 'done', timestamp: 12 }),
+  ];
+
+  const summary = insertTaskExecutionSummary(messages, 12, 1234.6);
+
+  assert.deepEqual(summary, { timestamp: 12, duration_ms: 1235, has_steps: false });
+  assert.equal(messages[1].type, 'task-summary');
+  assert.deepEqual(Object.keys(messages[1].content).sort(), ['duration_ms', 'has_steps', 'timestamp']);
+});
+
+test('replayed task summary falls back to event timestamps in milliseconds', () => {
+  const messages = [message('user', { content: 'analyze', timestamp: 10 })];
+
+  const summary = insertTaskExecutionSummary(messages, 13);
+
+  assert.equal(summary.duration_ms, 3000);
+});
+
+test('only the latest assistant message owns task-level actions', () => {
+  const messages = [
+    message('user', { content: 'analyze' }),
+    message('assistant', { content: 'working' }),
+    message('step', { id: '1', description: 'inspect', status: 'completed', tools: [] }),
+    message('assistant', { content: 'final result' }),
+    message('task-summary', { duration_ms: 1200 }),
+  ];
+
+  assert.equal(isLatestAssistantMessage(messages, 1), false);
+  assert.equal(isLatestAssistantMessage(messages, 3), true);
+  assert.equal(isLatestAssistantMessage(messages, 4), false);
+});

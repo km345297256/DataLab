@@ -1,0 +1,51 @@
+{
+  "plugin": "presentations",
+  "version": "1.0.0",
+  "handler": "handler.py",
+  "tools": [
+    {
+      "name": "presentation_inspect",
+      "description": "Inspect a PPTX presentation and report slide dimensions, titles, text, notes, tables, charts and pictures without rendering every slide.",
+      "scopes": ["dataset_fast_path"],
+      "timeout_seconds": 60,
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "operation": {"const": "presentation_inspect"},
+          "summary": {"type": "object"},
+          "artifacts": {"type": "array"},
+          "warnings": {"type": "array"}
+        },
+        "required": ["success", "operation", "summary"],
+        "additionalProperties": true
+      },
+      "execution": {
+        "timeout_seconds": 60,
+        "cancellable": false,
+        "concurrency": "parallel",
+        "effects": ["sandbox_read"],
+        "permissions": []
+      },
+      "presentation": {
+        "kind": "generic",
+        "title": "Presentation inspection"
+      },
+      "parameters": {"type":"object","properties":{"input_path":{"type":"string"}},"required":["input_path"],"additionalProperties":false}
+    },
+    {
+      "name": "pptx_extract_content",
+      "description": "Extract bounded, slide-numbered PPTX titles, text, speaker notes and tables, optionally writing a Markdown or JSON evidence artifact.",
+      "scopes": ["dataset_fast_path"],
+      "timeout_seconds": 90,
+      "parameters": {"type":"object","properties":{"input_path":{"type":"string"},"slides":{"type":"array","items":{"type":"integer","minimum":1},"maxItems":100},"max_chars":{"type":"integer","minimum":1000,"maximum":500000,"default":200000},"output_path":{"type":["string","null"]}},"required":["input_path"],"additionalProperties":false}
+    },
+    {
+      "name": "pptx_render_slides",
+      "description": "Render explicit or representative PPTX slides to PNG through the preinstalled office renderer for visual verification of layouts, charts and maps.",
+      "scopes": ["dataset_fast_path"],
+      "timeout_seconds": 120,
+      "parameters": {"type":"object","properties":{"input_path":{"type":"string"},"slides":{"type":"array","items":{"type":"integer","minimum":1},"maxItems":20},"max_slides":{"type":"integer","minimum":1,"maximum":20,"default":6},"dpi":{"type":"integer","minimum":72,"maximum":240,"default":144},"output_dir":{"type":"string"}},"required":["input_path","output_dir"],"additionalProperties":false}
+    }
+  ]
+}

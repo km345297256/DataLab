@@ -1,0 +1,4 @@
+numpy<2
+gemmi>=0.7,<0.8
+pymatgen>=2025.6,<2026
+spglib>=2.5,<3

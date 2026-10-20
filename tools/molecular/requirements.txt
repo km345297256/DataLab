@@ -1,0 +1,3 @@
+numpy<2
+matplotlib>=3.9,<4
+pymatgen>=2025.6,<2026

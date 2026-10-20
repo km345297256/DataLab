@@ -1,0 +1,6 @@
+[project]
+name = "datalab"
+version = "0.1.0"
+description = "DataLab dataset exploration and analysis platform"
+requires-python = ">=3.12"
+dependencies = []
