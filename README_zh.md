@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/datalab-logo.png" alt="DataLab 标志" width="160" />
+  <img src="frontend/public/datalab-logo.png" alt="DataLab 标志" width="96" />
 </p>
 
 # DataLab

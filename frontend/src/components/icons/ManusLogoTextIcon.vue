@@ -36,6 +36,6 @@ const toCssLength = (value: string | number) => {
 const cssWidth = computed(() => toCssLength(props.width))
 const cssHeight = computed(() => toCssLength(props.height))
 const heightNumber = computed(() => Number(props.height) || 30)
-const iconSize = computed(() => `${heightNumber.value}px`)
+const iconSize = computed(() => `${Math.round(heightNumber.value * 0.8)}px`)
 const fontSize = computed(() => `${Math.max(13, Math.round(heightNumber.value * 0.5))}px`)
 </script>

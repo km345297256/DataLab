@@ -26,7 +26,7 @@
             mobileCatalogOpen ? '' : 'catalog-mobile-header-hidden',
           ]"
         >
-          <img src="/datalab-logo.png" alt="" class="size-5 shrink-0 object-contain" aria-hidden="true" />
+          <img src="/datalab-logo.png" alt="" class="size-4 shrink-0 object-contain" aria-hidden="true" />
           <h1 class="min-w-0 flex-1 truncate text-sm font-semibold">科学数据探查</h1>
         </div>
         <button
@@ -305,7 +305,7 @@
           </div>
           <div v-if="messages.length === 0" class="flex flex-1 flex-col justify-center py-8 sm:py-12">
             <div v-if="dataset" class="max-w-2xl">
-              <img src="/datalab-logo.png" alt="" class="size-11 object-contain" aria-hidden="true" />
+              <img src="/datalab-logo.png" alt="" class="size-9 object-contain" aria-hidden="true" />
               <div class="mt-5 text-xs font-medium text-[#2b7659]">科学数据探查</div>
               <h1 class="mt-2 text-xl font-semibold leading-8 sm:text-2xl">围绕选定数据集开展智能问答</h1>
               <p class="mt-2.5 max-w-xl text-[13px] leading-6 text-[var(--text-secondary)]">DataLab 将围绕当前选定数据集及其完整数据内容开展分析。</p>
