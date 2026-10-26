@@ -30,7 +30,8 @@ requirements 每项仅为 {kind, unit_ids}。kind 取已有五类；unit_ids 只
 同一句可支持多个要求；同一要求内部不能重复单位。宿主会按原来源顺序拼接原文，不添加语义连接词，并分配 R 编号。
 保留完整方法、输入输出契约、否定、范围、条件和默认行为；不得加严、放松或增加来源未定义的义务。将私有输入绑定与可迁移参数放到后续 workflow 设计，不能在此改写原义务。
 source_units 是候选池，不要求全部选入。混合方法和一次性结果的来源，选择完整方法单位而不把本次观测结果变成每次必须复现的值；不得丢掉原方法规定的阈值、默认值或比较方向。不能安全分离时保留原文语境，不能发明替代文字。
-每个完整 source 仍须被至少一条要求引用或放入 excluded_sources，二者不能重叠。excluded_sources 沿用原 source_id/reason/explanation 格式，只可排除实际结果、一次性操作或重复内容。完整来源仍会独立审查，引用一个单位并不证明该来源所有方法已覆盖。"""
+每个完整 source 仍须被至少一条要求引用或放入 excluded_sources，二者不能重叠。普通来源只可排除实际结果、一次性操作或重复内容。
+仅宿主标明 historical=true 的历史来源还可使用 superseded 或 outside_scope。superseded 必须给出 replacement_source_ids，引用时间更晚且实际纳入要求的来源，原文必须确实更正或取代旧方法；不能仅因旧来源时间早就排除。outside_scope 仅用于与当前最终分析任务无关的历史来源并解释依据。其余 reason 不填写替代来源。失败或未完成轮的解释不能当作成功执行证据。完整来源仍会独立审查，引用一个单位并不证明该来源所有方法已覆盖。"""
 
 
 class RequirementFormError(ValueError):
@@ -97,6 +98,7 @@ and explicit line continuations remain a single source block.
 class RequirementFormAdapter:
     units: tuple[SourceUnit, ...]
     source_ids: tuple[str, ...]
+    historical_source_ids: frozenset[str] = frozenset()
 
     @property
     def instruction(self):
@@ -110,6 +112,9 @@ class RequirementFormAdapter:
         exclusion = SourceExclusion.model_json_schema()
         exclusion.pop("title", None)
         exclusion["properties"]["source_id"] = {"type": "string", "enum": list(self.source_ids)}
+        exclusion["properties"]["replacement_source_ids"]["items"] = {"type": "string", "enum": list(self.source_ids)}
+        if not self.historical_source_ids:
+            exclusion["properties"]["reason"]["enum"] = ["observed_result", "one_time_instruction", "duplicate"]
         return {"title": "SourceBoundMethodRequirements", "type": "object", "properties": {
             "requirements": {"type": "array", "minItems": 1, "items": {
                 "type": "object", "properties": {
@@ -176,4 +181,5 @@ def requirement_form_adapter(schema, stage, payload):
         source_ids.append(source["id"])
         for text in _source_units(source["text"]):
             units.append(SourceUnit(f"U{len(units) + 1:03d}", source["id"], text))
-    return RequirementFormAdapter(tuple(units), tuple(source_ids))
+    return RequirementFormAdapter(tuple(units), tuple(source_ids),
+        frozenset(source["id"] for source in sources if source.get("historical") is True))

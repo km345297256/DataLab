@@ -17,7 +17,7 @@ from app.domain.services.tools.spill_projection import projected_tool_artifact, 
 
 JOB_CONTEXT_KEY = "analysis_job_record"
 JOB_ADMITTED_KEY = "analysis_job_admitted"
-JOB_CORE_TOOLS = frozenset({"shell_run", "program_run", "dataset_unpack", "dataset_quicklook"})
+JOB_CORE_TOOLS = frozenset({"shell_run", "program_run", "python_inspect", "dataset_unpack"})
 logger = logging.getLogger(__name__)
 
 

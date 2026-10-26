@@ -61,6 +61,16 @@ def test_helper_is_advertised_only_when_observed_in_actual_runtime():
     assert "RowPartition" in runtime_capabilities_prompt(data)
 
 
+@pytest.mark.parametrize("module", ["datalab_statistics", "datalab_results"])
+def test_result_helpers_require_actual_runtime_observation(module):
+    data = catalog()
+    for value in (None, False, "true"):
+        data["analysis_helpers"] = {module: value}
+        assert module not in runtime_capabilities_prompt(data)
+    data["analysis_helpers"][module] = True
+    assert module in runtime_capabilities_prompt(data)
+
+
 @pytest.mark.asyncio
 async def test_docker_gateway_reads_only_metadata_endpoint():
     from app.infrastructure.external.sandbox.docker_sandbox import DockerSandbox

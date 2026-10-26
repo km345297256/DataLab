@@ -59,11 +59,11 @@ def test_append_is_not_a_repeated_whole_program_draft():
 def test_identical_failures_cannot_evade_guard_by_changing_shell_identity():
     guard = AnalysisProgressGuard()
     for shell in ("one", "two"):
-        item = call("dataset_quicklook", id=shell, input_path="/home/ubuntu/datasets/data.xlsx")
+        item = call("table_profile", id=shell, input_path="/home/ubuntu/datasets/data.xlsx")
         guard.record(item, succeeded=False)
-    repeat = call("dataset_quicklook", id="three", input_path="/home/ubuntu/datasets/data.xlsx")
+    repeat = call("table_profile", id="three", input_path="/home/ubuntu/datasets/data.xlsx")
     assert guard.before_call(repeat)
-    assert guard.before_call(call("dataset_quicklook", input_path="/home/ubuntu/datasets/other.xlsx")) is None
+    assert guard.before_call(call("table_profile", input_path="/home/ubuntu/datasets/other.xlsx")) is None
 
 
 def test_only_unique_confirmed_read_evidence_counts_as_progress():

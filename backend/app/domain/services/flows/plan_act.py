@@ -1327,19 +1327,16 @@ class PlanActFlow(BaseFlow):
                     "不得暴露宿主机真实路径。"
                 ),
                 "include_archive_tree": False,
-                "allow_terminal_quicklook": False,
             },
             "visualization": {
                 "description": "分析当前数据集并生成可视化结果",
                 "instruction": (
-                    "围绕用户明确提出的可视化需求分析数据。对于概览、分布、空间格局、"
-                    "质量和描述统计等快速探查能够覆盖的请求，先且只调用一次通用快速探查；"
-                    "只有用户明确指定其不支持的计算、分组或专业方法时，才执行有针对性的分析和绘图。"
+                    "围绕用户明确提出的可视化需求分析数据。先核实所选文件的结构、字段、单位和取值，"
+                    "根据请求选择已注册的分析工具或自定义 Python，生成有针对性的图表。"
                     "最终用用户使用的语言解释图表所依据的数据、主要发现、方法与限制，"
                     "并返回图表、摘要和可复用数据结果。"
                 ),
                 "include_archive_tree": False,
-                "allow_terminal_quicklook": True,
             },
             "inventory": {
                 "description": "探查数据集文件组织并回答用户问题",
@@ -1349,7 +1346,6 @@ class PlanActFlow(BaseFlow):
                     "除非用户同时明确要求绘图，否则不要生成图表。"
                 ),
                 "include_archive_tree": True,
-                "allow_terminal_quicklook": False,
             },
             "catalog_metadata": {
                 "description": "读取数据集目录元数据并回答用户问题",
@@ -1358,7 +1354,6 @@ class PlanActFlow(BaseFlow):
                     "不读取或推断文件内容，不暴露宿主机真实路径。登记清单不完整时必须回退到挂载数据检查。"
                 ),
                 "include_archive_tree": False,
-                "allow_terminal_quicklook": False,
             },
             "catalog_description": {
                 "description": "根据数据集登记说明回答用途问题",
@@ -1368,7 +1363,6 @@ class PlanActFlow(BaseFlow):
                     "登记说明不足时必须明确说明证据不足，不得根据文件名或领域常识补造用途。"
                 ),
                 "include_archive_tree": False,
-                "allow_terminal_quicklook": False,
             },
             "analysis": {
                 "description": "分析当前数据集并回答用户问题",
@@ -1379,7 +1373,6 @@ class PlanActFlow(BaseFlow):
                     "探查或可视化任务；仅在用户明确要求图表时生成图表。"
                 ),
                 "include_archive_tree": False,
-                "allow_terminal_quicklook": False,
             },
         }[dataset_intent]
         requested_dimensions = PlanActFlow._dataset_requested_dimensions(
@@ -1435,15 +1428,10 @@ class PlanActFlow(BaseFlow):
                     inputs={
                         # This selects a bounded, dataset-only tool scope. It does
                         # not select a workflow: the execution agent chooses whether
-                        # catalog inspection, quicklook, or custom analysis is needed.
+                        # catalog inspection, a registered tool, or custom analysis is needed.
                         "execution_mode": "dataset_fast_path",
                         "dataset_intent": dataset_intent,
                         "requested_dimensions": requested_dimensions,
-                        # Compatibility fields for persisted clients/plans. They
-                        # are deliberately inert: no request may preselect or
-                        # terminally complete through quicklook.
-                        "prefer_quicklook_evidence": False,
-                        "allow_terminal_quicklook": False,
                         "target_files": [item.path for item in target_files],
                         "target_filenames": [
                             PlanActFlow._dataset_file_basename(item)
@@ -1542,7 +1530,6 @@ class PlanActFlow(BaseFlow):
             "visualisation",
             "visualize",
             "visualise",
-            "quicklook",
             "quick look",
             "explore the dataset",
             "dataset overview",
@@ -1848,138 +1835,6 @@ class PlanActFlow(BaseFlow):
         )
         return any(marker in normalized for marker in markers)
 
-    @staticmethod
-    def _is_broad_quicklook_request(user_message: str) -> bool:
-        """Conservatively identify requests satisfied by a generic quicklook.
-
-        The quicklook capability is intentionally terminal only for broad dataset
-        overview/visualization requests. Named analytical dimensions require a
-        model-authored coverage check after the quicklook manifest is available;
-        otherwise a fast response can look successful while silently omitting most
-        of the user's question.
-        """
-        normalized = " ".join((user_message or "").casefold().split())
-        if not normalized:
-            return False
-        if PlanActFlow._message_has_explicit_file_reference(normalized):
-            return False
-        broad_markers = (
-            "数据可视化",
-            "可视化",
-            "快速探查",
-            "数据探查",
-            "数据概览",
-            "画图",
-            "绘图",
-            "visualize",
-            "visualise",
-            "visualization",
-            "visualisation",
-            "quicklook",
-            "quick look",
-            "explore the dataset",
-            "dataset overview",
-        )
-        if not any(marker in normalized for marker in broad_markers):
-            return False
-
-        requested_dimensions = set(
-            PlanActFlow._dataset_requested_dimensions(normalized)
-        )
-        return requested_dimensions <= {"overview", "visualization"}
-
-    @staticmethod
-    def _prefers_quicklook_evidence(user_message: str) -> bool:
-        """Prefer deterministic evidence for recognized, quicklook-covered work.
-
-        Quicklook already profiles file structure, distributions, missingness,
-        raster spatial zones, descriptive statistics, explicit time dimensions,
-        and representative charts. Named transformations and inferential or
-        predictive methods remain custom analysis. Unrecognized requests also
-        remain custom analysis rather than assuming that quicklook can answer an
-        arbitrary calculation. This router describes capability classes only; it
-        never keys on a dataset name or value.
-        """
-        normalized = " ".join((user_message or "").casefold().split())
-        if not normalized:
-            return False
-        if PlanActFlow._message_has_explicit_file_reference(normalized):
-            return False
-        custom_method_markers = (
-            "回归",
-            "相关系数",
-            "显著性",
-            "假设检验",
-            "聚类",
-            "分类模型",
-            "预测",
-            "预报",
-            "插值",
-            "重采样",
-            "裁剪",
-            "分区统计",
-            "主成分",
-            "小波",
-            "傅里叶",
-            "频谱",
-            "熵",
-            "机器学习",
-            "变化检测",
-            "伪彩色",
-            "假彩色",
-            "专题图",
-            "等值线",
-            "热力图",
-            "密度图",
-            "小提琴图",
-            "regression",
-            "correlation coefficient",
-            "significance test",
-            "hypothesis test",
-            "cluster",
-            "classification model",
-            "forecast",
-            "prediction",
-            "interpolation",
-            "resampling",
-            "zonal statistics",
-            "principal component",
-            "fourier",
-            "wavelet",
-            "entropy",
-            "machine learning",
-            "change detection",
-            "pseudocolor",
-            "pseudo-color",
-            "false color",
-            "false colour",
-            "thematic map",
-            "contour plot",
-            "heatmap",
-            "density plot",
-            "violin plot",
-        )
-        if any(marker in normalized for marker in custom_method_markers):
-            return False
-
-        requested_dimensions = set(
-            PlanActFlow._dataset_requested_dimensions(normalized)
-        )
-        # Quicklook is a bounded orientation pass, not an answer engine for
-        # named metrics, variables, time ranges, spatial methods, or claims.
-        # Those requests must compile a targeted analysis program instead.
-        quicklook_evidence_dimensions = {"overview", "visualization"}
-        quicklook_modifier_dimensions = {
-            "methodology",
-            "limitations",
-            "interpretation",
-        }
-        if requested_dimensions == {"question_answering"}:
-            return False
-        return bool(requested_dimensions & quicklook_evidence_dimensions) and (
-            requested_dimensions
-            <= quicklook_evidence_dimensions | quicklook_modifier_dimensions
-        )
 
     @staticmethod
     def _dataset_requested_dimensions(user_message: str) -> list[str]:
@@ -1997,7 +1852,6 @@ class PlanActFlow(BaseFlow):
                     "概览",
                     "概述",
                     "总体情况",
-                    "quicklook",
                     "quick look",
                     "explore the dataset",
                     "dataset overview",

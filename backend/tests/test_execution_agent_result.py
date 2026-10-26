@@ -510,7 +510,6 @@ async def test_explicit_stdout_request_finishes_after_one_successful_shell_batch
     agent.max_iterations = 4
     agent._dataset_fast_path_mode = True
     agent._dataset_intent = ExecutionAgent.DATASET_INTENT_ANALYSIS
-    agent._allow_terminal_quicklook = False
     agent._current_plan = Plan(language="zh")
     agent._current_message = Message(
         message="请执行脚本统计扩展名，并把标准输出反馈在对话中。"

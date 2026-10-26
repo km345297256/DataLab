@@ -513,6 +513,8 @@ async def verify_reference_plan(plan, contract, sources, interfaces, *, generate
         if value.path not in metadata or value.model_dump(exclude={"content"}) != metadata[value.path]:
             raise SkillCreationError("synthetic_reference_implementation", "reference_calculation_unconfirmed")
         validate_script(value)
+        from app.domain.services.skills.skill_creation.interface_contracts import validate_declared_script_interface
+        validate_declared_script_interface(value, interface_map[value.path].get("interface_contract"))
         _validate_reference_column_contract(value.content, interface_map[value.path])
 
     def check_review_shape(value):

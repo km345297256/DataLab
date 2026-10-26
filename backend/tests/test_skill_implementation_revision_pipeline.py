@@ -13,7 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.services.skills.skill_creation.evidence import AnalysisContext
-from app.domain.services.skills.skill_creation.pipeline import SkillCreationPipeline
+from app.domain.services.skills.skill_creation.pipeline import SkillCreationPipeline, method_content
 from app.domain.services.skills.skill_creation.privacy import PrivacyContext, PrivateValue
 from app.domain.services.skills.skill_creation_error import SkillCreationError, SkillRepairReviewRejected
 from test_skill_creation_checkpoint_integration import Gateway, context, response, verifier
@@ -251,6 +251,46 @@ async def test_comment_only_transaction_gets_no_new_vote_and_is_not_cached_as_pr
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["module", "function", "async_function", "class"])
+async def test_docstring_only_transaction_cannot_spend_another_scientific_vote(owner):
+    original_doc = '"""Original helper documentation."""'
+    revised_doc = '"""Revised helper documentation."""'
+    def documentation(payload):
+        script = payload["previous_skill_package"]["scripts"][0]
+        return {"edits": [{"script_path": script["path"], "before": original_doc, "after": revised_doc}]}
+    author, cache, verify = Authoring(["implementation", "accepted"], edit=documentation), MemoryCache(), verifier()
+    if owner == "module":
+        author.scripts[0]["content"] = original_doc + "\n" + author.scripts[0]["content"]
+    else:
+        definition = {"function": "def helper_documentation():", "async_function": "async def helper_documentation():",
+                      "class": "class HelperDocumentation:"}[owner]
+        body = "return 1" if owner != "class" else "value = 1"
+        author.scripts[0]["content"] += f"\n{definition}\n    {original_doc}\n    {body}\n"
+    with pytest.raises(SkillCreationError) as error:
+        await make_pipeline(author, cache, verify).run()
+    assert error.value.code == "method_revision_unchanged"
+    assert len(author.calls("method_review")) == 1
+    verify.assert_not_awaited()
+    saved = await builds(cache).get_revision()
+    assert original_doc in saved.recipe.scripts[0].content
+    assert revised_doc not in saved.recipe.scripts[0].content
+    revised = saved.recipe.model_copy(deep=True)
+    revised.scripts[0].content = revised.scripts[0].content.replace(original_doc, revised_doc)
+    # Existing decision identities deliberately keep their original meaning;
+    # only the authorization to request a new review ignores documentation.
+    assert method_content(saved.recipe) != method_content(revised)
+    assert method_content(saved.recipe, executable_only=True) == method_content(revised, executable_only=True)
+    decisions = adverse_entries(cache)
+    author.edit = None
+    result = await make_pipeline(author, cache, verify).run()
+    assert "'field_1'" in result.recipe.scripts[0].content
+    assert len(author.calls("method_review")) == 2
+    assert len(author.calls("implementation_revision")) == 2
+    assert all(cache.entries[key] == value for key, value in decisions.items())
+    verify.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["unknown_script", "anchor_missing", "duplicate", "overlap", "new_metadata"])
 async def test_invalid_source_transaction_cannot_reach_review_or_replace_latest_negative(failure):
     def invalid(payload):
@@ -331,6 +371,28 @@ async def test_frozen_synthetic_repair_negative_cannot_enter_initial_implementat
     author.scripts[0]["content"] = helper_script()["content"].replace(
         "Path(a.output).write_text", "(Path(a.output) / 'summary.csv').write_text")
     author.scripts[0]["content"] += "\nfield_name = 'field_0'\nstatus_file = 'status.json'\n"
+    # This fixture deliberately reaches execution repair with a directory
+    # contract. Declare that interface before code, instead of inheriting the
+    # unrelated count helper's default single-file fixture declaration.
+    author.base["implementation"]["scripts"][0]["interface_contract"] = {
+        "cli_options": [{"flags": [flag], "required": True, "value_type": "str",
+                         "meaning": "Bind selected input and isolated output paths."}
+                        for flag in ("--input", "--output")],
+        "inputs": [{"argument": "--input", "format": "csv", "columns": ["group", "value"],
+                    "structure": "One group and numeric value per input row.",
+                    "missing_semantics": ["Missing measurements remain missing during aggregation."]}],
+        "output_mode": "directory",
+        "outputs": [
+            {"path": "@output/summary.csv", "format": "csv",
+             "columns": ["group", "mean", "valid_count", "missing_count", "missing_rate"],
+             "structure": "Group summaries preserve counts and missing measurements.",
+             "missing_semantics": ["All missing groups retain a missing mean."]},
+            {"path": "@output/status.json", "format": "json",
+             "shape": {"type": "object", "properties": {"status": {"type": "string"}}},
+             "structure": "A status field reports whether computation completed.",
+             "missing_semantics": ["Invalid values do not produce a successful status."]},
+        ],
+    }
     frozen = plan_payload()
     frozen["scripts"][0]["script_path"] = path
     frozen = SyntheticValidationPlan.model_validate(frozen).model_dump(mode="json")

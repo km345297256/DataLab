@@ -56,16 +56,33 @@ def _unique(values, label):
 class RowPartition:
     """Freeze original IDs and account for mutually exclusive exclusions.
 
+    Keep the audit object in its own variable. ``exclude`` changes that object
+    in place and returns None; it is not a chainable constructor. ``verify``
+    returns an evidence dict, not retained IDs. Keep retained IDs separately:
+
     audit = RowPartition(original.index)
     audit.exclude('missing_response', missing.index)
     audit.exclude('nonpositive_response', nonpositive_after_missing.index)
-    evidence = audit.verify(accepted.index)
+    retained_ids = accepted.index
+    evidence = audit.verify(retained_ids)
+
+    Do not assign ``audit = RowPartition(ids).exclude(...)`` or pass the
+    verification evidence as ``row_ids`` to another helper.
     """
     def __init__(self, original_ids):
         _, self._original = _unique(original_ids, "original_ids")
         self._excluded = {}
 
-    def exclude(self, reason: str, row_ids):
+    def exclude(self, reason: str, row_ids) -> None:
+        """Record a disjoint set of excluded original IDs in this audit.
+
+        Returns
+        -------
+        None
+            Mutates the existing audit in place; no audit object or IDs are
+            returned. Use ``audit = RowPartition(original_ids)`` followed by
+            ``audit.exclude('missing', missing_ids)`` as a separate statement.
+        """
         if not isinstance(reason, str) or not reason.strip() or reason in self._excluded:
             raise AnalysisInvariantError("Each exclusion requires a new, nonempty reason")
         _, ids = _unique(row_ids, "excluded_ids")
@@ -75,6 +92,18 @@ class RowPartition:
         self._excluded[reason] = ids
 
     def verify(self, accepted_ids) -> dict:
+        """Check that accepted rows plus disjoint exclusions cover originals.
+
+        Returns
+        -------
+        dict
+            An evidence dict, not a list of accepted/retained IDs. Fields are
+            ``passed`` (bool), ``original_rows`` and ``accepted_rows`` (int),
+            and ``excluded_rows`` (dict mapping reason to count). Retain your
+            ``accepted_ids`` separately: ``evidence = audit.verify(retained_ids)``.
+            Read evidence with dictionary indexing, e.g. ``evidence['passed']``.
+            A failed partition raises AnalysisInvariantError, not passed=False.
+        """
         _, accepted = _unique(accepted_ids, "accepted_ids")
         excluded = frozenset().union(*self._excluded.values())
         if accepted & excluded or accepted | excluded != self._original:
@@ -90,6 +119,23 @@ def aligned_groups(values, *, row_ids, labels) -> dict:
     Series inputs must already have the identical ordered index; silently
     aligning a fresh RangeIndex to a filtered index is rejected. Missing group
     labels must be explicitly accounted for before this check, never dropped.
+
+    If a ``row_id`` column defines identity, set that index before fitting or
+    constructing indexed inputs: ``indexed = retained.set_index('row_id')``;
+    then use ``indexed.index`` as row_ids and Series from that indexed frame.
+    Alternatively, explicitly pass ``values.to_numpy()`` and
+    ``labels.to_numpy()`` in the same original retained order with those row IDs.
+    Unlabeled NumPy arrays are positional; row_ids must still be the actual
+    original IDs. Do not invent a new range or pass RowPartition.verify() output.
+
+    Returns
+    -------
+    dict
+        A plain dictionary mapping each group label to a NumPy ndarray of its
+        values, preserving observation order within each group. Use
+        ``groups['control']`` to select a group. The result is neither a
+        DataFrame nor an array of retained IDs. Series values and Series labels
+        must both have exactly the same ordered index as row_ids.
     """
     import numpy as np
     import pandas as pd
@@ -182,7 +228,17 @@ class StageCache:
         self.root = _safe_directory(root)
 
     def run(self, name, *, input_versions, parameters, contract, produce, validate,
-            source_files=(), upstream=None):
+            source_files=(), upstream=None) -> StageResult:
+        """Compute or reuse a validated stage with explicitly bound inputs.
+
+        Returns
+        -------
+        StageResult
+            A result object, not a dict. Read ``result.outputs`` (named Paths),
+            ``result.evidence`` (validation dict), ``result.reused`` (bool),
+            and ``result.identity`` (str). Use ``result.dependency()`` for the
+            checked upstream dependency dict; this does not publish files.
+        """
         upstream_checks = ()
         if upstream is not None:
             if not isinstance(upstream, Mapping) or any(

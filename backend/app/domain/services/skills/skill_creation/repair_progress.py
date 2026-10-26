@@ -30,6 +30,7 @@ def privacy_failure_snapshot(value, privacy: PrivacyContext) -> PrivacyFailureSn
     privacy scanner remains the sole authority for whether a match exists.
     """
     document = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+    privacy = privacy.document_scope(document)
     pointer_locations = privacy._amendment_pointer_locations(document)
     problems = Counter()
 

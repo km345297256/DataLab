@@ -17,11 +17,12 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool, Strict
 from app.domain.services.skills.method_contract import MethodContract
 from app.domain.services.skills.skill_creation_error import SkillPackageValidationError
 from app.domain.services.skills.skill_validation_arguments import input_output_reference_alias, validate_arguments
+from app.domain.services.skills.skill_creation.interface_contracts import ScriptInterfaceContract, validate_declared_validation_case
+from app.domain.services.skills.skill_validation_paths import VALIDATION_FILENAME as _FILE, validation_relative_path as _relative_path
 
 
 Scalar = StrictStr | StrictInt | StrictFloat | StrictBool | None
 ExitExpectation = Annotated[StrictInt, Field(ge=0, le=255)] | Literal["nonzero"]
-_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\Z")
 _SCRIPT = r"^scripts/[a-z][a-z0-9_-]{0,47}\.py$"
 _INPUT_REF = re.compile(r"\{input:([A-Za-z0-9][A-Za-z0-9_.-]{0,95})\}")
 _FLAG = re.compile(r"--[a-z][a-z0-9-]*\Z")
@@ -29,12 +30,6 @@ _FLAG = re.compile(r"--[a-z][a-z0-9-]*\Z")
 
 class ValidationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-
-
-def _relative_path(value: str) -> str:
-    if not value or any(not _FILE.fullmatch(part) or part in {".", ".."} for part in value.split("/")):
-        raise ValueError("Validation paths must be safe relative filenames")
-    return value
 
 
 class SyntheticCSVInput(ValidationModel):
@@ -301,6 +296,7 @@ class ScriptValidationInterface(ValidationModel):
         "Declared output files and structure, including CSV column names. CSV headers describe the interface; "
         "they are not data rows and cannot be tested by matching column names as csv_rows cell values."))
     validation_cases: list[dict[str, str]] = Field(default_factory=list)
+    interface_contract: ScriptInterfaceContract | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("arguments")
     @classmethod
@@ -401,6 +397,7 @@ def validate_validation_plan(plan: SyntheticValidationPlan, contract: MethodCont
     for script in plan.scripts:
         interface = expected_scripts[script.script_path]
         for case in script.cases:
+            validate_declared_validation_case(interface, case)
             if len(set(case.requirement_ids)) != len(case.requirement_ids) or not set(case.requirement_ids) <= requirements.keys():
                 raise SkillPackageValidationError("invalid_validation_requirements")
             linked_sources = {source for ref in case.requirement_ids for source in requirements[ref].source_ids}

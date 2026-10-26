@@ -291,58 +291,6 @@ async def test_dataset_unpack_uses_one_quoted_bounded_command():
     )
 
 
-async def test_dataset_quicklook_uses_one_quoted_bounded_command():
-    sandbox = _Sandbox(returncode=0)
-    toolkit = ShellToolkit(sandbox)
-    quicklook = toolkit.get_tool("dataset_quicklook")
-    assert quicklook is not None
-
-    result = await quicklook._arun(
-        id="quicklook-1",
-        input_path="/home/ubuntu/datasets/demo/data; touch nope.zip",
-        output_dir="/home/ubuntu/output/quick look",
-        max_plots=99,
-        timeout_seconds=500,
-    )
-
-    assert result.success is True
-    assert sandbox.exec_dir == "/home/ubuntu"
-    assert sandbox.wait_seconds == 120
-    assert sandbox.command == (
-        "ai-dataseek-quicklook '/home/ubuntu/datasets/demo/data; touch nope.zip' "
-        "--output '/home/ubuntu/output/quick look' --max-plots 4"
-    )
-
-
-async def test_dataset_quicklook_requests_native_formats_without_custom_scripts():
-    sandbox = _Sandbox(returncode=0)
-    quicklook = ShellToolkit(sandbox).get_tool("dataset_quicklook")
-    result = await quicklook._arun(
-        id="native-formats", input_path="/home/ubuntu/datasets/table.xlsx",
-        output_dir="/home/ubuntu/output/plots", chart_formats=["svg", "png", "svg"],
-    )
-    assert result.success is True
-    assert sandbox.command == (
-        "ai-dataseek-quicklook /home/ubuntu/datasets/table.xlsx "
-        "--output /home/ubuntu/output/plots --max-plots 4 --chart-formats svg png"
-    )
-    schema = quicklook.args_schema.model_json_schema()
-    alternatives = schema["properties"]["chart_formats"]["anyOf"]
-    assert next(item for item in alternatives if item["type"] == "array")["items"]["enum"] == ["png", "svg"]
-
-
-@pytest.mark.parametrize("formats", [[], ["pdf"], ["svg; touch nope"], "svg", [["png"]]])
-async def test_dataset_quicklook_rejects_invalid_formats_before_launch(formats):
-    sandbox = _Sandbox(returncode=0)
-    result = await ShellToolkit(sandbox).get_tool("dataset_quicklook")._arun(
-        id="invalid-format", input_path="/home/ubuntu/datasets/table.csv",
-        output_dir="/home/ubuntu/output/plots", chart_formats=formats,
-    )
-    assert result.success is False
-    assert result.data == {"reason": "tool_arguments_invalid", "execution_started": False}
-    assert sandbox.command is None
-
-
 async def test_scientific_tools_build_one_quoted_bounded_command():
     sandbox = _Sandbox(returncode=0)
     toolkit = ShellToolkit(sandbox)

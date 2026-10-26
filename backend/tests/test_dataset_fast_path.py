@@ -57,9 +57,8 @@ def test_visualization_request_uses_chinese_one_step_fast_path():
     assert plan.steps[0].description == "分析当前数据集并生成可视化结果"
     assert plan.steps[0].inputs["execution_mode"] == "dataset_fast_path"
     assert plan.steps[0].inputs["dataset_intent"] == "visualization"
-    assert plan.steps[0].inputs["prefer_quicklook_evidence"] is False
+    assert not any("quicklook" in key for key in plan.steps[0].inputs)
     assert plan.steps[0].inputs["require_model_answer"] is True
-    assert plan.steps[0].inputs["allow_terminal_quicklook"] is False
     assert plan.steps[0].inputs["user_question"] == message.message
     assert plan.steps[0].inputs["require_evidence"] is True
     assert plan.steps[0].inputs["require_method_and_limitations"] is True
@@ -86,8 +85,7 @@ def test_named_jpeg_visualization_routes_to_exact_file_preview():
     assert step.inputs["requested_dimensions"] == ["file_preview"]
     assert step.inputs["target_file"] == logical_path
     assert step.inputs["target_filename"] == "YTRB_QS_FP_Qal_01.jpg"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert step.inputs["artifact_policy"] == "capability"
     assert step.inputs["require_downloadable_result"] is True
     assert step.inputs["require_model_answer"] is False
@@ -107,11 +105,10 @@ def test_controller_target_file_constrains_visualization_without_keyword_routing
     assert step.inputs["dataset_intent"] == "visualization"
     assert step.inputs["target_file"] == filename
     assert step.inputs["target_filename"] == filename
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
-def test_two_named_files_use_joint_target_scope_instead_of_dataset_quicklook():
+def test_two_named_files_use_joint_target_scope():
     first = "root/bcpr_CMFD_V0200_B-02_03hr_010deg_195109.nc"
     second = "root/rain_CMFD_V0200_B-02_03hr_010deg_195106.nc"
     question = (
@@ -132,8 +129,7 @@ def test_two_named_files_use_joint_target_scope_instead_of_dataset_quicklook():
         "rain_CMFD_V0200_B-02_03hr_010deg_195106.nc",
     ]
     assert "target_file" not in step.inputs
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert plan.message == "正在联合分析指定的 2 个文件…"
 
 
@@ -147,8 +143,7 @@ def test_multiple_controller_targets_resolve_by_unique_inventory_suffix():
     )).steps[0]
 
     assert step.inputs["target_files"] == [first, second]
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
 @pytest.mark.parametrize(
@@ -183,7 +178,7 @@ def test_named_image_analysis_does_not_collapse_to_file_preview():
 
     assert step.inputs["dataset_intent"] == "visualization"
     assert step.inputs["target_file"] == "rasters/image.tif"
-    assert step.inputs["prefer_quicklook_evidence"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
 @pytest.mark.parametrize(
@@ -206,8 +201,7 @@ def test_previewable_inventory_files_match_case_insensitively(
     assert step.inputs["dataset_intent"] == "file_preview"
     assert step.inputs["target_file"] == path
     assert step.inputs["target_filename"] == filename
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
 def test_directory_qualified_reference_disambiguates_duplicate_basenames():
@@ -229,7 +223,7 @@ def test_directory_qualified_reference_disambiguates_duplicate_basenames():
     assert step.inputs["target_filename"] == "Scene.JPG"
 
 
-def test_ambiguous_duplicate_basename_never_uses_whole_dataset_quicklook():
+def test_ambiguous_duplicate_basename_keeps_unresolved_target_scope():
     step = _flow()._create_dataset_fast_path_plan(
         Message(
             message="可视化 Scene.JPG",
@@ -244,11 +238,10 @@ def test_ambiguous_duplicate_basename_never_uses_whole_dataset_quicklook():
 
     assert step.inputs["dataset_intent"] == "visualization"
     assert "target_file" not in step.inputs
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
-def test_demonstrative_file_visualization_never_preselects_dataset_quicklook():
+def test_demonstrative_file_visualization_never_preselects_an_analysis_tool():
     step = _flow()._create_dataset_fast_path_plan(
         Message(
             message="这个文件能简单可视化一下吗",
@@ -258,11 +251,10 @@ def test_demonstrative_file_visualization_never_preselects_dataset_quicklook():
 
     assert step.inputs["dataset_intent"] == "visualization"
     assert step.inputs["target_files"] == []
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
-def test_named_tabular_target_uses_targeted_visualization_not_whole_dataset_quicklook():
+def test_named_tabular_target_uses_targeted_visualization():
     step = _flow()._create_dataset_fast_path_plan(
         Message(
             message="可视化 tables/observations.csv",
@@ -273,11 +265,10 @@ def test_named_tabular_target_uses_targeted_visualization_not_whole_dataset_quic
     assert step.inputs["dataset_intent"] == "visualization"
     assert step.inputs["target_file"] == "tables/observations.csv"
     assert step.inputs["target_filename"] == "observations.csv"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
-def test_file_reference_allows_chinese_action_suffix_without_quicklook():
+def test_file_reference_allows_chinese_action_suffix():
     path = "data/bcpr_195701.nc"
     step = _flow()._create_dataset_fast_path_plan(
         Message(
@@ -287,19 +278,17 @@ def test_file_reference_allows_chinese_action_suffix_without_quicklook():
     ).steps[0]
 
     assert step.inputs["target_file"] == path
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
-def test_unresolved_explicit_filename_is_not_a_broad_quicklook_request():
+def test_unresolved_explicit_filename_preserves_targeted_request():
     step = _flow()._create_dataset_fast_path_plan(
         Message(message="请可视化 missing-image.jpg", datasets=[_dataset()])
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == "visualization"
     assert "target_file" not in step.inputs
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
 def test_file_inventory_request_requires_archive_tree_without_visualization():
@@ -312,7 +301,7 @@ def test_file_inventory_request_requires_archive_tree_without_visualization():
     assert step.inputs["execution_mode"] == "dataset_fast_path"
     assert step.inputs["dataset_intent"] == "inventory"
     assert step.inputs["include_archive_tree"] is True
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert "压缩包节点" in step.inputs["execution_guidance"]
     assert "解压后的目录层级" in step.inputs["execution_guidance"]
 
@@ -328,8 +317,7 @@ def test_custom_dataset_question_remains_model_assisted_analysis():
     assert step.inputs["dataset_intent"] == "analysis"
     assert step.inputs["require_model_answer"] is True
     assert step.inputs["include_archive_tree"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
-    assert step.inputs["prefer_quicklook_evidence"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert step.inputs["user_question"] == "哪一年降水量最高，可能说明了什么？"
     assert "完整保留并回答用户的具体问题" in step.inputs["execution_guidance"]
     assert "可核验的数据证据" in step.inputs["execution_guidance"]
@@ -350,7 +338,7 @@ def test_custom_dataset_question_remains_model_assisted_analysis():
         ("Is this dataset suitable for regional research?", {"applicability"}),
     ],
 )
-def test_general_single_dataset_analysis_prefers_quicklook_evidence(
+def test_general_single_dataset_analysis_preserves_requested_dimensions(
     question,
     expected_dimensions,
 ):
@@ -359,8 +347,7 @@ def test_general_single_dataset_analysis_prefers_quicklook_evidence(
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == "analysis"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert expected_dimensions <= set(step.inputs["requested_dimensions"])
 
 
@@ -383,11 +370,10 @@ def test_specialized_or_unrecognized_analysis_keeps_custom_path(question):
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == "analysis"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
-def test_general_analysis_with_multiple_datasets_does_not_force_single_input_quicklook():
+def test_general_analysis_with_multiple_datasets_preserves_joint_scope():
     step = _flow()._create_dataset_fast_path_plan(
         Message(
             message="综合评价这些数据集的科学价值和用途",
@@ -396,8 +382,7 @@ def test_general_analysis_with_multiple_datasets_does_not_force_single_input_qui
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == "analysis"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
 @pytest.mark.parametrize(
@@ -416,8 +401,7 @@ def test_pseudocolor_requests_are_recognized_as_specific_visualization(question)
 
     assert step.inputs["dataset_intent"] == "visualization"
     assert "visualization" in step.inputs["requested_dimensions"]
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
 @pytest.mark.parametrize(
@@ -460,8 +444,7 @@ def test_catalog_description_questions_use_model_free_intent(
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == "catalog_description"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert step.inputs["require_model_answer"] is False
     assert step.inputs["artifact_policy"] == "optional"
     assert expected_dimensions <= set(step.inputs["requested_dimensions"])
@@ -532,8 +515,7 @@ def test_specific_multi_part_visualization_requires_evidence_coverage_model_turn
 
     step = plan.steps[0]
     assert step.inputs["dataset_intent"] == "visualization"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert step.inputs["user_question"] == question
     assert step.inputs["requested_dimensions"] == [
         "spatial_pattern",
@@ -554,13 +536,12 @@ def test_specific_multi_part_visualization_requires_evidence_coverage_model_turn
         "Visualize the dataset",
     ],
 )
-def test_broad_quicklook_requests_leave_tool_selection_to_execution_agent(question):
+def test_broad_overview_requests_leave_tool_selection_to_execution_agent(question):
     plan = _flow()._create_dataset_fast_path_plan(
         Message(message=question, datasets=[_dataset()])
     )
 
-    assert plan.steps[0].inputs["allow_terminal_quicklook"] is False
-    assert plan.steps[0].inputs["prefer_quicklook_evidence"] is False
+    assert not any("quicklook" in key for key in plan.steps[0].inputs)
 
 
 @pytest.mark.parametrize(
@@ -577,12 +558,11 @@ def test_named_specialized_methods_keep_the_custom_analysis_path(question):
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == "visualization"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert step.inputs["artifact_policy"] == "required"
 
 
-def test_multiple_datasets_do_not_force_a_single_input_quicklook():
+def test_multiple_datasets_leave_analysis_tool_selection_to_execution_agent():
     step = _flow()._create_dataset_fast_path_plan(
         Message(
             message="比较两个数据集的空间分布并绘图",
@@ -591,8 +571,7 @@ def test_multiple_datasets_do_not_force_a_single_input_quicklook():
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == "visualization"
-    assert step.inputs["prefer_quicklook_evidence"] is False
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
 
 
 @pytest.mark.parametrize(
@@ -613,7 +592,7 @@ def test_four_simplified_questions_route_to_their_real_analysis_contract(
     ).steps[0]
 
     assert step.inputs["dataset_intent"] == intent
-    assert step.inputs["allow_terminal_quicklook"] is False
+    assert not any("quicklook" in key for key in step.inputs)
     assert step.inputs["user_question"] == question
     assert step.inputs["requested_dimensions"]
 

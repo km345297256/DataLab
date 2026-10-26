@@ -114,6 +114,56 @@ def test_python_ast_exemptions_cannot_hide_literal_credentials(code):
     assert any(issue.category == "credential" for issue in context.scan_document({"scripts": [{"content": code}]}))
 
 
+@pytest.mark.parametrize("code", [
+    "def normalize(token: str) -> str:\n    return token\n",
+    "async def normalize(token: typing.Optional[str]):\n    return token\n",
+    "def normalize(token: str | None, /, *, session_id: SessionIdentifier):\n    return token\n",
+    "def normalize(*token: str, **credential: object):\n    return token\n",
+    "def normalize(token: list[str], other='public-default'):\n    return token\n",
+    "class Parser:\n    def normalize(self, token: (str)):\n        return token\n",
+    "说明 = '科学'\ndef normalize(token: Callable[[str], str]):\n    return token\n",
+])
+def test_pure_function_parameter_type_annotations_are_not_credentials(code):
+    document = {"scripts": [{"content": code}]}
+    context = PrivacyContext()
+    assert context.scan_document(document) == []
+    assert context.redact_document(document) == document
+
+
+@pytest.mark.parametrize("code", [
+    "def normalize(token: str = 'literal-sensitive-value'):\n    return token\n",
+    "def normalize(*, token: str = 'literal-sensitive-value'):\n    return token\n",
+    "def normalize(token: 'literal-sensitive-value'):\n    return token\n",
+    "def normalize(token: Annotated[str, 'literal-sensitive-value']):\n    return token\n",
+    "def normalize(token: factory('literal-sensitive-value')):\n    return token\n",
+    "token: str = 'literal-sensitive-value'\n",
+    "token: secret",
+    "def normalize(token: str):\n    # token: literal-sensitive-value\n    return token\n",
+    "def normalize(token: list[\n    # token: literal-sensitive-value\n    str\n]):\n    return token\n",
+    "def normalize(token: str):\n    return token\ninvalid syntax\n",
+])
+def test_annotation_semantics_never_exempt_defaults_comments_literals_or_ambiguous_text(code):
+    assert any(issue.category == "credential" for issue in
+               PrivacyContext().scan_document({"scripts": [{"content": code}]}))
+
+
+@pytest.mark.parametrize("field", ["description", "content", "notes"])
+def test_plain_credential_text_keeps_detection_even_when_it_parses_as_an_annotation(field):
+    assert any(issue.category == "credential" for issue in PrivacyContext().scan_document({field: "token: secret"}))
+
+
+@pytest.mark.parametrize("category", ["identity", "host_path", "source_filename", "credential", "url"])
+def test_known_private_values_inside_type_annotations_are_always_scanned(category):
+    context = PrivacyContext((PrivateValue("PrivateType", category),))
+    issues = context.scan_document({"content": "def normalize(token: PrivateType):\n    return token\n"})
+    assert any(issue.category == category for issue in issues)
+
+
+def test_strong_secret_markers_in_annotated_function_body_remain_scanned():
+    code = "def normalize(token: str):\n    return 'sk-syntheticprivatevalue123'\n"
+    assert any(issue.category == "credential" for issue in PrivacyContext().scan_document({"content": code}))
+
+
 def test_known_values_always_override_runtime_reference_or_placeholder_grammar():
     context = PrivacyContext((PrivateValue("args.token", "credential"), PrivateValue("{auth_token}", "credential")))
     issues = context.scan_document({"scripts": [{"content": "token = args.token"}], "goal": "token={auth_token}"})

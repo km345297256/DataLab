@@ -53,33 +53,63 @@ def isolated_analysis_workspace(tmp_path_factory, monkeypatch):
     return root
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture
 def sandbox_api_server():
-    """Run the Sandbox API in-process so tests need no external service."""
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=TEST_PORT, log_level="error"))
-    thread = threading.Thread(target=server.run, daemon=True)
+    """Own a real HTTP server only for the test that needs it.
+
+    Reader unit tests deliberately patch shared stdlib functions such as
+    time.monotonic and socket.socket. A session-wide server races those patches:
+    its event loop can consume a finite fake clock and exit between HTTP tests.
+    Stop/join this server before any unrelated test installs its patches.
+    """
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=TEST_PORT,
+                                           log_level="error", loop="asyncio"))
+    errors = []
+
+    def run():
+        try:
+            server.run()
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=run, daemon=True)
     thread.start()
 
     deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        with socket.socket() as probe:
-            if probe.connect_ex(("127.0.0.1", TEST_PORT)) == 0:
+    try:
+        while time.monotonic() < deadline:
+            if not thread.is_alive():
+                raise RuntimeError("Sandbox test server exited during startup") from (errors[0] if errors else None)
+            if server.started:
                 break
-        time.sleep(0.05)
-    else:
+            time.sleep(0.01)
+        else:
+            raise RuntimeError("Sandbox test server did not start")
+
+        yield
+        if not thread.is_alive():
+            raise RuntimeError("Sandbox test server exited during the HTTP test") from (errors[0] if errors else None)
+    finally:
         server.should_exit = True
-        thread.join(timeout=1)
-        raise RuntimeError("Sandbox test server did not start")
+        thread.join(timeout=5)
+        if thread.is_alive():
+            raise RuntimeError("Sandbox test server did not stop after the HTTP test")
+        if errors:
+            raise RuntimeError("Sandbox test server failed") from errors[0]
 
-    yield
 
-    server.should_exit = True
-    thread.join(timeout=5)
+class _BoundedTestSession(requests.Session):
+    def request(self, method, url, **kwargs):
+        # Keep explicit per-case deadlines, but make a dead server a test
+        # failure instead of an indefinitely blocked suite.
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = (3, 30)
+        return super().request(method, url, **kwargs)
 
 @pytest.fixture
-def client():
+def client(sandbox_api_server):
     """Create a session targeting the managed in-process test server."""
-    with requests.Session() as session:
+    with _BoundedTestSession() as session:
         yield session
 
 

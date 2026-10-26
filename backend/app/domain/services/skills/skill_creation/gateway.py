@@ -138,8 +138,8 @@ def _review_schema(schema, stage):
 
 
 def _workflow_schema(schema, stage):
-    from .workflow_authoring import WorkflowDraft
-    return stage == "workflow" and schema is WorkflowDraft
+    from .workflow_authoring import WorkflowDraft, WorkflowDraftV2
+    return stage == "workflow" and schema in {WorkflowDraft, WorkflowDraftV2}
 
 
 def _field_response_schema(schema, stage, repair):
@@ -418,7 +418,7 @@ class SynthesisGateway:
                     stage, proof.original_response_sha256, len(proof.edits))
         return value
 
-    def _validate(self, message, schema, stage, check, contract, field_repair=None, source_adapter=None, privacy=None, review_form=None, requirement_form=None, source_repair=None):
+    def _validate(self, message, schema, stage, check, contract, field_repair=None, source_adapter=None, privacy=None, review_form=None, requirement_form=None, source_repair=None, fixture_context=None):
         privacy = privacy or self.privacy
         authored_requirements = None
         retained_candidate = privacy.redact_document(field_repair[0]) if field_repair is not None else None
@@ -563,10 +563,13 @@ class SynthesisGateway:
         if isinstance(value, MethodContract):
             value = normalize_contract_exclusions(value)
         if stage == "workflow" and field_repair is None:
-            from .workflow_authoring import WorkflowDraft
-            if schema is WorkflowDraft:
+            if _workflow_schema(schema, stage):
                 from .workflow_outputs import normalize_generated_output_names
                 value = normalize_generated_output_names(value, privacy)
+        if fixture_context is not None:
+            from .fixture_names import normalize_initial_fixture_names
+            value = normalize_initial_fixture_names(value, privacy, contract=contract,
+                sources=fixture_context["sources"], interfaces=fixture_context["script_interfaces"])
         if check is None:
             return value
         negative_review_code = _negative_review_code(value, stage)
@@ -606,8 +609,7 @@ class SynthesisGateway:
                             "每条要求至少有一个指针指向该 issue.allowed_sections 中真正落实此要求的内容。"
                             "待生成脚本也必须对应已声明顺序和 requirement_ids，只有正文方法校验可暂缓。"
                             "修改指针以引用已存在的真实实现，或补齐实际缺失的方法；不得删除要求、降低验证或仅堆砌术语。")
-                from .workflow_authoring import WorkflowDraft
-                if schema is WorkflowDraft:
+                if _workflow_schema(schema, stage):
                     hint = ("在实际落实要求的内容项上修正 requirement_ids，仅引用 method_contract 中的编号。"
                             "方法要求对应 steps 或脚本，输出要求对应 outputs，验证对应 validation_cases 或 steps，"
                             "输入对应 parameters/data_requirements/steps，约束对应 steps/limitations/parameters/data_requirements。"
@@ -679,6 +681,11 @@ class SynthesisGateway:
     async def generate(self, schema, stage, instruction, payload, check=None, *, contract=None):
         self.stage = stage
         privacy = generation_privacy(self.privacy, schema, stage, payload)
+        # Scientific oracle revision reuses this stage name. Only the exact
+        # initial host payload authorizes fixture-name allocation; prior plans,
+        # reviews, reference receipts and coverage amendments stay immutable.
+        fixture_context = (payload if schema is SyntheticValidationPlan and stage == "synthetic_validation_plan"
+            and contract is not None and set(payload) == {"method_contract", "sources", "script_interfaces"} else None)
         from .source_response import SOURCE_INSTRUCTION, source_response_adapter, source_authoring_capabilities
         from .source_repair import SOURCE_REPAIR_INSTRUCTION, source_repair_response_schema
         from .review_form import review_form_adapter
@@ -741,7 +748,7 @@ class SynthesisGateway:
             def validate(message):
                 nonlocal validation_failure
                 try:
-                    return self._validate(message, schema, stage, check, contract, field_repair, source_adapter, privacy, review_form, requirement_form, source_repair)
+                    return self._validate(message, schema, stage, check, contract, field_repair, source_adapter, privacy, review_form, requirement_form, source_repair, fixture_context)
                 except Exception as exc:
                     # The production adapter runs this callback inside
                     # ainvoke. Keep host validation defects distinguishable
@@ -800,7 +807,7 @@ class SynthesisGateway:
                         model_provider=self.overrides.get("model_provider") or self.settings.model_provider,
                         model_name=self.overrides.get("model_name") or self.settings.model_name)
                 result = validate(response)
-                await self._progress(stage, attempt, "passed")
+                await self._progress(stage, attempt, "response_received" if stage == "method_review" else "passed")
                 return result
             except (RepairRequired, ModelIncompleteResponseError, ModelEmptyResponseError) as exc:
                 truncated = isinstance(exc, ModelIncompleteResponseError) and getattr(exc, "finish_reason", None) in {

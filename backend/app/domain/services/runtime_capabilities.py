@@ -40,11 +40,27 @@ def runtime_capabilities_prompt(data: object) -> str:
         if isinstance(helpers, dict) and helpers.get("datalab_analysis") is True:
             lines.append("- datalab_analysis: available; RowPartition for row conservation, "
                          "aligned_groups for index alignment, StageCache for validated derived-stage reuse")
+        if isinstance(helpers, dict) and helpers.get("datalab_statistics") is True:
+            lines.append("- datalab_statistics: available (optional); executable checks for nested OLS F tests, "
+                         "linear contrasts and grouped model-residual Levene tests. Inspect the chosen "
+                         "function's actual signature and supported assumptions with python_inspect. "
+                         "These functions return plain dicts (for example result['F'], not result.F). "
+                         "Preserve original pandas row indices when fitting; unlabeled nested models "
+                         "require both row_ids and restricted_row_ids explicitly")
+        if isinstance(helpers, dict) and helpers.get("datalab_results") is True:
+            lines.append("- datalab_results: available (optional); frozen computed results shared by tables, "
+                         "supported plots and factual report fragments, with actual export checks. "
+                         "Inspect its API with python_inspect; export consistency does not prove method validity")
+        if isinstance(helpers, dict) and any(helpers.get(name) is True for name in ("datalab_statistics", "datalab_results")):
+            lines.append("Optional helpers do not replace a simple direct calculation with explicit checks. "
+                         "Use them only when their documented contract fits the work; do not add a framework or extra probe solely because it is installed.")
     facts = "\n".join(lines) if lines else "Installed runtime capabilities could not be confirmed. Do not assume any package is available."
     return ("<analysis_runtime>\n" + facts + "\n"
             "These are installation/import-resolution observations, not validation of scientific results. "
             "All libraries and APIs are allowed; this catalog is neither exhaustive nor an allowlist or denylist. "
-            "Use a small import/API smoke check for the exact functions when needed. "
+            "When available, use python_inspect to batch uncertain API names and inspect installed signatures "
+            "and return documentation before coding; reuse the observations. Use a small API smoke check "
+            "with known expected behavior when interface metadata cannot establish compatibility. "
             "A missing library is an environment issue: prepare the required dependency in the task's isolated "
             "environment, within the authorized scope, and verify actual availability. Do not silently replace "
             "a requested established statistical method with hand-written formulas. If preparation cannot succeed, "

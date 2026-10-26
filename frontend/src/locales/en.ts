@@ -140,6 +140,7 @@ export default {
   // Shell tools
   'Executing command': 'Executing command',
   'Running analysis program': 'Running analysis program',
+  'Inspecting Python interfaces': 'Inspecting Python interfaces',
   'Analyzing dataset': 'Analyzing dataset',
   'Viewing command output': 'Viewing command output',
   'Waiting for command completion': 'Waiting for command completion',
@@ -150,6 +151,7 @@ export default {
   'Exploring dataset': 'Exploring dataset',
   'Command execution finished': 'Command execution finished',
   'Analysis program execution finished': 'Analysis program execution finished',
+  'Python interface inspection finished': 'Python interface inspection finished',
   'Dataset analysis command finished': 'Dataset analysis command finished',
   'Command output updated': 'Command output updated',
   'Command wait finished': 'Command wait finished',

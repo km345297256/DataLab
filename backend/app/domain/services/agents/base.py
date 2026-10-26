@@ -144,7 +144,6 @@ class BaseAgent(ABC):
         "shell_exec": 16 * 1024,
         "shell_run": 16 * 1024,
         "dataset_unpack": 24 * 1024,
-        "dataset_quicklook": 24 * 1024,
         "shell_view": 16 * 1024,
         "shell_wait": 16 * 1024,
         "file_read": 24 * 1024,

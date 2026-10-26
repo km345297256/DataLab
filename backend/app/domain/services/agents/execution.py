@@ -6,7 +6,6 @@ import json
 import logging
 import re
 import shlex
-import time
 import uuid
 from pathlib import PurePosixPath
 from typing import Any, AsyncGenerator, Optional, List, Callable
@@ -34,10 +33,7 @@ from app.domain.models.event import (
     WaitEvent,
 )
 from app.domain.services.tools.base import BaseToolkit
-from app.domain.services.tools.spill_projection import (
-    projected_tool_artifact,
-    spill_notice_from_result,
-)
+from app.domain.services.tools.spill_projection import projected_tool_artifact
 from app.domain.models.tool_result import ToolResult
 from app.core.config import get_settings
 from app.domain.utils.public_error import public_error_message
@@ -56,11 +52,8 @@ class ExecutionAgent(BaseAgent):
     name: str = "execution"
     system_prompt: str = SYSTEM_PROMPT + EXECUTION_SYSTEM_PROMPT
     format: str = "json_object"
-    # These limits protect synthesis after a tool call; quicklook itself is an
-    # ordinary tool chosen by the agent, never a preselected terminal workflow.
-    # The professional synthesis is a concise user report, not another data
-    # dump. Per-call output budgets reduce tail latency without shrinking the
-    # normal ExecutionAgent model budget used by custom analysis.
+    # Bound structured-result parsing and rendering without limiting the
+    # model's analysis or program execution.
     DATASET_SYNTHESIS_LITERAL_MAX_CHARS = 32 * 1024
     DATASET_SYNTHESIS_RENDERED_MAX_CHARS = 4 * 1024
     SHELL_OUTPUT_MAX_CHARS = 8 * 1024
@@ -112,8 +105,8 @@ class ExecutionAgent(BaseAgent):
     }
     DATASET_FAST_PATH_TOOL_NAMES = {
         "dataset_unpack",
-        "dataset_quicklook",
         "program_run",
+        "python_inspect",
         "shell_run",
         "shell_exec",
         "shell_wait",
@@ -121,6 +114,7 @@ class ExecutionAgent(BaseAgent):
         "shell_kill_process",
         "file_read",
         "file_write",
+        "file_apply_patch",
         "file_str_replace",
         "file_find_in_content",
         "file_find_by_name",
@@ -289,238 +283,8 @@ class ExecutionAgent(BaseAgent):
         names = set(self.DATASET_FAST_PATH_TOOL_NAMES)
         for toolkit in self.toolkits:
             names.update(getattr(toolkit, "dataset_fast_path_tool_names", set()))
-        if getattr(self, "_disable_quicklook_retry", False):
-            names.discard("dataset_quicklook")
         return names
 
-    @classmethod
-    def _quicklook_evidence_summary(cls, payload: dict[str, Any], *, language: str) -> str:
-        evidence = payload.get("evidence")
-        if not isinstance(evidence, dict):
-            return ""
-        datasets = evidence.get("datasets")
-        if not isinstance(datasets, list):
-            return ""
-
-        statements: list[str] = []
-        for dataset in datasets[:3]:
-            if not isinstance(dataset, dict):
-                continue
-            path = " ".join(str(dataset.get("path") or "dataset").split())[:120]
-            kind = dataset.get("format")
-            if kind == "geotiff":
-                band = next(
-                    (
-                        item
-                        for item in (dataset.get("bands") or [])
-                        if isinstance(item, dict)
-                    ),
-                    {},
-                )
-                spatial_profile = dataset.get("spatial_profile")
-                spatial_profile = (
-                    spatial_profile if isinstance(spatial_profile, dict) else {}
-                )
-                quantiles = spatial_profile.get("quantiles")
-                quantiles = quantiles if isinstance(quantiles, dict) else {}
-                zones = spatial_profile.get("zone_means")
-                zones = zones if isinstance(zones, dict) else {}
-                declared_nodata = band.get(
-                    "declared_nodata",
-                    dataset.get("declared_nodata", dataset.get("nodata")),
-                )
-                declared_unit = band.get(
-                    "declared_unit",
-                    dataset.get("declared_unit"),
-                )
-                mask_provenance = band.get(
-                    "mask_provenance",
-                    dataset.get("mask_provenance"),
-                )
-                zero_count = band.get("zero_count", dataset.get("zero_count"))
-                valid_zero_count = band.get(
-                    "valid_zero_count",
-                    dataset.get("valid_zero_count"),
-                )
-                if language == "zh":
-                    statement = (
-                        f"{path} 是 {dataset.get('width')}×{dataset.get('height')} 像元、"
-                        f"{dataset.get('band_count')} 波段的 GeoTIFF（CRS："
-                        f"{dataset.get('crs') or '未声明'}）；首个已剖析波段的"
-                        f"最小值/均值/最大值/标准差为 {band.get('min')} / "
-                        f"{band.get('mean')} / {band.get('max')} / {band.get('std')}"
-                    )
-                    if quantiles:
-                        statement += (
-                            f"，P05/P50/P95 为 {quantiles.get('p05')} / "
-                            f"{quantiles.get('p50')} / {quantiles.get('p95')}"
-                        )
-                    if zones:
-                        statement += (
-                            "；像元网格左上/右上/左下/右下分区均值为 "
-                            f"{zones.get('upper_left')} / {zones.get('upper_right')} / "
-                            f"{zones.get('lower_left')} / {zones.get('lower_right')}"
-                        )
-                    statement += (
-                        f"；声明的 NoData 为 "
-                        f"{declared_nodata if declared_nodata is not None else '未声明'}，掩膜来源为 "
-                        f"{mask_provenance or ['未声明']}，原始零值/有效零值为 "
-                        f"{zero_count} / {valid_zero_count}"
-                    )
-                    if declared_unit in (None, ""):
-                        statement += "；源数据未声明单位，数值按原始值报告"
-                    else:
-                        statement += f"；源数据声明单位为 {declared_unit}"
-                else:
-                    statement = (
-                        f"{path} is a {dataset.get('width')}×{dataset.get('height')}, "
-                        f"{dataset.get('band_count')}-band GeoTIFF (CRS: "
-                        f"{dataset.get('crs') or 'not declared'}); the first profiled "
-                        f"band has min/mean/max/std {band.get('min')} / {band.get('mean')} / "
-                        f"{band.get('max')} / {band.get('std')}"
-                    )
-                    if quantiles:
-                        statement += (
-                            f", with P05/P50/P95 {quantiles.get('p05')} / "
-                            f"{quantiles.get('p50')} / {quantiles.get('p95')}"
-                        )
-                    if zones:
-                        statement += (
-                            "; sampled grid upper-left/upper-right/lower-left/lower-right "
-                            f"means are {zones.get('upper_left')} / {zones.get('upper_right')} / "
-                            f"{zones.get('lower_left')} / {zones.get('lower_right')}"
-                        )
-                    statement += (
-                        f"; declared NoData is "
-                        f"{declared_nodata if declared_nodata is not None else 'not declared'}, mask provenance is "
-                        f"{mask_provenance or ['not declared']}, and raw/valid zero counts are "
-                        f"{zero_count} / {valid_zero_count}"
-                    )
-                    if declared_unit in (None, ""):
-                        statement += "; the source declares no unit, so values are reported as raw"
-                    else:
-                        statement += f"; the declared source unit is {declared_unit}"
-                statements.append(statement)
-                continue
-
-            table = dataset.get("table")
-            sheet_name = None
-            if not isinstance(table, dict) and kind == "excel":
-                sheet = next(
-                    (
-                        item
-                        for item in (dataset.get("sheets") or [])
-                        if isinstance(item, dict) and isinstance(item.get("table"), dict)
-                    ),
-                    None,
-                )
-                if sheet:
-                    sheet_name = sheet.get("name")
-                    table = sheet["table"]
-            if not isinstance(table, dict):
-                continue
-            columns = [
-                column
-                for column in (table.get("columns") or [])
-                if isinstance(column, dict)
-            ]
-            numeric_columns = [
-                column
-                for column in columns
-                if isinstance(column.get("statistics"), dict)
-            ]
-            numeric = next(
-                (
-                    column
-                    for column in numeric_columns
-                    if not re.search(
-                        r"date|time|year|month|day|日期|时间|年份|年度|月份",
-                        str(column.get("name") or ""),
-                        re.IGNORECASE,
-                    )
-                ),
-                numeric_columns[0] if numeric_columns else None,
-            )
-            missing_column = max(
-                columns,
-                key=lambda column: float(column.get("missing_percent") or 0),
-                default=None,
-            )
-            scope = (
-                f"{table.get('rows_sampled')} sampled rows and "
-                f"{table.get('columns_profiled')} profiled columns"
-            )
-            if language == "zh":
-                statement = (
-                    f"{path}{f' / {sheet_name}' if sheet_name else ''} 已剖析 "
-                    f"{table.get('rows_sampled')} 行、{table.get('columns_profiled')} 列"
-                )
-                if numeric:
-                    stats = numeric["statistics"]
-                    statement += (
-                        f"；字段 {numeric.get('name')} 的最小值/均值/最大值为 "
-                        f"{stats.get('min')} / {stats.get('mean')} / {stats.get('max')}"
-                    )
-                if missing_column:
-                    statement += (
-                        f"；最高可见缺失率为字段 {missing_column.get('name')} 的 "
-                        f"{missing_column.get('missing_percent')}%"
-                    )
-            else:
-                statement = f"{path}{f' / {sheet_name}' if sheet_name else ''} contains {scope}"
-                if numeric:
-                    stats = numeric["statistics"]
-                    statement += (
-                        f"; {numeric.get('name')} has min/mean/max "
-                        f"{stats.get('min')} / {stats.get('mean')} / {stats.get('max')}"
-                    )
-                if missing_column:
-                    statement += (
-                        f"; the highest observed missing rate is "
-                        f"{missing_column.get('missing_percent')}% in "
-                        f"{missing_column.get('name')}"
-                    )
-            statements.append(statement)
-
-        if not statements:
-            return ""
-        capabilities = evidence.get("capabilities")
-        temporal_dimensions = (
-            capabilities.get("explicit_temporal_dimensions")
-            if isinstance(capabilities, dict)
-            else None
-        )
-        if language == "zh":
-            prefix = " 可核验证据：" + "；".join(statements) + "。"
-            if temporal_dimensions == []:
-                prefix += " 当前剖析未发现显式时间维度，不能仅凭文件名或时期标签推导时间趋势。"
-            return prefix
-        prefix = " Verifiable evidence: " + "; ".join(statements) + "."
-        if temporal_dimensions == []:
-            prefix += (
-                " No explicit temporal dimension was detected, so a time trend cannot be "
-                "derived from filenames or catalog period labels alone."
-            )
-        return prefix
-
-    @staticmethod
-    def _successful_quicklook_payload(tool_result: Any) -> Optional[dict[str, Any]]:
-        """Return a validated successful quicklook payload from a tool result."""
-        if getattr(tool_result, "name", None) != "dataset_quicklook":
-            return None
-        artifact = getattr(tool_result, "artifact", None)
-        if not isinstance(artifact, ToolResult) or not artifact.success:
-            return None
-        data = artifact.data if isinstance(artifact.data, dict) else {}
-        if data.get("status") != "completed" or data.get("returncode") != 0:
-            return None
-        try:
-            payload = json.loads(data.get("output", ""))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return None
-        if not isinstance(payload, dict) or payload.get("success") is not True:
-            return None
-        return payload
 
     @staticmethod
     def _successful_unpack_payload(tool_result: Any) -> Optional[dict[str, Any]]:
@@ -940,127 +704,6 @@ class ExecutionAgent(BaseAgent):
         files = data.get("files")
         return [value for value in files or [] if isinstance(value, str)]
 
-    @staticmethod
-    def _quicklook_attachment_paths(payload: dict[str, Any]) -> list[str]:
-        """Resolve only output-root-relative artifacts declared by quicklook."""
-        output_value = payload.get("output")
-        files = payload.get("files")
-        if not isinstance(output_value, str) or not isinstance(files, list):
-            return []
-        output_path = PurePosixPath(output_value)
-        output_root = PurePosixPath("/home/ubuntu/output")
-        if not output_path.is_absolute() or not output_path.is_relative_to(output_root):
-            return []
-
-        attachments: list[str] = []
-        for value in files:
-            if not isinstance(value, str):
-                continue
-            relative = PurePosixPath(value)
-            if relative.is_absolute() or ".." in relative.parts:
-                continue
-            candidate = output_path / relative
-            if candidate.is_relative_to(output_root):
-                attachments.append(str(candidate))
-        return attachments
-
-    @staticmethod
-    def _quicklook_synthesis_constraints(payload: dict[str, Any]) -> str:
-        """Render non-negotiable, evidence-derived synthesis constraints.
-
-        These rules are generated from capability evidence, never a dataset
-        name or expected value. They prevent a fluent model answer from turning
-        technical validity into business validity or inventing domain units.
-        """
-        evidence = payload.get("evidence")
-        evidence = evidence if isinstance(evidence, dict) else {}
-        datasets = evidence.get("datasets")
-        datasets = [item for item in datasets or [] if isinstance(item, dict)]
-
-        declared_units: list[str] = []
-        declared_nodata: list[Any] = []
-        mask_sources: set[str] = set()
-        zero_count = 0
-        valid_zero_count = 0
-        for dataset in datasets:
-            bands = [
-                band
-                for band in (dataset.get("bands") or [])
-                if isinstance(band, dict)
-            ]
-            unit_values = [dataset.get("declared_unit")]
-            unit_values.extend(band.get("declared_unit") for band in bands)
-            for value in unit_values:
-                if value not in (None, "") and str(value) not in declared_units:
-                    declared_units.append(str(value))
-            declared_nodata.append(
-                dataset.get("declared_nodata", dataset.get("nodata"))
-            )
-            sources = dataset.get("mask_provenance") or []
-            if isinstance(sources, str):
-                sources = [sources]
-            mask_sources.update(str(source) for source in sources if source)
-            zero_count += int(dataset.get("zero_count") or 0)
-            valid_zero_count += int(dataset.get("valid_zero_count") or 0)
-
-        lines = [
-            "<evidence_hard_constraints>",
-            "These constraints are mechanically derived from quicklook evidence and override domain convention.",
-        ]
-        if datasets and not declared_units:
-            lines.append(
-                "Every profiled analytical band has declared_unit=null. Do not write, assume, or "
-                "hypothesize any domain unit anywhere (including mm, millimetres, 毫米, °C, percent, "
-                "or per-year units). Label analytical measurements as `raw value (unit not declared)` "
-                "or `原始值（单位未声明）`. Explicit CRS coordinate units remain allowed only for coordinates."
-            )
-        elif declared_units:
-            lines.append(
-                "Use only these source-declared analytical units, without conversion or inference: "
-                + json.dumps(declared_units, ensure_ascii=False)
-                + "."
-            )
-        if datasets and all(value is None for value in declared_nodata):
-            lines.append(
-                "No NoData value is declared. An all-valid/technical mask means cells are unmasked for "
-                "the primary statistic; it does not prove that zeros are business observations, that the "
-                "study boundary is fully covered, or that every cell belongs to the named region. Call them "
-                "unmasked cells or cells included in statistics, not `valid observations` / `有效像元`."
-            )
-        if zero_count:
-            lines.append(
-                f"The sampled grids contain {zero_count} raw zero cells and {valid_zero_count} unmasked "
-                "zero cells. Preserve them in the primary statistics, report their business meaning as "
-                "ambiguous unless authoritative metadata says otherwise, and describe proportions as grid-cell "
-                "proportions rather than study-area coverage."
-            )
-        if mask_sources:
-            lines.append(
-                "Authoritative raster mask provenance is "
-                + json.dumps(sorted(mask_sources), ensure_ascii=False)
-                + "; do not replace it with a filename- or threshold-derived mask."
-            )
-        capabilities = evidence.get("capabilities")
-        if (
-            isinstance(capabilities, dict)
-            and capabilities.get("explicit_temporal_dimensions") == []
-        ):
-            lines.append(
-                "No explicit temporal dimension was detected: temporal trend is unsupported, regardless "
-                "of periods in filenames or catalog descriptions."
-            )
-        lines.extend(
-            [
-                "Use upper/lower/left/right as grid-relative labels; do not rename them north/south/east/west "
-                "unless orientation is explicitly verified by evidence. Distinguish catalog-described "
-                "provenance or processing from measurements made in this run; introduce the former as "
-                "`the catalog description says` / `数据集说明称`, never as a measured finding.",
-                "Check arithmetic comparisons against the reported numbers (for example mean versus median) "
-                "before stating distribution direction.",
-                "</evidence_hard_constraints>",
-            ]
-        )
-        return "\n".join(lines)
 
     @staticmethod
     def _synthesis_scalar_text(value: Any, *, limit: int = 1200) -> str:
@@ -1331,7 +974,7 @@ class ExecutionAgent(BaseAgent):
         return rendered
 
     @classmethod
-    def _normalize_quicklook_synthesis(
+    def _normalize_dataset_synthesis(
         cls,
         content: Any,
         attachments: list[str],
@@ -2076,100 +1719,6 @@ class ExecutionAgent(BaseAgent):
             return None
         return str(candidate)
 
-    def _quicklook_stage_completion(
-        self,
-        tool_result: ToolMessage,
-        *,
-        reason: str,
-        message: Optional[Message] = None,
-    ) -> Optional[str]:
-        """Preserve validated quicklook evidence when only synthesis fails.
-
-        This is deliberately separate from ``_completion_from_tool_batch``:
-        an ordinary analysis request must still receive its normal model
-        synthesis when that call is healthy.  The deterministic result is used
-        only after finalization has timed out or returned an invalid result.
-        """
-        payload = self._successful_quicklook_payload(tool_result)
-        if payload is None:
-            return None
-        attachments = self._quicklook_attachment_paths(payload)
-        if not attachments:
-            return None
-
-        summary = payload.get("summary")
-        summary = summary if isinstance(summary, dict) else {}
-        files_analyzed = summary.get("files_analyzed", 0)
-        files_failed = summary.get("files_failed", 0)
-        plot_count = summary.get("plot_count", 0)
-        elapsed = summary.get("elapsed_seconds", 0)
-        language = getattr(getattr(self, "_current_plan", None), "language", "")
-        evidence_summary = self._quicklook_evidence_summary(
-            payload,
-            language=language,
-        )
-        catalog_evidence = ""
-        current_step = next(
-            (
-                item
-                for item in (getattr(getattr(self, "_current_plan", None), "steps", None) or [])
-                if item.status == ExecutionStatus.RUNNING
-            ),
-            None,
-        )
-        requested_dimensions = set(
-            current_step.inputs.get("requested_dimensions", [])
-            if current_step is not None
-            else []
-        )
-        if message is not None and requested_dimensions & {
-            "scientific_value",
-            "use_cases",
-            "applicability",
-            "overall_assessment",
-        }:
-            descriptions: list[str] = []
-            for dataset in list(message.datasets or [])[:3]:
-                excerpt = self._catalog_description_excerpt(
-                    getattr(dataset, "description", ""),
-                    language=language,
-                )
-                if excerpt:
-                    name = self._inventory_label(
-                        getattr(dataset, "name", ""),
-                        fallback="数据集" if language == "zh" else "Dataset",
-                    )
-                    descriptions.append(f"**{name}**：{excerpt}" if language == "zh" else f"**{name}**: {excerpt}")
-            if descriptions:
-                heading = "\n\n登记用途与价值证据：\n" if language == "zh" else "\n\nRegistered purpose/value evidence:\n"
-                catalog_evidence = heading + "\n".join(f"- {item}" for item in descriptions)
-        if language == "zh":
-            result = (
-                "数据探查工具已成功完成，系统已直接整理可核验结果。"
-                f"已剖析 {files_analyzed} 个文件，生成 {plot_count} 个图表或证据附件，"
-                f"工具处理耗时 {elapsed} 秒。"
-                + (f"另有 {files_failed} 个文件未能剖析。" if files_failed else "")
-                + catalog_evidence
-                + evidence_summary
-                + " 以上为登记说明与工具直接产出的有界证据；不得据此补造未声明单位、"
-                "时间趋势或因果关系，可下载附件继续核验。"
-            )
-        else:
-            result = (
-                "Dataset profiling completed successfully, and the system directly organized the "
-                f"validated result. The tool profiled {files_analyzed} file(s), produced "
-                f"{plot_count} chart or evidence attachment(s), and took {elapsed} seconds. "
-                + (f"{files_failed} file(s) could not be profiled. " if files_failed else "")
-                + catalog_evidence
-                + evidence_summary
-                + " These are bounded catalog statements and direct tool evidence. Do not infer "
-                "undeclared units, time trends, or causality; use the validated attachments for review."
-            )
-        return ExecutionResult(
-            success=True,
-            result=result,
-            attachments=attachments,
-        ).model_dump_json()
 
     def _completion_from_finalization_failure(
         self,
@@ -2191,15 +1740,6 @@ class ExecutionAgent(BaseAgent):
                         if path in getattr(self, "_saved_output_partial", set()) else "") + bodies[path]
                         for path in report_paths),
                     attachments=report_paths).model_dump_json()
-        for _tool_call, tool_result in reversed(successful_tool_calls):
-            quicklook_completion = self._quicklook_stage_completion(
-                tool_result,
-                reason=reason,
-                message=getattr(self, "_current_message", None),
-            )
-            if quicklook_completion is not None:
-                return quicklook_completion
-
         shell_completion = self._shell_output_completion(
             [tool_result for _tool_call, tool_result in successful_tool_calls],
             direct=self._direct_shell_output_request(
@@ -2320,7 +1860,7 @@ class ExecutionAgent(BaseAgent):
             return
 
         # A blank description cannot support a deterministic purpose answer.
-        # Fall back to the governed analysis loop, but never force quicklook:
+        # Fall back to the governed analysis loop:
         # file statistics alone do not establish a dataset's intended use.
         async for event in self._execute_dataset_general_analysis(request, message=message,
                 dataset_intent=self.DATASET_INTENT_CATALOG_DESCRIPTION,
@@ -2529,7 +2069,7 @@ class ExecutionAgent(BaseAgent):
         # Keep the command visible in the normal tool timeline. The frontend
         # applies its standard credential/host-path sanitization, while users
         # can still verify that this is one exact-file, read-only copy rather
-        # than another whole-dataset quicklook.
+        # than another whole-dataset analysis.
         yield ToolEvent(
             status=ToolStatus.CALLING,
             tool_call_id=tool_call["id"],
@@ -2796,305 +2336,6 @@ class ExecutionAgent(BaseAgent):
             self._dataset_fast_path_mode = previous_mode
             self._dataset_intent = previous_intent
 
-    async def _execute_preferred_quicklook(
-        self,
-        request: str,
-        *,
-        message: Message,
-        dataset_intent: str,
-        allow_terminal_quicklook: bool,
-    ) -> AsyncGenerator[BaseEvent, None]:
-        """Run one deterministic quicklook, then at most one no-tool synthesis.
-
-        This removes the expensive model-directed probe/unpack/read/redraw loop
-        for capability-level profiling questions.  Explicit specialized methods
-        never enter this method. A genuine quicklook failure enters the normal
-        governed custom-analysis loop with quicklook itself disabled.
-        """
-        previous_mode = getattr(self, "_dataset_fast_path_mode", False)
-        previous_intent = getattr(
-            self,
-            "_dataset_intent",
-            self.DATASET_INTENT_ANALYSIS,
-        )
-        previous_terminal = getattr(self, "_allow_terminal_quicklook", False)
-        previous_prefer = getattr(self, "_prefer_quicklook_evidence", False)
-        previous_attempted = getattr(self, "_initial_quicklook_attempted", False)
-        previous_disable_retry = getattr(self, "_disable_quicklook_retry", False)
-        self._dataset_fast_path_mode = True
-        self._dataset_intent = dataset_intent
-        self._allow_terminal_quicklook = allow_terminal_quicklook
-        self._prefer_quicklook_evidence = True
-        self._initial_quicklook_attempted = False
-        self._disable_quicklook_retry = False
-
-        async def targeted_fallback(reason: str) -> AsyncGenerator[BaseEvent, None]:
-            self._prefer_quicklook_evidence = False
-            self._initial_quicklook_attempted = True
-            self._disable_quicklook_retry = True
-            fallback_request = (
-                f"{request}\n\n<quicklook_fallback>\n"
-                "The deterministic quicklook could not provide usable evidence. "
-                "Continue in the governed analysis loop, validating uncertain parsing before plotting; "
-                "quicklook is unavailable for retry. "
-                f"Reason: {reason[:2_000]}\n"
-                "</quicklook_fallback>"
-            )
-            async for fallback_event in self._execute_dataset_general_analysis(
-                fallback_request,
-                message=message,
-                dataset_intent=dataset_intent,
-            ):
-                yield fallback_event
-
-        try:
-            datasets = list(message.datasets or [])
-            dataset_root = PurePosixPath("/home/ubuntu/datasets")
-            if len(datasets) != 1:
-                async for event in targeted_fallback(
-                    "A deterministic single-dataset input was not available."
-                ):
-                    yield event
-                return
-
-            input_path = PurePosixPath(str(datasets[0].sandbox_path))
-            if (
-                not input_path.is_absolute()
-                or ".." in input_path.parts
-                or not input_path.is_relative_to(dataset_root)
-            ):
-                async for event in targeted_fallback(
-                    "The mounted dataset did not expose a validated sandbox path."
-                ):
-                    yield event
-                return
-
-            token = uuid.uuid4().hex[:12]
-            tool_call = {
-                "name": "dataset_quicklook",
-                "args": {
-                    "id": f"quicklook-{token}",
-                    "input_path": str(input_path),
-                    "output_dir": f"/home/ubuntu/output/quicklook-{token}",
-                    "max_plots": 4,
-                },
-                "id": f"quicklook-call-{token}",
-            }
-            tool = self.get_tool("dataset_quicklook")
-            if tool is None:
-                async for event in targeted_fallback(
-                    "The dataset quicklook capability is unavailable in this sandbox."
-                ):
-                    yield event
-                return
-
-            yield ToolEvent(
-                status=ToolStatus.CALLING,
-                tool_call_id=tool_call["id"],
-                tool_name=tool.toolkit.name,
-                function_name=tool_call["name"],
-                function_args=tool_call["args"],
-            )
-            tool_started = time.perf_counter()
-            tool_result = await self.invoke_tool(tool, tool_call)
-            logger.info(
-                "agent_tool_call agent=%s session=%s tool=dataset_quicklook duration_ms=%.1f status=%s",
-                self.name,
-                (getattr(self, "usage_context", None) or {}).get("session_id", ""),
-                (time.perf_counter() - tool_started) * 1000,
-                getattr(tool_result, "status", "unknown"),
-            )
-            if tool_result.tool_call_id != tool_call["id"]:
-                tool_result.tool_call_id = tool_call["id"]
-            yield ToolEvent(
-                status=ToolStatus.CALLED,
-                tool_call_id=tool_call["id"],
-                tool_name=tool.toolkit.name,
-                function_name=tool_call["name"],
-                function_args=tool_call["args"],
-                function_result=projected_tool_artifact(tool_result),
-            )
-
-            deterministic_completion = self._completion_from_tool_batch([tool_result])
-            if deterministic_completion is not None:
-                yield MessageEvent(message=deterministic_completion)
-                return
-
-            payload = self._successful_quicklook_payload(tool_result)
-            attachments = (
-                self._quicklook_attachment_paths(payload)
-                if payload is not None
-                else []
-            )
-            if payload is None or not attachments:
-                compact_failure = self._message_content_to_text(tool_result.content)
-                async for event in targeted_fallback(compact_failure):
-                    yield event
-                return
-
-            model_tool_result = self._tool_result_for_memory(
-                tool_result,
-                tool_call["id"],
-                "dataset_quicklook",
-            )
-            available_attachments = json.dumps(
-                attachments,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            artifact_descriptions = json.dumps(
-                payload.get("artifacts") or [],
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            hard_constraints = self._quicklook_synthesis_constraints(payload)
-            current_step = next(
-                (
-                    item
-                    for item in (getattr(self._current_plan, "steps", None) or [])
-                    if item.status == ExecutionStatus.RUNNING
-                ),
-                None,
-            )
-            requested_dimensions = (
-                current_step.inputs.get("requested_dimensions", [])
-                if current_step is not None
-                else []
-            )
-            compact_request = json.dumps(
-                {
-                    "task": "synthesize_verified_quicklook_evidence",
-                    "original_user_question": message.message,
-                    "language": getattr(self._current_plan, "language", ""),
-                    "required_dimension_checklist": requested_dimensions,
-                    "datasets": [
-                        {
-                            "dataset_id": dataset.dataset_id,
-                            "name": dataset.name,
-                            "catalog_description": self._truncate_utf8(
-                                getattr(dataset, "description", ""),
-                                2 * 1024,
-                            ),
-                            "catalog_tags": list(getattr(dataset, "tags", None) or [])[:12],
-                            "catalog_temporal_coverage": self._truncate_utf8(
-                                getattr(dataset, "temporal_coverage", ""),
-                                512,
-                            ),
-                            "catalog_spatial_coverage": self._truncate_utf8(
-                                getattr(dataset, "spatial_coverage", ""),
-                                512,
-                            ),
-                        }
-                        for dataset in list(message.datasets or [])[:3]
-                    ],
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            synthesis_instruction = HumanMessage(content=(
-                "This is the only synthesis turn and tools are disabled. Return exactly one JSON "
-                "object whose top level contains exactly these three keys: `success`, `result`, and "
-                "`attachments`. Set `success` to true, `attachments` to [], and `result` to a concise, "
-                "user-facing Markdown string that directly answers the original question from the "
-                "compact quicklook evidence. For Chinese, keep `result` within about 1000 Chinese "
-                "characters; for English, prefer no more than 700 words. Do not return `task`, "
-                "`datasets`, `dimension_assessment`, or any other planning/evidence schema as top-level "
-                "keys, and do not serialize a JSON or Python mapping inside `result`. "
-                "Cover every required dimension as supported, partially supported, or "
-                "unsupported. Distinguish a source-data limitation from incomplete/truncated profiling "
-                "or files_failed. Preserve declared NoData/mask semantics and numeric zeros; never infer "
-                "an undeclared unit or a time trend without an explicit time dimension. Treat grid "
-                "upper/lower/left/right as array positions unless coordinate orientation was verified. "
-                "Separate measured observations from interpretation. Do not request another tool. "
-                "Catalog descriptions and tags may support stated purpose/value dimensions only; label "
-                "them explicitly as registered catalog claims, never as measurements from this run. "
-                "The platform will attach only these validated quicklook artifacts: "
-                f"{available_attachments}. Describe generated files only by these capability-provided "
-                f"artifact records, without inventing chart types or filenames: {artifact_descriptions}.\n\n"
-                f"{hard_constraints}"
-            ))
-            try:
-                model_message = await self._ask_without_tools(
-                    [
-                        HumanMessage(content=compact_request),
-                        AIMessage(content="", tool_calls=[tool_call]),
-                        model_tool_result,
-                        synthesis_instruction,
-                    ],
-                    self.format,
-                )
-                response = (
-                    None
-                    if model_message.tool_calls or model_message.invalid_tool_calls
-                    else self._normalize_quicklook_synthesis(
-                        self._message_content_to_text(model_message.content),
-                        attachments,
-                    )
-                )
-                if response is None:
-                    logger.warning(
-                        "Dataset quicklook synthesis returned a blank/invalid result; retrying once without tools"
-                    )
-                    repair_message = await self._ask_without_tools(
-                        [HumanMessage(content=(
-                            "Your previous synthesis result was blank or invalid. Return exactly one valid "
-                            "JSON object now whose only top-level keys are `success`, `result`, and "
-                            "`attachments`; set `success` to true and `attachments` to []. `result` must be "
-                            "a concise user-facing Markdown string (about 1000 Chinese characters or less) "
-                            "that answers the original question and obeys all evidence_hard_constraints "
-                            "already provided. Do not return a nested task/datasets/dimension_assessment "
-                            "schema or place a JSON/Python mapping inside `result`. Tools remain disabled; "
-                            "do not return whitespace, a new plan, or tool calls."
-                        ))],
-                        self.format,
-                    )
-                    response = (
-                        None
-                        if repair_message.tool_calls or repair_message.invalid_tool_calls
-                        else self._normalize_quicklook_synthesis(
-                            self._message_content_to_text(repair_message.content),
-                            attachments,
-                        )
-                    )
-                if response is None:
-                    fallback_completion = self._quicklook_stage_completion(
-                        tool_result,
-                        reason="invalid_final_result",
-                        message=message,
-                    )
-                    if fallback_completion is None:
-                        yield ErrorEvent(
-                            error="invalid_final_result: dataset evidence synthesis returned no usable result"
-                        )
-                    else:
-                        yield MessageEvent(message=fallback_completion)
-                    return
-                yield MessageEvent(
-                    message=json.dumps(response, ensure_ascii=False)
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Dataset quicklook synthesis failed (%s); returning deterministic evidence",
-                    type(exc).__name__,
-                )
-                fallback_completion = self._quicklook_stage_completion(
-                    tool_result,
-                    reason="finalization_failed",
-                    message=message,
-                )
-                if fallback_completion is None:
-                    yield ErrorEvent(
-                        error="finalization_failed: dataset evidence synthesis could not be generated"
-                    )
-                else:
-                    yield MessageEvent(message=fallback_completion)
-        finally:
-            self._dataset_fast_path_mode = previous_mode
-            self._dataset_intent = previous_intent
-            self._allow_terminal_quicklook = previous_terminal
-            self._prefer_quicklook_evidence = previous_prefer
-            self._initial_quicklook_attempted = previous_attempted
-            self._disable_quicklook_retry = previous_disable_retry
 
     async def _execute_with_tool_scope(
         self,
@@ -3395,9 +2636,8 @@ class ExecutionAgent(BaseAgent):
                 "Do not postpone plotting or export until after supplementary probes."
             ),
             "capability": (
-                "Use artifacts already produced by the selected analysis capability. A quicklook manifest "
-                "and its validated charts satisfy this requirement; do not add a redundant file-write or "
-                "file-read turn merely to manufacture another report."
+                "Use requested artifacts already produced by the selected analysis capability; do not "
+                "add a redundant file-write or file-read turn merely to manufacture another report."
             ),
             "optional": (
                 "Do not create or reread a file solely to satisfy a reporting convention. Return a generated "
@@ -3415,8 +2655,7 @@ class ExecutionAgent(BaseAgent):
             "temporal trend, comparison, relationship, metric, or chart) and label each one supported, "
             "partially supported, or unsupported by the inspected data. Never silently omit a requested "
             "dimension.\n"
-            "`dataset_quicklook` is an optional bounded visualization capability, not a required workflow. "
-            "Use it only when its scope and output directly fit the question. For a file-scoped request, first "
+            "Select available tools and custom analysis to fit the exact question. For a file-scoped request, first "
             "resolve or use the exact target and never silently enlarge the scope to the whole dataset. For a "
             "catalog question, use the read-only dataset catalog tools before opening files. A demonstrative "
             "such as 'this file' is not a dataset-wide target: resolve it from the supplied target files or "
@@ -3715,7 +2954,7 @@ class ExecutionAgent(BaseAgent):
         try:
             if dataset_intent == self.DATASET_INTENT_FILE_PREVIEW:
                 # File preview is an inventory-authorized copy operation. It must
-                # run before every model/quicklook/custom branch and never fall
+                # run before every model/custom analysis branch and never fall
                 # through to model-selected filesystem access.
                 execution = self._execute_file_preview(
                     step=step,

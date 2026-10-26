@@ -24,9 +24,11 @@ from .prompts import (
     REVISION_INSTRUCTION, REVIEW_INSTRUCTION, IMPLEMENTATION_REVISION_INSTRUCTION,
 )
 from .script_policy import SkillScriptValidationError
-from .workflow_authoring import WorkflowDraft, compile_workflow, check_workflow_draft
+from .workflow_authoring import WorkflowDraftV2, compile_workflow, check_workflow_draft
+from .interface_contracts import validate_declared_script_interface
 from .checkpoints import content_digest
 from .privacy import generation_privacy
+from .revision_routing import implementation_revision_scope
 
 
 @dataclass(frozen=True)
@@ -38,10 +40,20 @@ class CreationResult:
     program_reference_count: int
 
 
-def method_content(recipe):
+def method_content(recipe, *, executable_only=False):
+    # The default remains the persisted scientific-decision identity. Stronger
+    # change detection must not invalidate its existing adverse ledger keys.
     document = recipe.model_dump(exclude={"name", "description", "triggers", "coverage"})
     for script in document["scripts"]:
-        script["content"] = ast.dump(ast.parse(script["content"]), include_attributes=False)
+        tree = ast.parse(script["content"])
+        if executable_only:
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if (node.body and isinstance(node.body[0], ast.Expr)
+                            and isinstance(node.body[0].value, ast.Constant)
+                            and isinstance(node.body[0].value.value, str)):
+                        node.body = node.body[1:]
+        script["content"] = ast.dump(tree, include_attributes=False)
         script.pop("purpose", None)
         script.pop("invocation", None)
     document["implementation"].pop("reason", None)
@@ -97,7 +109,7 @@ class SkillCreationPipeline:
         value = await self.checkpoints.run(schema, stage, instruction, payload,
             check_generated, produce, decision_identity=decision_identity)
         if not produced:
-            await self.gateway._progress(stage, 0, "passed")
+            await self.gateway._progress(stage, 0, "response_received" if stage == "method_review" else "passed")
         return value
 
     def check_contract(self, value):
@@ -113,6 +125,8 @@ class SkillCreationPipeline:
     async def extract_requirements(self):
         self.contract = await self.generate(MethodContract, "method_requirements", METHOD_REQUIREMENTS_INSTRUCTION,
             {"sources": self.context.sources,
+             "analysis_history": self.context.evidence.get("analysis_history", []),
+             "implementation_sources": self.context.programs,
              "successful_tool_capabilities": self.context.evidence["successful_tool_capabilities"]}, self.check_contract)
 
     async def design_package(self, revision=None):
@@ -123,7 +137,7 @@ class SkillCreationPipeline:
         def check_draft(value):
             check_workflow_draft(value, self.contract, lambda recipe: self.check_recipe(recipe, pending=True))
 
-        draft = await self.generate(WorkflowDraft, "workflow",
+        draft = await self.generate(WorkflowDraftV2, "workflow",
             WORKFLOW_INSTRUCTION + (REVISION_INSTRUCTION if revision is not None else ""),
             {"analysis_evidence": self.context.evidence, "sources": self.context.sources,
              "method_contract": self.contract.model_dump(), "implementation_sources": self.context.programs,
@@ -134,6 +148,7 @@ class SkillCreationPipeline:
             def check_script(value):
                 if value.path != request.path:
                     raise CoverageError("unexpected_generated_script")
+                validate_declared_script_interface(value, request.interface_contract)
                 partial = candidate.model_copy(update={"scripts": [*generated, value]})
                 validate_recipe(partial, self.context.privacy)
                 # Resolve coverage as soon as all its referenced content
@@ -177,10 +192,19 @@ class SkillCreationPipeline:
                 raise
 
     async def review(self, recipe):
-        return await self.generate(MethodReview, "method_review", REVIEW_INSTRUCTION,
+        result = await self.generate(MethodReview, "method_review", REVIEW_INSTRUCTION,
             {"sources": self.context.sources, "method_contract": self.contract.model_dump(),
              "skill_package": recipe.model_dump(), "implementation_sources": self.context.programs},
             self.check_review_shape)
+        try:
+            validate_review(result, self.contract, self.context.sources)
+        except CoverageError as error:
+            if error.code != "method_review_rejected":
+                raise
+            await self.gateway._progress("method_review", 0, "revision_required", error.code)
+        else:
+            await self.gateway._progress("method_review", 0, "accepted")
+        return result
 
     async def review_and_revise(self, recipe):
         # A rejected method design and a rejected executable implementation
@@ -202,11 +226,7 @@ class SkillCreationPipeline:
         raise AssertionError("Unreachable review boundary")
 
     def implementation_only_revision(self, recipe, review):
-        excluded = {item.source_id for item in self.contract.excluded_sources}
-        return bool(recipe.scripts) and not review.implementation_appropriate and (
-            all(item.status == "preserved" for item in review.requirements)
-            and all(item.status == ("valid_exclusion" if item.source_id in excluded else "preserved")
-                    for item in review.sources))
+        return implementation_revision_scope(recipe, review, self.contract) is not None
 
     async def revise_rejected_candidate(self, recipe, review):
         kind = "implementation" if self.implementation_only_revision(recipe, review) else "workflow"
@@ -222,11 +242,15 @@ class SkillCreationPipeline:
 
         self.check_recipe(previous)
         self.check_review_shape(review)
-        if not self.implementation_only_revision(previous, review):
+        scope = implementation_revision_scope(previous, review, self.contract)
+        if scope is None:
             raise CoverageError("method_review_rejected")
-        original_method = method_content(previous)
+        original_method = method_content(previous, executable_only=True)
 
         def check_edits(value):
+            unauthorized = [index for index, edit in enumerate(value.edits) if edit.script_path not in scope.script_paths]
+            if unauthorized:
+                raise ImplementationEditError("unknown_script", *unauthorized)
             candidate = apply_implementation_edits(previous, value)
             try:
                 # Applying literal edits preserves bytes; independently check
@@ -235,14 +259,15 @@ class SkillCreationPipeline:
             except ValidationError:
                 raise ImplementationEditError("invalid_result") from None
             self.check_recipe(candidate)
-            if method_content(candidate) == original_method:
+            if method_content(candidate, executable_only=True) == original_method:
                 raise CoverageError("method_revision_unchanged")
 
         edits = await self.generate(ImplementationEdits, "implementation_revision",
             IMPLEMENTATION_REVISION_INSTRUCTION,
             {"review": review.model_dump(), "previous_skill_package": previous.model_dump(),
              "method_contract": self.contract.model_dump(), "sources": self.context.sources,
-             "implementation_sources": self.context.programs}, check_edits)
+             "implementation_sources": self.context.programs,
+             **({"revision_scope": scope.payload()} if scope.localized else {})}, check_edits)
         return apply_implementation_edits(previous, edits)
 
     def check_revision(self, revision):
@@ -255,7 +280,7 @@ class SkillCreationPipeline:
         mark = self.checkpoints.mark() if self.checkpoints is not None else None
         recipe = await self.design_package({"review": review.model_dump(),
                                            "previous_skill_package": previous.model_dump()})
-        if method_content(recipe) == method_content(previous):
+        if method_content(recipe, executable_only=True) == method_content(previous, executable_only=True):
             if self.checkpoints is not None:
                 await self.checkpoints.discard_since(mark, stages={"workflow", "implementation"})
             raise SkillCreationError("method_review", "method_revision_unchanged")

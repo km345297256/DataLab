@@ -80,14 +80,15 @@ def test_analysis_prompts_preserve_zero_nodata_and_unit_semantics():
     assert "raw/unit-not-declared" in execution_prompt
 
 
-def test_quicklook_policy_requires_matching_scope_and_uses_returned_evidence():
+def test_analysis_uses_available_tools_and_observed_api_contracts():
     system_prompt, execution_prompt = _rendered_prompts()
     for prompt in (system_prompt, execution_prompt):
-        assert "optional bounded profiling and visualization tool" in prompt
-        assert "scope matches the user's request" in prompt
-        assert "evidence, not" in prompt
-    assert "Do not manually unpack" in execution_prompt
-    assert "recreate quicklook charts" in execution_prompt
+        assert "dataset_quicklook" not in prompt
+        assert "python_inspect" in prompt
+        assert "program_run" in prompt
+    assert "same run" in execution_prompt
+    assert "known expected behavior" in execution_prompt
+    assert "Do not add probe rounds for already established facts" in execution_prompt
 
 
 def test_visualization_prompts_define_unicode_and_png_output_policy():

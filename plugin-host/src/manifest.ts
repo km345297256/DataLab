@@ -71,7 +71,6 @@ const RESERVED_AGENT_TOOL_NAMES = new Set([
   'browser_select_option',
   'browser_view',
   'code_mode_run',
-  'dataset_quicklook',
   'dataset_unpack',
   'file_find_by_name',
   'file_find_in_content',

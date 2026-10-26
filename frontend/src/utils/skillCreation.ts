@@ -12,7 +12,8 @@ const creationStages: Record<string, string> = {
 
 export function skillCreationProgressText(progress?: SkillCreationProgress | null): string {
   if (!progress || !creationStages[progress.stage]) return '';
-  const states = { running: '进行中', repairing: '修正中', passed: '已完成', failed: '未完成', cancelled: '已取消' };
+  const states = { running: '进行中', repairing: '修正中', passed: '已完成', failed: '未完成', cancelled: '已取消',
+    response_received: '审查结果已返回', accepted: '审查通过', revision_required: '需要修订' };
   const state = progress.attempt === 0 && progress.status === 'passed' && progress.stage !== 'package_storage'
     ? '沿用已检查版本' : states[progress.status];
   return state ? `${creationStages[progress.stage]} · ${state}` : '';

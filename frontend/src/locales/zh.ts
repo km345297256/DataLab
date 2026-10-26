@@ -140,6 +140,7 @@ export default {
   // Shell tools
   'Executing command': '正在执行命令',
   'Running analysis program': '正在运行分析程序',
+  'Inspecting Python interfaces': '正在查询 Python 接口',
   'Analyzing dataset': '正在分析数据集',
   'Viewing command output': '正在查看命令输出',
   'Waiting for command completion': '正在等待命令完成',
@@ -150,6 +151,7 @@ export default {
   'Exploring dataset': '正在探查数据集',
   'Command execution finished': '命令执行已结束',
   'Analysis program execution finished': '分析程序运行已结束',
+  'Python interface inspection finished': 'Python 接口查询已结束',
   'Dataset analysis command finished': '数据集分析命令已结束',
   'Command output updated': '命令输出已更新',
   'Command wait finished': '命令等待已结束',

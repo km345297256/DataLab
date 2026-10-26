@@ -1,7 +1,7 @@
 /** Owner-safe skill creation receipt. Storage paths and credentials stay on the server. */
 export interface SkillCreationProgress {
   stage: string;
-  status: 'running' | 'repairing' | 'passed' | 'failed' | 'cancelled';
+  status: 'running' | 'repairing' | 'passed' | 'failed' | 'cancelled' | 'response_received' | 'accepted' | 'revision_required';
   attempt: number;
   code?: string | null;
 }

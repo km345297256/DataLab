@@ -177,7 +177,7 @@ WORKDIR /app
 
 # Copy dependency files first to leverage the Docker layer cache.
 COPY sandbox/pyproject.toml sandbox/uv.lock ./
-COPY sandbox/scripts/install_noto_cjk_sc.py sandbox/scripts/verify_matplotlib_cjk.py sandbox/scripts/verify_geoscience_stack.py sandbox/scripts/recursive_unpack.py sandbox/scripts/dataset_quicklook.py sandbox/scripts/dataset_analysis_runner.py sandbox/scripts/datalab_json.py sandbox/scripts/datalab_analysis.py sandbox/scripts/scientific_data_ops.py sandbox/scripts/scientific_recipe_ops.py sandbox/scripts/tool_plugin_runner.py /usr/local/lib/ai-dataseek/
+COPY sandbox/scripts/install_noto_cjk_sc.py sandbox/scripts/verify_matplotlib_cjk.py sandbox/scripts/verify_geoscience_stack.py sandbox/scripts/recursive_unpack.py sandbox/scripts/dataset_analysis_runner.py sandbox/scripts/datalab_json.py sandbox/scripts/datalab_analysis.py sandbox/scripts/datalab_statistics.py sandbox/scripts/datalab_results.py sandbox/scripts/python_inspect.py sandbox/scripts/scientific_data_ops.py sandbox/scripts/scientific_recipe_ops.py sandbox/scripts/tool_plugin_runner.py /usr/local/lib/ai-dataseek/
 COPY sandbox/scientific_operators /usr/local/lib/ai-dataseek/scientific_operators
 
 # Install the exact locked runtime, including the common Excel and plotting
@@ -196,6 +196,8 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # Statistical methods are installed at build time, never opportunistically during a user analysis.
 COPY sandbox/scripts/verify_statistics_stack.py /usr/local/lib/ai-dataseek/verify_statistics_stack.py
 RUN /app/.venv/bin/python /usr/local/lib/ai-dataseek/verify_statistics_stack.py
+COPY sandbox/scripts/verify_result_contracts.py /usr/local/lib/ai-dataseek/verify_result_contracts.py
+RUN /app/.venv/bin/python /usr/local/lib/ai-dataseek/verify_result_contracts.py
 
 # Verify the sandbox-only SQLite wrapper exposes the public resource controls.
 RUN /app/.venv/bin/python -c "import apsw; assert apsw.apswversion() == '3.53.4.0'; c=apsw.Connection(':memory:'); c.limit(apsw.SQLITE_LIMIT_ATTACHED,0); assert c.limit(apsw.SQLITE_LIMIT_ATTACHED)==0; assert hasattr(c,'set_authorizer') and hasattr(c,'set_progress_handler'); c.close()"
@@ -244,9 +246,6 @@ RUN install -m 0755 \
     /usr/local/lib/ai-dataseek/recursive_unpack.py \
     /usr/local/bin/ai-dataseek-unpack && \
     install -m 0755 \
-    /usr/local/lib/ai-dataseek/dataset_quicklook.py \
-    /usr/local/bin/ai-dataseek-quicklook && \
-    install -m 0755 \
     /usr/local/lib/ai-dataseek/dataset_analysis_runner.py \
     /usr/local/bin/ai-dataseek-analysis && \
     install -m 0755 \
@@ -279,7 +278,6 @@ RUN python -m pip --version && \
     projinfo EPSG:4326 >/dev/null && \
     python /usr/local/lib/ai-dataseek/verify_geoscience_stack.py && \
     ai-dataseek-unpack --help >/dev/null && \
-    ai-dataseek-quicklook --help >/dev/null && \
     ai-dataseek-analysis --help >/dev/null && \
     ai-dataseek-scientific --help >/dev/null && \
     ai-dataseek-scientific-recipe --help >/dev/null && \

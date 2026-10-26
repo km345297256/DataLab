@@ -28,6 +28,7 @@ from app.domain.services.tools.mcp import MCPToolkit
 from app.domain.services.tools.pipeline import ToolExecutionInterceptor
 from app.domain.services.tools.plugin import default_plugin_directory
 from app.domain.services.tools.registry import ToolRegistry
+from app.domain.services.tools.tool_contract import ToolContractError, validate_tool_arguments
 from app.infrastructure.external.llm.chat_model import LangChainModelDriver
 from app.infrastructure.external.plugins import NodePluginRuntime
 from app.infrastructure.external.plugins.node_runtime import (
@@ -130,6 +131,63 @@ def _schemas(agent):
 
 
 @pytest.mark.asyncio
+async def test_dataset_analysis_exposes_valid_installed_python_api_inspection_schema(flow_factory):
+    flow = flow_factory()
+    flow.executor._dataset_fast_path_mode = True
+    schemas = {item["function"]["name"]: item["function"] for item in _schemas(flow.executor)}
+    definition = schemas["python_inspect"]
+    assert set(definition["parameters"]["required"]) == {"id", "module"}
+    assert {"module", "names"} <= definition["parameters"]["properties"].keys()
+    tool = flow.executor.get_tool("python_inspect")
+    assert tool is not None
+    call = {"id": "inspect-call", "name": "python_inspect", "args": {
+        "id": "inspect-process", "module": "scipy.stats", "names": ["ttest_ind", "linregress"],
+    }}
+    validate_tool_arguments(tool, call)
+    with pytest.raises(ToolContractError):
+        validate_tool_arguments(tool, {**call, "args": {**call["args"], "names": ["x"] * 9}})
+
+
+@pytest.mark.asyncio
+async def test_dataset_analysis_can_read_versions_and_apply_atomic_python_patches(flow_factory):
+    flow = flow_factory()
+    executor = flow.executor
+    executor._dataset_fast_path_mode = True
+    sandbox = flow._sandbox
+    digest = "a" * 64
+    sandbox.file_read = AsyncMock(return_value=ToolResult(success=True, data={
+        "file": "/home/ubuntu/scripts/analysis.py", "content": "total = values.sum()\n",
+        "file_sha256": digest, "sha256_scope": "full_file",
+    }))
+    sandbox.file_apply_patch = AsyncMock(return_value=ToolResult(success=True, data={
+        "file": "/home/ubuntu/scripts/analysis.py", "changed": True,
+    }))
+
+    schemas = {item["function"]["name"]: item["function"] for item in _schemas(executor)}
+    assert {"file_read", "file_apply_patch", "program_run"} <= schemas.keys()
+    assert schemas["file_apply_patch"]["parameters"]["properties"]["syntax_check"]["enum"] == [
+        "none", "python", "json",
+    ]
+    read = await executor.get_tool("file_read").ainvoke({
+        "id": "read-source", "name": "file_read",
+        "args": {"file": "/home/ubuntu/scripts/analysis.py", "include_version": True},
+    })
+    args = {
+        "file": "/home/ubuntu/scripts/analysis.py",
+        "base_sha256": read.artifact.data["file_sha256"],
+        "replacements": [{"old_str": "values.sum()", "new_str": "values.sum(skipna=False)",
+                          "expected_count": 1}],
+        "syntax_check": "python",
+    }
+    result = await executor.get_tool("file_apply_patch").ainvoke({
+        "id": "repair-source", "name": "file_apply_patch", "args": args,
+    })
+    assert result.status == "success"
+    assert sandbox.file_read.await_args.kwargs["include_version"] is True
+    sandbox.file_apply_patch.assert_awaited_once_with(**args)
+
+
+@pytest.mark.asyncio
 async def test_default_flow_is_small_but_legacy_profile_retains_full_catalog(flow_factory):
     small = flow_factory()
     legacy = flow_factory({"name": "Pre-Phase-7 profile"})
@@ -144,7 +202,8 @@ async def test_default_flow_is_small_but_legacy_profile_retains_full_catalog(flo
     _, initial_tokens = estimate_context_tokens([], tool_schemas=initial)
     _, complete_tokens = estimate_context_tokens([], tool_schemas=complete)
     assert initial_tokens < complete_tokens / 3
-    assert {"dataset_quicklook", "dataset_unpack", "shell_exec"} <= set(ToolRegistry(small.executor.toolkits).tool_names())
+    assert {"dataset_unpack", "shell_exec"} <= set(ToolRegistry(small.executor.toolkits).tool_names())
+    assert "dataset_quicklook" not in ToolRegistry(small.executor.toolkits).tool_names()
     assert {"ncbi_search_genomes", "ncbi_describe_genome", "ncbi_plan_acquisition"} <= set(ToolRegistry(small.executor.toolkits).tool_names())
     assert "Scientific data discovery" in small._dynamic_system_prompt()
     assert small._tool_registry.get_tool("space_ground_track") is not None

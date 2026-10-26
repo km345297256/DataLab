@@ -7,6 +7,7 @@ from app.domain.services.skills.skill_creation_error import SkillPackageValidati
 from .models import SkillRecipe
 from .script_policy import SkillScriptValidationError, invocation_arguments, validate_script
 from .privacy import ensure_context
+from .interface_contracts import validate_declared_invocation, validate_declared_script_interface
 
 
 def document_strings(value):
@@ -51,6 +52,9 @@ def validate_recipe(recipe: SkillRecipe, private_values=None):
             raise SkillPackageValidationError("incomplete_skill_conditions")
     for script in recipe.scripts:
         validate_script(script)
+        declaration = next((item for item in recipe.implementation.scripts if item.path == script.path), None) if recipe.implementation else None
+        if declaration is not None:
+            validate_declared_script_interface(script, declaration.interface_contract)
 
 
 def validate_portable_contract(contract, privacy):
@@ -83,6 +87,10 @@ def validate_implementation(recipe: SkillRecipe, contract: MethodContract, progr
     if (plan.kind == "parameterized_scripts") != bool(plan.scripts):
         raise CoverageError("inconsistent_implementation_plan")
     for index, item in enumerate(plan.scripts):
+        if plan.interface_version == 2 and item.interface_contract is None:
+            raise SkillPackageValidationError("invalid_declared_script_interface", details={
+                "interface_issues": [{"location": ["implementation", "scripts", index, "interface_contract"],
+                                       "reason": "explicit_interface_required"}]})
         if not set(item.requirement_ids) <= ids or not set(item.implementation_source_ids) <= sources:
             raise CoverageError("unknown_implementation_reference")
         # The source-authoring boundary freezes this metadata. Check its
@@ -95,6 +103,7 @@ def validate_implementation(recipe: SkillRecipe, contract: MethodContract, progr
                 "invocation_issues": [{"location": ["implementation", "scripts", index, "invocation"],
                                        "code": error.code}],
             }) from error
+        validate_declared_invocation(item, item.interface_contract)
     if recipe.scripts and [item.path for item in recipe.scripts] != paths:
         raise CoverageError("unexpected_generated_script")
 

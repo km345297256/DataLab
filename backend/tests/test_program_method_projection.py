@@ -233,12 +233,14 @@ def test_transformed_ast_is_compiled_before_unparse_or_publication(monkeypatch):
     safe_failure(error.value, "invalid_projection")
 
 
-def test_private_identifier_is_rejected_without_fallback_to_unredacted_source():
+def test_private_local_identifier_is_consistently_renamed_without_raw_source_fallback():
     identifier = "synthetic_private_identifier_canary"
-    with pytest.raises(projection.ProgramMethodEvidenceError) as error:
-        projection.method_program_references([host_record(f"{identifier} = mean(values)")], private_values={identifier})
-    safe_failure(error.value, "private_identifiers")
-    assert identifier not in str(error.value)
+    references = projection.method_program_references(
+        [host_record(f"{identifier} = mean(values)\nresult = {identifier} + 1")], private_values={identifier})
+    assert identifier not in str(references)
+    tree = ast.parse(references[0]["source"])
+    assert tree.body[0].targets[0].id == tree.body[1].value.left.id
+    assert references[0]["reference_only"] is True
 
 
 def test_error_reason_whitelist_cannot_become_an_exception_text_escape_hatch():

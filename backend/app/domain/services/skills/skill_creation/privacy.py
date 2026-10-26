@@ -10,10 +10,11 @@ from __future__ import annotations
 import ast
 from bisect import bisect_left
 import io
+import json
 import math
 import re
 import tokenize
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Literal
 
 Category = Literal["identity", "host_path", "source_filename", "credential", "url"]
@@ -72,6 +73,8 @@ contracts versions implementation_provenance tool_name function_name message not
 input_files argv data oracle_explanation row_count match count value atol rtol type
 input_unchanged script_path support version cli_options output_mode json_outputs input_contract output_contract
 assertion_additions assertion new_cases
+interface_contract interface_version inputs argument structure missing_semantics meaning shape
+properties items additional_keys flags choices filename_argument dynamic_columns repair_scope script_paths
 """.split())
 _CODE_FIELDS = frozenset({"content", "source", "code", "python_code", "script", "program"})
 _PYTHON_SHEBANG = re.compile(r"\A#![ \t]*(?:/usr/bin/env[ \t]+python3?|/usr/bin/python3?)[ \t]*(?:\r?\n|$)")
@@ -157,6 +160,28 @@ def _review_pointer_comparison(text: str, pointers: frozenset[str]) -> bool:
             if value in {"true", "false", "null"} or math.isfinite(float(value)):
                 return True
     return False
+
+
+def _review_string_comparison_spans(text: str, targets: frozenset[tuple[str, str]]) -> list[tuple[int, int]]:
+    """Recognize only a current target compared with its declared string value.
+
+    Bare labels support ordinary citations such as ``/groups/0/group=A``.
+    Quoted values use JSON string semantics. Full lexical termination keeps a
+    public comparison from granting permission to a following path suffix.
+    """
+    spans = []
+    for pointer, expected in targets:
+        pattern = (re.escape(pointer) + r'(?:==|!=|=)(?P<value>"(?:\\.|[^"\\])*"|[\w.-]+)'
+                   + r"(?=$|[\s`'，。；,;()（）\]])")
+        for match in re.finditer(pattern, text):
+            raw = match.group("value")
+            try:
+                value = json.loads(raw) if raw.startswith('"') else raw
+            except ValueError:
+                continue
+            if type(value) is str and value == expected:
+                spans.append(match.span())
+    return spans
 
 
 @dataclass(frozen=True)
@@ -251,6 +276,47 @@ def _code_value_spans(code: _PythonCode) -> list[tuple[int, int]]:
     return spans
 
 
+def _code_annotation_keys(code: _PythonCode) -> frozenset[int]:
+    """Exact credential-like parameters with a pure annotation and no default.
+
+    An annotation names a type, not a credential. Restrict this distinction to
+    AST-proven function parameter keys; an annotation's source span may contain
+    comments, which must retain their independent assignment scans. Literal
+    annotations/defaults, arbitrary expressions and known secrets stay scanned.
+    """
+    def pure_type(node):
+        if isinstance(node, ast.Name):
+            return True
+        if isinstance(node, ast.Attribute):
+            return pure_type(node.value)
+        if isinstance(node, ast.Subscript):
+            return pure_type(node.value) and pure_type(node.slice)
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return all(pure_type(item) for item in node.elts)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            return pure_type(node.left) and pure_type(node.right)
+        return isinstance(node, ast.Constant) and (node.value is None or node.value is Ellipsis)
+
+    keys = set()
+    def add(name, node, annotation):
+        if ((_CREDENTIAL_KEY.fullmatch(name) or _IDENTITY_KEY.fullmatch(name))
+                and annotation is not None and pure_type(annotation)):
+            keys.add(code.span(node)[0])
+
+    for node in ast.walk(code.tree):
+        if isinstance(node, ast.arguments):
+            positional = [*node.posonlyargs, *node.args]
+            # Positional defaults belong to the trailing arguments. A None
+            # kw_default means absence; ast.Constant(None) is a real default.
+            unbound = positional[:len(positional) - len(node.defaults)]
+            unbound += [argument for argument, default in zip(node.kwonlyargs, node.kw_defaults)
+                        if default is None]
+            unbound += [argument for argument in (node.vararg, node.kwarg) if argument is not None]
+            for argument in unbound:
+                add(argument.arg, argument, argument.annotation)
+    return frozenset(keys)
+
+
 def _decoded_code_literals(code: _PythonCode) -> list[tuple[str, int, int]]:
     """Escaped Python strings must not conceal known values or host paths."""
     result = []
@@ -270,6 +336,40 @@ class PrivacyContext:
     # Host provenance only; these names remain private to every scanner. The
     # workflow authoring adapter may assign new names before source generation.
     generated_output_filenames: frozenset[str] = field(default_factory=frozenset, repr=False)
+    # Request-owned roles are derived afresh from a complete typed plan. A
+    # dictionary merely containing data/user_id never grants these roles.
+    synthetic_plan_inputs: bool = field(default=False, repr=False)
+    synthetic_identity_roots: frozenset[tuple[str | int, ...]] = field(default_factory=frozenset, repr=False)
+    review_json_string_values: frozenset[tuple[str, str]] = field(default_factory=frozenset, repr=False)
+
+    def document_scope(self, value) -> "PrivacyContext":
+        if not self.synthetic_plan_inputs:
+            return self
+        from app.domain.services.skills.skill_validation import SyntheticValidationPlan
+        try:
+            plan = SyntheticValidationPlan.model_validate(_document(value))
+        except (ValueError, TypeError):
+            return replace(self, synthetic_identity_roots=frozenset(),
+                           review_json_pointers=frozenset(), review_json_string_values=frozenset())
+        roots = frozenset(("scripts", si, "cases", ci, "input_files", fi, "data")
+            for si, script in enumerate(plan.scripts) for ci, case in enumerate(script.cases)
+            for fi, fixture in enumerate(case.input_files) if fixture.format == "json")
+        pointers, strings = self._plan_targets(plan)
+        return replace(self, synthetic_identity_roots=roots, review_json_pointers=pointers,
+                       review_json_string_values=strings)
+
+    @staticmethod
+    def _plan_targets(plan):
+        assertions = [item for script in plan.scripts for case in script.cases for item in case.assertions
+                      if item.type in {"json_value", "json_array_length", "json_object_keys"}]
+        pointers = frozenset(item.pointer for item in assertions if item.pointer
+            and item.pointer.split("/", 2)[1].casefold() not in _HOST_ROOT_NAMES)
+        strings = frozenset((item.pointer, item.expected.value) for item in assertions
+            if item.type == "json_value" and item.pointer in pointers and type(item.expected.value) is str)
+        return pointers, strings
+
+    def _synthetic_identity(self, location) -> bool:
+        return any(location[:len(root)] == root for root in self.synthetic_identity_roots)
 
     def _amendment_pointer_locations(self, value) -> frozenset[tuple[str | int, ...]]:
         """Only a request-owned amendment schema grants this locator role.
@@ -307,11 +407,11 @@ class PrivacyContext:
         from app.domain.services.skills.skill_validation import SyntheticValidationPlan
         from .package import validate_portable_document
         plan = SyntheticValidationPlan.model_validate(_document(plan))
-        base = PrivacyContext(self.entries)
+        base = PrivacyContext(self.entries, generated_output_filenames=self.generated_output_filenames,
+                              synthetic_plan_inputs=True)
         validate_portable_document(plan, base)
-        return self._with_review_pointers(assertion.pointer
-            for script in plan.scripts for case in script.cases for assertion in case.assertions
-            if assertion.type in {"json_value", "json_array_length", "json_object_keys"})
+        pointers, strings = self._plan_targets(plan)
+        return self._with_review_pointers(pointers, strings=strings)
 
     def for_reference_targets(self, blind_cases) -> "PrivacyContext":
         """Permit only host-projected JSON targets in reference review prose.
@@ -330,17 +430,37 @@ class PrivacyContext:
             {**{key: value for key, value in case.items() if key != "output_targets"},
              "assertions": case["output_targets"]} for case in script["cases"]]}
             for script in blind_cases]
-        validate_portable_document(declaration, PrivacyContext(self.entries))
+        # This is the host's blind projection of typed synthetic fixtures, not
+        # permission for the reference author's returned source or prose.
+        from app.domain.services.skills.skill_validation import SyntheticJSONInput
+        roots = set()
+        for si, script in enumerate(blind_cases):
+            if set(script) != {"script_path", "cases"}:
+                continue
+            for ci, case in enumerate(script["cases"]):
+                if set(case) != {"case_id", "input_files", "argv", "requirement_ids", "output_targets"}:
+                    continue
+                for fi, fixture in enumerate(case["input_files"]):
+                    try:
+                        SyntheticJSONInput.model_validate(fixture)
+                    except (ValueError, TypeError):
+                        continue
+                    roots.add((si, "cases", ci, "input_files", fi, "data"))
+        validate_portable_document(declaration, PrivacyContext(self.entries,
+            generated_output_filenames=self.generated_output_filenames,
+            synthetic_identity_roots=frozenset(roots)))
         targets = [JSONOutputAssertion.model_validate({"path": target["path"], "pointer": target["pointer"]})
             for script in blind_cases for case in script["cases"] for target in case["output_targets"]
             if target["type"] in {"json_value", "json_array_length", "json_object_keys"}]
         return self._with_review_pointers(target.pointer for target in targets)
 
-    def _with_review_pointers(self, values) -> "PrivacyContext":
+    def _with_review_pointers(self, values, *, strings=frozenset()) -> "PrivacyContext":
         pointers = frozenset(value for value in values if value
             and value.split("/", 2)[1].casefold() not in _HOST_ROOT_NAMES)
         return PrivacyContext(self.entries, pointers,
-                              generated_output_filenames=self.generated_output_filenames)
+                              generated_output_filenames=self.generated_output_filenames,
+                              review_json_string_values=frozenset((pointer, value) for pointer, value in strings
+                                                                 if pointer in pointers))
 
     @classmethod
     def from_legacy(cls, values: Iterable[str] | None) -> "PrivacyContext":
@@ -544,6 +664,7 @@ class PrivacyContext:
 
     def _matches(self, text: str, location: tuple[str | int, ...] = (), *, assertion_pointer: bool = False) -> list[_Match]:
         matches = []
+        synthetic_identity = self._synthetic_identity(location)
         code = _python_code(text) if location and location[-1] in _CODE_FIELDS else None
         for entry in self.entries:
             # Identifiers and filenames are lexical values, not substrings of
@@ -553,6 +674,8 @@ class PrivacyContext:
             pattern += r"(?![A-Za-z0-9_])" if boundary and entry.value[-1].isascii() and entry.value[-1].isalnum() else ""
             matches.extend(_Match(match.start(), match.end(), entry.category) for match in re.finditer(pattern, text))
         for pattern, category in ((_URL, "url"), (_OPAQUE_ID, "identity"), (_SECRET, "credential")):
+            if category == "identity" and synthetic_identity:
+                continue
             matches.extend(_Match(match.start(), match.end(), category) for match in pattern.finditer(text))
         # JSON pointers are a declared contract syntax, not host paths.  All
         # other fields (including code/comments/defaults) retain path checks.
@@ -563,6 +686,8 @@ class PrivacyContext:
         if not pointer:
             shebang = _PYTHON_SHEBANG.match(text) if location and location[-1] in _CODE_FIELDS else None
             string_spans = _ordinary_string_spans(text, code) if code is not None else []
+            comparison_spans = (_review_string_comparison_spans(text, self.review_json_string_values)
+                if location and location[-1] in {"explanation", "oracle_explanation"} else [])
             for match in (*_PATH.finditer(text), *_HOST_ROOT_PATH.finditer(text)):
                 # Source escape syntax may resemble a UNC path. Scan actual
                 # decoded strings below; only this raw generic path guess is
@@ -583,9 +708,10 @@ class PrivacyContext:
                 # oracle explanations. Prefixes/suffixes, arbitrary paths,
                 # code and defaults receive no exception. Known private
                 # values, URLs and secrets above are never suppressed.
-                if (location and location[-1] == "explanation"
+                if (location and location[-1] in {"explanation", "oracle_explanation"}
                         and (match.group() in self.review_json_pointers
-                             or _review_pointer_comparison(match.group(), self.review_json_pointers))):
+                             or _review_pointer_comparison(match.group(), self.review_json_pointers)
+                             or any(start <= match.start() and match.end() <= end for start, end in comparison_spans))):
                     continue
                 # A suffix of an explicit path parameter is not an absolute
                 # path.  Known private values above still take precedence.
@@ -594,19 +720,25 @@ class PrivacyContext:
                 if not parameter_suffix:
                     matches.append(_Match(match.start(), match.end(), "host_path"))
         code_spans: list[tuple[int, int]] | None = None
+        annotation_keys: frozenset[int] = frozenset()
         for match in _ASSIGNMENT.finditer(text):
             rhs = match.group("value")
             if _placeholder(rhs) or _REFERENCE.fullmatch(rhs):
                 continue
             if code_spans is None:
                 code_spans = _code_value_spans(code) if code is not None else []
+                annotation_keys = _code_annotation_keys(code) if code is not None else frozenset()
+            if match.start("key") in annotation_keys:
+                continue
             if any(start <= match.start("value") < end for start, end in code_spans):
                 continue
             category = "credential" if _CREDENTIAL_KEY.fullmatch(match.group("key")) else "identity"
+            if category == "identity" and synthetic_identity:
+                continue
             matches.append(_Match(match.start("value"), match.end("value"), category))
         if location and isinstance(location[-1], str) and text and not _placeholder(text):
             key = location[-1]
-            if _CREDENTIAL_KEY.fullmatch(key) or _IDENTITY_KEY.fullmatch(key):
+            if _CREDENTIAL_KEY.fullmatch(key) or (_IDENTITY_KEY.fullmatch(key) and not synthetic_identity):
                 matches.append(_Match(0, len(text), "credential" if _CREDENTIAL_KEY.fullmatch(key) else "identity"))
         if code is not None:
             for literal, start, end in _decoded_code_literals(code):
@@ -619,6 +751,7 @@ class PrivacyContext:
         The bounded default remains suitable for public diagnostics. Mutation
         authorization must use a complete scan rather than those diagnostics.
         """
+        self = self.document_scope(value)
         issues = []
         pointer_locations = self._amendment_pointer_locations(value)
         def walk(node: Any, location: tuple[str | int, ...]) -> None:
@@ -659,6 +792,7 @@ class PrivacyContext:
         return value
 
     def redact_document(self, value: Any) -> Any:
+        self = self.document_scope(value)
         pointer_locations = self._amendment_pointer_locations(value)
         def walk(node: Any, location: tuple[str | int, ...]) -> Any:
             node = _document(node)
@@ -667,7 +801,7 @@ class PrivacyContext:
             if isinstance(node, dict):
                 result = {}
                 for index, (key, nested) in enumerate(node.items()):
-                    safe_key = f"<private_field_{index}>" if self._matches(str(key)) else key
+                    safe_key = f"<private_field_{index}>" if self._matches(str(key), location + ("<key>", index)) else key
                     result[safe_key] = walk(nested, location + (str(key),))
                 return result
             if isinstance(node, (list, tuple)):
@@ -733,10 +867,14 @@ def generation_privacy(context, schema, stage, payload) -> PrivacyContext:
         if schema is ImplementationEdits:
             return implementation_revision_privacy(context, payload["previous_skill_package"])
     if stage == "workflow":
-        from .workflow_authoring import WorkflowDraft
-        if schema is WorkflowDraft:
+        from .workflow_authoring import WorkflowDraft, WorkflowDraftV2
+        if schema in {WorkflowDraft, WorkflowDraftV2}:
             return PrivacyContext(context.entries, generated_output_filenames=context.generated_output_filenames)
     if stage == "synthetic_validation_plan":
+        from app.domain.services.skills.skill_validation import SyntheticValidationPlan
+        if schema is SyntheticValidationPlan:
+            return PrivacyContext(context.entries, generated_output_filenames=context.generated_output_filenames,
+                                  synthetic_plan_inputs=True)
         from app.domain.services.skills.skill_validation_extension import VerificationCoverageAmendment
         if schema is VerificationCoverageAmendment:
             return PrivacyContext(context.entries, coverage_amendment_pointers=True,

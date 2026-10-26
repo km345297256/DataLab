@@ -97,6 +97,11 @@ def portable_output_repair_bindings(draft: WorkflowDraft, privacy: PrivacyContex
             for index, script in enumerate(draft.implementation.scripts):
                 if invocation_pattern.search(script.invocation):
                     locations.append(["implementation", "scripts", index, "invocation"])
+                if script.interface_contract is not None:
+                    for output_index, output in enumerate(script.interface_contract.outputs):
+                        if output.path.rsplit("/", 1)[-1] == planned.original_name:
+                            locations.append(["implementation", "scripts", index,
+                                              "interface_contract", "outputs", output_index, "path"])
         bindings.append({"output_index": planned.output_index, "portable_name": planned.portable_name,
                          "current_reference": current, "locations": locations})
     return bindings
@@ -127,7 +132,7 @@ def normalize_generated_output_names(draft: WorkflowDraft, privacy: PrivacyConte
                 # source examples are not an authorized code rewrite surface.
                 if "```" not in text and "~~~" not in text:
                     item[key] = pattern.sub(lambda match: mapping[match.group()], text)
-    candidate = WorkflowDraft.model_validate(document)
+    candidate = type(draft).model_validate(document)
     if privacy.scan_document(candidate):
         return draft
     return candidate

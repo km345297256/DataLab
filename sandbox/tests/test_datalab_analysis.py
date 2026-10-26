@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 
@@ -7,6 +8,52 @@ import pandas as pd
 import pytest
 
 from scripts.datalab_analysis import AnalysisInvariantError, RowPartition, aligned_groups, StageCache
+
+
+def test_row_partition_docs_distinguish_in_place_mutation_from_evidence():
+    exclude_doc = inspect.getdoc(RowPartition.exclude)
+    verify_doc = inspect.getdoc(RowPartition.verify)
+    assert 'Returns\n-------\nNone\n' in exclude_doc
+    assert 'in place' in exclude_doc and 'separate statement' in exclude_doc
+    assert 'Returns\n-------\ndict\n' in verify_doc
+    assert 'evidence dict, not a list' in verify_doc
+    assert 'evidence = audit.verify(retained_ids)' in verify_doc
+
+
+def test_documented_partition_usage_retains_ids_and_existing_return_behavior():
+    audit = RowPartition([10, 20, 30, 40])
+    returned = audit.exclude('missing', [20])
+    retained_ids = [10, 30, 40]
+    evidence = audit.verify(retained_ids)
+    assert returned is None
+    assert retained_ids == [10, 30, 40]
+    assert evidence == {'passed': True, 'original_rows': 4, 'accepted_rows': 3,
+                        'excluded_rows': {'missing': 1}}
+
+
+def test_documented_grouping_uses_named_row_identity_or_explicit_positional_arrays():
+    doc = inspect.getdoc(aligned_groups)
+    assert 'set_index' in doc and 'to_numpy' in doc
+    assert 'dictionary mapping each group label to a NumPy ndarray' in doc
+    retained = pd.DataFrame({'row_id': [10, 30, 40], 'value': [1., 2., 3.],
+                             'group': ['A', 'B', 'A']})
+    indexed = retained.set_index('row_id')
+    for values, labels in ((indexed.value, indexed.group),
+                           (retained.value.to_numpy(), retained.group.to_numpy())):
+        groups = aligned_groups(values, row_ids=indexed.index, labels=labels)
+        assert isinstance(groups, dict)
+        assert all(isinstance(group, np.ndarray) for group in groups.values())
+        assert groups['A'].tolist() == [1., 3.] and groups['B'].tolist() == [2.]
+    with pytest.raises(AnalysisInvariantError, match='index'):
+        aligned_groups(retained.value, row_ids=indexed.index, labels=retained.group)
+
+
+def test_stage_cache_documented_result_stays_an_object(tmp_path):
+    assert 'Returns\n-------\nStageResult\n' in inspect.getdoc(StageCache.run)
+    result = stage(StageCache(tmp_path / 'stages'))
+    assert not isinstance(result, dict)
+    assert result.reused is False and isinstance(result.evidence, dict)
+    assert isinstance(result.outputs['result'], Path)
 
 
 def test_partition_preserves_original_rows_across_all_exclusion_steps():

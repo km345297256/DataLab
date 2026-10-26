@@ -40,7 +40,7 @@ const catalog = {
     name: 'Geoscience',
     description: 'Geospatial and Earth science analysis',
     plugin_ids: ['geospatial', 'netcdf'],
-    initial_tools: ['dataset_quicklook'],
+    initial_tools: ['table_profile'],
     available_tool_count: 18,
     initial_tool_count: 1,
   }],

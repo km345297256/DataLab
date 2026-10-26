@@ -272,7 +272,7 @@ async def test_file_existence_saved_script_attempt_or_failure_is_not_computation
 @pytest.mark.asyncio
 async def test_observed_input_filename_is_not_mistaken_for_a_missing_output():
     result, _ = await run(response(paragraph("The observed mean in `input.csv` is 3 mg.")),
-        events=[tool("dataset_quicklook", args={"input_path": "/home/ubuntu/datasets/source/input.csv"})])
+        events=[tool("table_profile", args={"input_path": "/home/ubuntu/datasets/source/input.csv"})])
     assert result.status == "verified"
 
 

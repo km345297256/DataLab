@@ -54,7 +54,7 @@ def assert_still_private(draft, privacy):
     normalized = normalize_generated_output_names(draft, privacy)
     assert draft.model_dump_json() == original
     assert normalized.model_dump_json() == original
-    with pytest.raises(SkillPackageValidationError, match="生成内容仍包含会话专属信息"):
+    with pytest.raises(SkillPackageValidationError, match="来源名称或疑似敏感信息尚未处理完成"):
         validate_portable_document(normalized, privacy)
 
 

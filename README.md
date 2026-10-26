@@ -142,7 +142,7 @@ The Compose project, network/resource prefix, and application image names use `d
 2. **Personal library:** an entry stores an owned reference to a file or file collection. Saving a file again must not duplicate the underlying object. Existing references protect retained files from conversation cleanup.
 3. **Input selection:** only explicitly selected, authorized files are exposed to an analysis task. Private bucket keys, credentials, and host mount paths remain in the backend.
 4. **Analysis:** a version-pinned rclone helper exposes exact read-only object-backed inputs with disk caching disabled. Short-lived grants scope its access. Computation writes to a separate workspace; it must not create a full-file input cache or silently copy inputs when mounts fail.
-5. **Delivery:** validated output files become durable object-storage references. Acquired source files are inputs and must not be republished as newly generated analysis artifacts.
+5. **Delivery:** readable, stable output files become durable object-storage references after successful upload and byte-identity checks. This mechanical delivery evidence is separate from content or scientific validation. Acquired source files are inputs and must not be republished as newly generated analysis artifacts.
 
 The default `hybrid` provider writes new files to MinIO and retains compatibility reads for older GridFS objects. The legacy `gridfs` configuration value is an alias for this behavior. Compatibility reading does not guarantee that an old object can be used as a mounted analysis input: unsupported legacy sources fail explicitly instead of being copied or migrated automatically.
 
@@ -152,11 +152,34 @@ Historical registered datasets and their ownership remain intact. Legacy host pa
 
 Data Skills describe reusable methods, inputs, dependencies, output contracts, scripts, and references. The creator prepares a private draft, checks structure and method coverage, and runs supported scripts against small synthetic fixtures. The user explicitly chooses whether to install the package. Older `/skill-create` calls remain compatible.
 
+The current creation pipeline preserves these boundaries:
+
+- **Analysis history:** the latest analysis request must have complete evidence before creation; an incomplete latest request is not silently replaced by an earlier success. Related earlier constraints, decisions, corrections, and verified program versions provide context. Earlier methods must be retained or explicitly justified as superseded or outside the current scope; failed or replaced steps are not automatically accepted as the final method.
+- **Declared interfaces:** before writing new scripts, the workflow declares command-line options, input fields and nesting, configuration locations, defaults and missing-value behavior, and output files and structures. The implementation and independent verification share that frozen interface. Previously stored recipes remain readable.
+- **Localized revision:** a confirmed defect confined to an existing script permits edits only within the host-authorized script scope. Method, workflow, or interface defects return to workflow revision. A patched implementation still undergoes full checks, independent review, and supported synthetic execution; receiving a review response alone does not mark the method accepted.
+- **Privacy:** source projections, generated code, contracts, reviews, and synthetic fixtures pass stage-specific privacy checks. Method references retain source-supported non-private constants while replacing private bindings with unresolved placeholders that must be rebound to current inputs. Only independently reviewed filenames with no analytical meaning may be normalized when initially authoring synthetic file bindings; scientific values, expectations, tolerances, and frozen cases remain unchanged.
+
 A skill is not a guarantee of scientific validity on new data. Check assumptions, parameter choices, input compatibility, and output quality for each use. Skill creation failures preserve delivered analysis files and can be retried separately.
 
 Execution keeps usage accounting, operation identities, progress, and delivery evidence. It has no cumulative task token or wall-clock quota, but individual provider/tool timeouts, context bounds, cancellation, concurrency, and data-access protections remain. Runtime capability catalogs describe observed availability; they do not prohibit other libraries, exports, or APIs. Missing dependencies may be prepared inside the isolated task environment while preserving its input and access boundaries.
 
 Recovery follows recorded execution evidence and checkpoints. It does not mean arbitrary partially executed programs can be replayed safely or every historical task can resume automatically. See [execution recovery](docs/analysis-runtime-recovery.md), [delivery contract](docs/analysis-delivery-contract.md), and [execution reliability](docs/changes-2026-10-25-execution-reliability.md).
+
+## Analysis program and result contracts
+
+Saved Python analysis scripts use `program_run` with an explicit script path, working directory, and literal argument list so the program's own exit status remains observable. When an installed library interface is uncertain, `python_inspect` can inspect a module and up to eight related attributes, returning observed package versions, signatures, and bounded documentation. Imports run in the task sandbox and may have initialization effects; inspection does not call the target function or prove that it fits the selected data. Reuse existing observations rather than adding repeated probes.
+
+The sandbox provides optional helpers for checks that match their documented methods:
+
+| Helper | Checked scope |
+| --- | --- |
+| `datalab_analysis.RowPartition` / `aligned_groups` | Row conservation and explicit row/group alignment. |
+| `datalab_statistics` | Supported nested OLS F comparisons, linear contrasts, and grouped model-residual Levene checks, including required sample identity and method assumptions. |
+| `datalab_results.ResultBundle` | A frozen computed-result snapshot shared by JSON, CSV, supported line/scatter plots, and controlled factual report fragments; `verify()` rechecks registered outputs. |
+
+These are optional building blocks. Direct calculations and other libraries remain available; a helper must not change the requested method merely to fit its API. A successful exit, consistent exports, correct numerical checks, and a scientifically suitable interpretation are separate facts. `ResultBundle` neither uploads results nor certifies arbitrary prose, unsupported figures, or the meaning of user-supplied uncertainty bounds.
+
+See [executable result checks](docs/analysis-result-contracts.md) for assumptions and limits, and the [2026-10-26 analysis and skills release notes](docs/releases/2026-10-26-analysis-and-skills.md) for the change scope and verification evidence. Synthetic regressions and any real-model acceptance samples apply only to their documented cases and execution history; they do not establish a general first-attempt success rate or speed improvement.
 
 ## Repository layout
 
@@ -207,11 +230,12 @@ Preserve the `datalab` branch unless another branch is explicitly selected. Comm
 | File storage | [MinIO storage](docs/minio-file-storage.md) |
 | Data connectors | [Connector contract](docs/data-connector-standard.md) |
 | Data Skills | [Package catalog](data-skills/README.md), [package contract](docs/data-skill-package-v1.md), [creation pipeline](docs/skill-creation-pipeline.md) |
-| Analysis execution | [Jobs](docs/analysis-jobs.md), [recovery](docs/analysis-runtime-recovery.md), [delivery](docs/analysis-delivery-contract.md) |
+| Analysis execution | [Jobs](docs/analysis-jobs.md), [recovery](docs/analysis-runtime-recovery.md), [delivery](docs/analysis-delivery-contract.md), [result checks](docs/analysis-result-contracts.md) |
 | Models and context | [Model driver and context budget](docs/model-driver-and-context-budget.md) |
 | Plugins and visualization | [Cordis architecture](docs/cordis-plugin-architecture.md), [visualization contract](docs/visualization-plugin-contract.md) |
 | Optional Office preview | [Office viewer](docs/onlyoffice-local-viewer.md) |
 | Persistent records | [Persistence contracts](docs/persistence/README.md) |
+| Current analysis and skills changes | [2026-10-26 release notes](docs/releases/2026-10-26-analysis-and-skills.md) |
 
 Some historical documents retain old DataSeek names, earlier feature boundaries, or dated verification counts. For current behavior, use this introduction together with the active code, configuration, and latest relevant contract.
 

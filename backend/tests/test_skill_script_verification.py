@@ -251,6 +251,12 @@ def wire_creator(monkeypatch, *, script=True):
     payload = recipe_payload()
     if script:
         payload["scripts"] = [directory_script()]
+        from skill_interface_fixtures import group_summary_interface
+        source = directory_script()
+        payload["implementation"] = {"interface_version": 2, "kind": "parameterized_scripts",
+            "reason": "The authored directory interface preserves both independent result files.",
+            "scripts": [{**{key: source[key] for key in ("path", "purpose", "invocation")},
+                         "requirement_ids": ["R001"], "interface_contract": group_summary_interface()}]}
     calls = []
 
     async def invoke(messages, **kwargs):

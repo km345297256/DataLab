@@ -24,6 +24,20 @@ Inputs are selected by owned file reference and mounted read-only. Object keys, 
 
 The default `hybrid` provider writes new files to MinIO and can read historical GridFS objects. Saving a personal library entry records a reference without duplicating the object. Generated results use durable object references; source downloads are not relabeled as generated artifacts.
 
+## Analysis execution and skill creation contracts
+
+Saved Python analysis runs through `program_run`, preserving the underlying program's exit status and tracked execution identity. `python_inspect` uses the same task environment to observe installed module versions, signatures, and return documentation for uncertain APIs. It imports the module without calling the selected target functions; imports can have initialization effects. An API observation, a successful process exit, mechanical file delivery, and scientific validity are distinct evidence.
+
+New skill creation requires complete evidence for the latest analysis request and uses related public history and verified source references. It does not skip an incomplete latest request to reuse an older success. Historical method sources must be retained or explicitly accounted for, including superseded or out-of-scope methods and replaced versions within the same turn. Private raw events and execution receipts are not copied into the resulting skill.
+
+New workflow authoring uses `implementation.interface_version=2`; each script declares a versioned `interface_contract` before its implementation is generated. It covers CLI options, input/configuration structure, missing-value behavior, and output bindings. The existing version-1 representation remains readable. Structural checks and independent review compare the implementation with the frozen interface; synthetic verification uses the same public contract.
+
+Review repair is localized only when host-validated target identities establish that the defect lies within existing script implementations. Method, workflow, or interface defects retain the workflow-revision route. Scoped edits do not bypass full package validation, independent review, or supported synthetic execution. Progress distinguishes a received review response, an accepted method, and a required revision.
+
+Privacy contexts are derived separately for each generation stage. Public interface syntax and synthetic bindings receive only narrowly validated roles; ordinary dictionary keys, explanatory prose, or tool output cannot grant privacy exemptions. A source-filename collision can be renamed during initial synthetic-plan authoring only if the independently reviewed interface says every input name is a location binding without analytical meaning. Expected values, scientific data, tolerances, and already frozen plans remain protected.
+
+See [result-check contracts](../docs/analysis-result-contracts.md) and the [2026-10-26 release notes](../docs/releases/2026-10-26-analysis-and-skills.md) for supported scope and evidence. These mechanisms do not establish a general reduction in model errors or task duration.
+
 ## Layout
 
 ```text
@@ -63,6 +77,8 @@ Tests have environment-specific prerequisites and isolated fixtures; do not poin
 - [Architecture scope](../docs/architecture-scope.md)
 - [Analysis execution recovery](../docs/analysis-runtime-recovery.md)
 - [Result delivery](../docs/analysis-delivery-contract.md)
+- [Executable result checks](../docs/analysis-result-contracts.md)
+- [2026-10-26 analysis and skills changes](../docs/releases/2026-10-26-analysis-and-skills.md)
 - [Model driver and context](../docs/model-driver-and-context-budget.md)
 - [MinIO storage](../docs/minio-file-storage.md)
 - [Persistence contracts](../docs/persistence/README.md)

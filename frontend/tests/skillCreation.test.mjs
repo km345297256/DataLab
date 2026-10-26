@@ -9,6 +9,13 @@ import { projectHistoryMessages } from '../src/utils/sessionHistory.ts';
 const draft = { id: 'draft-one', name: 'station-analysis', description: '站点质量检查与分析', capabilities: ['检查缺测与异常值'], triggers: ['分析站点'], applicability: ['站点观测表'], resources: ['SKILL.md', 'scripts/analyze.py'], installed: false, installed_skill_id: null, validation: { package: 'passed', script_syntax: 'passed', workflow_execution: 'not_run' } };
 const tool = overrides => ({ tool_call_id: 'create-one', name: 'skill', function: 'skill_create_from_session', status: 'called', args: {}, timestamp: 3, skill_creation: draft, ...overrides });
 
+test('review response, required revision and actual acceptance have separate progress labels', () => {
+  const progress = { stage: 'method_review', attempt: 1, code: null };
+  assert.equal(skillCreationProgressText({ ...progress, status: 'response_received' }), '方法完整性审查 · 审查结果已返回');
+  assert.equal(skillCreationProgressText({ ...progress, status: 'revision_required' }), '方法完整性审查 · 需要修订');
+  assert.equal(skillCreationProgressText({ ...progress, status: 'accepted' }), '方法完整性审查 · 审查通过');
+});
+
 test('safe stage progress survives history merging without becoming a draft or another operation', () => {
   const progress = { stage: 'workflow', status: 'repairing', attempt: 2, code: 'invalid_schema' };
   const history = projectHistoryMessages([

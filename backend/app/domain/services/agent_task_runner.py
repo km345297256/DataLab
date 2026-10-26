@@ -1363,6 +1363,58 @@ class AgentTaskRunner(TaskRunner):
         }]
 
     @staticmethod
+    def _python_inspection_console(event: ToolEvent) -> list[dict[str, Any]]:
+        """Show installed API facts without another process read or analysis claim."""
+        result = event.function_result
+        notice = spill_notice_from_result(result)
+        if notice is not None:
+            # The event's private spill panel owns the locator and full content.
+            # Do not expose either as an ordinary terminal-output transcript.
+            succeeded = result.success if isinstance(result, ToolResult) else (
+                result.get("success") is True if isinstance(result, dict) else False
+            )
+            detail = ("Detailed API observations were stored in this session's private result."
+                      if notice.status == "stored" else "Detailed API observations could not be stored.")
+            return [{"command": "Python interface inspection",
+                     "output": "Python API inspection only; no data analysis was performed.\n" + detail,
+                     "status": "completed" if succeeded else "failed"}]
+        data = result.data if isinstance(result, ToolResult) else (
+            result.get("data", {}) if isinstance(result, dict) else {}
+        )
+        data = data if isinstance(data, dict) else {}
+        observed = data.get("inspection")
+        observed = observed if isinstance(observed, dict) else {}
+
+        def text(value: Any, limit: int = 300) -> str:
+            return sanitize_spill_public_text(value[:limit]) if isinstance(value, str) else ""
+
+        lines = ["Python API inspection only; no data analysis was performed."]
+        if observed.get("schema") == "python-api-inspection/v1":
+            lines.append(f"Module: {text(observed.get('module'))}")
+            lines.append(f"Observation: {text(observed.get('state'))}")
+            python = text(observed.get("python_version"))
+            if python:
+                lines.append(f"Python: {python}")
+            distributions = observed.get("distributions")
+            for item in distributions[:4] if isinstance(distributions, list) else []:
+                if isinstance(item, dict):
+                    lines.append(f"Package: {text(item.get('name'))} {text(item.get('version'))}")
+            members = observed.get("members")
+            for item in members[:8] if isinstance(members, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                signature = item.get("signature")
+                signature = signature if isinstance(signature, dict) else {}
+                lines.append(f"{text(item.get('name'))}: {text(item.get('state'))} "
+                             f"{text(signature.get('text'), 1200)}".rstrip())
+        else:
+            lines.append("No complete API observation was returned.")
+            error = text(data.get("error_code"))
+            if error:
+                lines.append(f"Reason: {error}")
+        return [{"command": "Python interface inspection", "output": "\n".join(lines)}]
+
+    @staticmethod
     def _dataset_analysis_console(event: ToolEvent) -> list[dict[str, Any]]:
         """Render the high-level analysis result without exposing generated code."""
         notice = spill_notice_from_result(event.function_result)
@@ -1400,75 +1452,6 @@ class AgentTaskRunner(TaskRunner):
             "status": "completed" if success else "failed",
         }]
 
-    @staticmethod
-    def _dataset_quicklook_console(event: ToolEvent) -> list[dict[str, Any]]:
-        """Render quicklook's compact summary instead of its full evidence JSON."""
-        function_result = event.function_result
-        notice = spill_notice_from_result(function_result)
-        if notice is not None:
-            if isinstance(function_result, ToolResult):
-                success = function_result.success
-            elif isinstance(function_result, dict):
-                success = function_result.get("success") is not False
-            else:
-                success = False
-            output = (
-                "数据集快速探查已完成；完整证据已保存为当前会话的私有溢出结果。"
-                if success and notice.status == "stored"
-                else "数据集快速探查已完成，但完整证据暂时无法保存。"
-                if success
-                else "数据集快速探查失败；详细输出已保存为当前会话的私有溢出结果。"
-                if notice.status == "stored"
-                else "数据集快速探查失败，且详细输出暂时无法保存。"
-            )
-            return [{
-                "ps1": "$",
-                "command": "快速探查数据集",
-                "output": output,
-                "status": "completed" if success else "failed",
-            }]
-        if isinstance(function_result, ToolResult):
-            data = function_result.data if isinstance(function_result.data, dict) else {}
-        elif isinstance(function_result, dict):
-            data = function_result.get("data") if isinstance(function_result.get("data"), dict) else function_result
-        else:
-            data = {}
-        raw_output = data.get("output") or ""
-        payload: dict[str, Any] = {}
-        if isinstance(raw_output, str):
-            try:
-                parsed = json.loads(raw_output)
-                if isinstance(parsed, dict):
-                    payload = parsed
-            except (TypeError, ValueError):
-                pass
-        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-        success = bool(payload.get("success", data.get("success", False)))
-        if success:
-            lines = [
-                "数据集快速探查已完成",
-                f"文件：{summary.get('files_analyzed', 0)} 个",
-                f"图表：{summary.get('plot_count', 0)} 张",
-                f"耗时：{summary.get('elapsed_seconds', 0)} 秒",
-            ]
-            failed = summary.get("files_failed", 0)
-            if failed:
-                lines.append(f"失败：{failed} 个文件")
-            evidence = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
-            discovery = evidence.get("discovery") if isinstance(evidence.get("discovery"), dict) else {}
-            if discovery.get("truncated"):
-                lines.append("提示：文件数量较多，结果基于有界抽样")
-            output = "\n".join(lines)
-        else:
-            error = payload.get("error") or data.get("error") or "快速探查未生成有效结果"
-            output = f"数据集快速探查失败：{str(error)[:500]}"
-        return [{
-            "ps1": "$",
-            "command": "快速探查数据集",
-            "output": output,
-            "status": "completed" if success else "failed",
-        }]
-    
     async def _sync_message_attachments_to_sandbox(self, event: MessageEvent) -> None:
         """Verify legacy attachments as one scoped mount; never silently skip a failure."""
         infos = []
@@ -1504,8 +1487,8 @@ class AgentTaskRunner(TaskRunner):
                 elif event.tool_name == "shell":
                     if event.function_name == "dataset_analysis_run":
                         completed_console = self._dataset_analysis_console(event)
-                    elif event.function_name == "dataset_quicklook":
-                        completed_console = self._dataset_quicklook_console(event)
+                    elif event.function_name == "python_inspect":
+                        completed_console = self._python_inspection_console(event)
                     else:
                         completed_console = self._completed_shell_console_from_result(event)
                     if completed_console is not None:

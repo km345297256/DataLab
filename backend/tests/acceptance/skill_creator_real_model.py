@@ -37,6 +37,18 @@ def report(kind, **values):
     print(json.dumps({"kind": kind, **values}, ensure_ascii=False), flush=True)
 
 
+def assertion_frames(error):
+    """Safe harness locations only; no exception text, source lines or locals."""
+    if not isinstance(error, AssertionError):
+        return []
+    frames, cursor = [], error.__traceback__
+    while cursor is not None:
+        code = cursor.tb_frame.f_code
+        frames.append({"file": Path(code.co_filename).name, "function": code.co_name, "line": cursor.tb_lineno})
+        cursor = cursor.tb_next
+    return frames[-12:]
+
+
 def validated_replay_message(content, validators, finish_reason="stop"):
     """Exercise the same response callback that the real model driver uses."""
     from langchain_core.messages import AIMessage
@@ -151,6 +163,40 @@ def assert_independent_values(actual, expected):
         assert actual == expected, (actual, expected)
 
 
+def assert_public_interface(interface, *, include_validation_cases):
+    """One typed boundary for both oracle and blind-reference projections."""
+    from app.domain.services.skills.skill_validation import ScriptValidationInterface
+    from app.domain.services.skills.skill_creation.interface_contracts import declared_validation_interface
+    allowed = set(ScriptValidationInterface.model_fields)
+    if not include_validation_cases:
+        allowed.remove("validation_cases")
+    assert isinstance(interface, dict) and set(interface) <= allowed, "Non-public implementation fields reached the reviewer"
+    typed = ScriptValidationInterface.model_validate(interface, strict=True)
+    if typed.interface_contract is not None:
+        declared = declared_validation_interface(SimpleNamespace(path=typed.script_path,
+            invocation=typed.invocation, interface_contract=typed.interface_contract),
+            validation_cases=typed.validation_cases if include_validation_cases else ())
+        assert interface == declared.model_dump(mode="json", exclude=set() if include_validation_cases else {"validation_cases"}), \
+            "Explicit interfaces must remain exactly the pre-code declaration projection"
+    else:
+        for option in typed.cli_options:
+            assert set(option) <= {"flags", "required", "nargs", "action", "value_type", "choices"}, \
+                "Legacy syntax projection cannot carry implementation prose or values"
+    for output in typed.json_outputs:
+        assert set(output) <= {"path", "shape", "filename_argument"}
+        assert_public_output_shape(output["shape"])
+
+
+def assert_public_sources(sources, *, blind_reference=False):
+    # Production deliberately projects away chronology and private source
+    # records before independent oracle/reference authoring. Future metadata
+    # requires an explicit typed extension here, never a catch-all allowance.
+    for source in sources:
+        assert set(source) == {"id", "kind", "text"}, "Original code/results reached the independent reviewer"
+        if blind_reference:
+            assert source["kind"] in {"request", "method", "goal"}
+
+
 def assert_oracle_isolation(stage, request, *, reuse_baseline=None):
     """Review and oracle repair receive a public contract, never tested code."""
     if stage not in {"synthetic_plan_review", "synthetic_validation_plan"}:
@@ -181,11 +227,9 @@ def assert_oracle_isolation(stage, request, *, reuse_baseline=None):
         # identify additional ordinary rejections that can gain output_empty.
         assert request["schema"]["title"] in {"VerificationCoverageAmendment", "SchemaFieldRepairs"}, (
             "Coverage amendment must not request a replacement scientific-plan schema")
-    for source in request["sources"]:
-        assert set(source) <= {"id", "kind", "text"}, "Original code/results reached the independent reviewer"
+    assert_public_sources(request["sources"])
     for interface in request["script_interfaces"]:
-        assert set(interface) <= {"script_path", "arguments", "invocation", "cli_options", "output_mode", "json_outputs",
-                                 "input_contract", "output_contract", "validation_cases", "exit_contract"}, "Non-public implementation fields reached the reviewer"
+        assert_public_interface(interface, include_validation_cases=True)
     if "reference_evidence" in request:
         evidence = request["reference_evidence"]
         assert set(evidence) == {"cases", "corrections"}
@@ -257,15 +301,9 @@ def assert_reference_isolation(stage, request, *, candidate_sources=(), original
     assert set(request) <= common | extra, "The blind reference received unexpected material"
     assert_script_capabilities(stage, request)
     assert {"method_contract", "sources", "script_interfaces", "blind_cases"} <= set(request)
-    for source in request["sources"]:
-        assert set(source) == {"id", "kind", "text"}
-        assert source["kind"] in {"request", "method", "goal"}
+    assert_public_sources(request["sources"], blind_reference=True)
     for interface in request["script_interfaces"]:
-        assert set(interface) <= {"script_path", "arguments", "invocation", "cli_options", "output_mode",
-            "json_outputs", "input_contract", "output_contract", "exit_contract"}
-        for output in interface.get("json_outputs", []):
-            assert set(output) <= {"path", "shape", "filename_argument"}
-            assert_public_output_shape(output["shape"])
+        assert_public_interface(interface, include_validation_cases=False)
     for script in request["blind_cases"]:
         assert set(script) == {"script_path", "cases"}
         for case in script["cases"]:
@@ -555,13 +593,26 @@ def assert_workflow_authoring_boundary(stage, request):
     if stage != "workflow":
         return
     schema = request["schema"]
-    assert schema["title"] == "WorkflowDraft"
+    if schema.get("title") == "SchemaFieldRepairs":
+        from app.domain.services.skills.skill_creation.schema_repair import SchemaFieldRepairs
+        assert schema == SchemaFieldRepairs.model_json_schema()
+        assert request["repair_feedback"]["field_repairs"] and isinstance(request["previous_candidate"], dict)
+        schema = request["repair_feedback"]["document_schema"]
+    assert schema["title"] in {"WorkflowDraft", "WorkflowDraftV2"}
     assert "coverage" not in schema["properties"], "The model must not author numeric coverage pointers"
     assert "scripts" not in schema["properties"], "Workflow authoring plans scripts without generating bodies"
     definitions = schema.get("$defs", {})
     assert "AuthoredScript" not in definitions and "HelperScript" not in definitions
-    assert "content" not in definitions["ScriptRequest"]["properties"]
-    assert "requirement_ids" in definitions["ScriptRequest"]["properties"]
+    plan = schema["properties"]["implementation"]
+    plan_ref = plan.get("$ref") or next(item["$ref"] for item in plan["anyOf"] if "$ref" in item)
+    plan = definitions[plan_ref.rsplit("/", 1)[1]]
+    declaration_ref = plan["properties"]["scripts"]["items"]["$ref"]
+    declaration = definitions[declaration_ref.rsplit("/", 1)[1]]
+    assert "content" not in declaration["properties"]
+    assert "requirement_ids" in declaration["properties"]
+    if schema["title"] == "WorkflowDraftV2":
+        assert plan["properties"]["interface_version"]["const"] == 2
+        assert "interface_contract" in declaration["required"], "New authoring must freeze the pre-code interface"
     for section in ("parameters", "steps", "outputs", "validation_cases",
                     "data_requirements", "dependencies", "limitations"):
         item_schema = schema["properties"][section]["items"]
@@ -571,6 +622,59 @@ def assert_workflow_authoring_boundary(stage, request):
     report("workflow_authoring_boundary_checked", model_numeric_coverage_pointers=False,
            inline_requirement_ids=True, storage_coverage_compiled_by_host=True,
            script_bodies_in_workflow=False, script_plan_location="implementation.scripts")
+
+
+def assert_source_repair_boundary(stage, request):
+    """A local JSON correction retains the original, host-bound source kind.
+
+    Public blocks contain redacted source, so they cannot reconstruct private
+    host digests. Check the complete public protocol; production still verifies
+    original-source digests, joins only selected ranges, and reruns every gate.
+    """
+    from typing import Literal
+    from pydantic import ConfigDict, Field, StrictStr, create_model
+    from app.domain.services.skills.skill_creation.models import HelperScript
+    from app.domain.services.skills.skill_creation.script_authoring import ScriptFunctionUnit
+    from app.domain.services.skills.skill_creation.source_response import source_response_adapter
+    assert "response_format" not in request, "A local correction must use only its JSON schema"
+    schema = ScriptFunctionUnit if "function_request" in request else HelperScript
+    adapter = source_response_adapter(schema, stage, request)
+    assert adapter is not None, "Only source authoring stages can correct source blocks"
+    previous = request["previous_candidate"]
+    assert type(previous) is dict and set(previous) == set(adapter.metadata) | {"content"}
+    assert type(previous["content"]) is str
+    assert all(type(previous[key]) is type(value) and previous[key] == value
+               for key, value in adapter.metadata.items()), "Local source metadata must stay frozen"
+    feedback = request["repair_feedback"]
+    context = feedback["source_repair_context"]
+    assert type(context) is dict and set(context) == {"basis", "feedback"}
+    assert context["basis"] == "original_check_of_bound_source"
+    assert context["feedback"]["reason"] in {"script_syntax_invalid", "private_package_content"}
+    assert "source_repair_context" not in context["feedback"], "Original diagnostics cannot grow a repair chain"
+    blocks = feedback["source_blocks"]
+    assert type(blocks) is list and blocks
+    ids, prior_end = [], 0
+    for index, block in enumerate(blocks, 1):
+        assert type(block) is dict
+        assert set(block) in ({"block_id", "start_line", "end_line", "source"},
+                              {"block_id", "start_line", "end_line", "source", "output_repair_references"})
+        assert block["block_id"] == f"B{index:03d}"
+        assert type(block["start_line"]) is int and type(block["end_line"]) is int
+        assert prior_end < block["start_line"] <= block["end_line"]
+        assert type(block["source"]) is str and block["source"]
+        prior_end = block["end_line"]
+        ids.append(block["block_id"])
+        for reference in block.get("output_repair_references", []):
+            assert set(reference) == {"reference", "role"} and reference["role"] == "generated_output"
+            assert type(reference["reference"]) is str and reference["reference"] in block["source"]
+    # Reconstruct exactly the host's finite-ID public response schema. No
+    # arbitrary path/range/metadata/code/answer slot is accepted by this form.
+    replacement = create_model("SourceBlockReplacement", __config__=ConfigDict(extra="forbid", strict=True),
+        block_id=(Literal.__getitem__(tuple(ids)), ...), replacement=(StrictStr, ...))
+    expected = create_model("SourceBlockRepairs", __config__=ConfigDict(extra="forbid", strict=True),
+        repairs=(list[replacement], Field(min_length=len(ids), max_length=len(ids))))
+    assert request["schema"] == expected.model_json_schema(), "Source repair schema widened its bound block IDs"
+    return schema
 
 
 def assert_script_capabilities(stage, request):
@@ -584,9 +688,16 @@ def assert_script_capabilities(stage, request):
         schema = {"script": HelperScript, "function": ScriptFunctionUnit}.get(request["response_format"].get("artifact"))
         assert schema is not None, "Unknown Python source artifact type"
     elif isinstance(request.get("schema"), dict):
+        declared = request["schema"]
+        if declared.get("title") == "SourceBlockRepairs":
+            schema = assert_source_repair_boundary(stage, request)
+        elif declared.get("title") == "SchemaFieldRepairs":
+            from app.domain.services.skills.skill_creation.schema_repair import SchemaFieldRepairs
+            assert declared == SchemaFieldRepairs.model_json_schema()
+            declared = request["repair_feedback"]["document_schema"]
         for candidate in (ScriptModulePlan, ScriptRepairSelection):
-            if request["schema"].get("title") == candidate.model_json_schema()["title"]:
-                assert request["schema"] == candidate.model_json_schema(), "Authoring schema differs from its host type"
+            if declared.get("title") == candidate.model_json_schema()["title"]:
+                assert declared == candidate.model_json_schema(), "Authoring schema differs from its host type"
                 schema = candidate
     expected = source_authoring_capabilities(schema, stage)
     if expected is None:
@@ -599,7 +710,8 @@ def assert_source_authoring_boundary(stage, request):
     assert_script_capabilities(stage, request)
     if request.get("response_format", {}).get("type") != "python_source":
         return
-    assert stage in {"implementation", "synthetic_script_repair", "synthetic_reference_implementation"}
+    assert stage in {"implementation", "synthetic_script_repair", "synthetic_build_repair",
+                     "synthetic_method_repair", "synthetic_reference_implementation"}
     assert "schema" not in request, "Source must not be embedded in a JSON schema response"
     artifact_format = request["response_format"]
     assert artifact_format["complete_source_required"] is True
@@ -1113,6 +1225,9 @@ async def main(name, resume_prefix=None, replay_only=False, checkpoint_state=Non
             request = json.loads(messages[-1].content)
             current.update(stage=request.get("stage", "unknown"), calls=current["calls"] + 1)
             assert current["stage"] != "unknown", "Every generation/review/revision needs a named stage"
+            # Retain the artificial request even when a local harness boundary
+            # rejects before calling the provider, so it can be replayed offline.
+            artifact("request", current["stage"], request)
             wire = json.dumps(request, ensure_ascii=False)
             assert not any(marker in wire for marker in private_markers), "Original artificial identity/credential reached a model payload"
             baseline = oracle_audit.baseline_for(current["stage"], request)
@@ -1152,7 +1267,6 @@ async def main(name, resume_prefix=None, replay_only=False, checkpoint_state=Non
                 "message_count": len(messages),
                 "binding_scope": "all_serialized_chat_messages",
             })
-            artifact("request", current["stage"], request)
             report("model_started", scenario=name, stage=current["stage"], call=current["calls"], repair=bool(request.get("repair_feedback")))
             if len(replayed) < len(replay):
                 saved = replay[len(replayed)]
@@ -1228,7 +1342,8 @@ async def main(name, resume_prefix=None, replay_only=False, checkpoint_state=Non
             } else None
             chain.append({"type": type(item).__name__, "code": getattr(item, "code", None),
                           "stage": getattr(item, "stage", None), "message": safe_message,
-                          "feedback": getattr(item, "feedback", None)})
+                          "feedback": getattr(item, "feedback", None),
+                          **({"frames": assertion_frames(item)} if isinstance(item, AssertionError) else {})})
             item = item.__cause__
         artifact("error", "final", chain)
         report("complete", scenario=name, success=False, stage=current["stage"], calls=current["calls"],

@@ -208,6 +208,29 @@
           "test": "backend/tests/test_skill_creation_progress_compatibility.py"
         }
       }
+    },
+    {
+      "file": "2026-10-26-skill-review-verdict.json",
+      "changes": {
+        "AgentEvent": {
+          "reason": "Distinguish a received method review from accepted methods and required revisions in durable skill creation progress.",
+          "compatibility": "Add three progress status enum values without removing legacy values, changing defaults, or rewriting stored records. Writer version is unchanged; these are progress observations, not execution or installation evidence.",
+          "readers": {
+            "new_reads_old": "The new reader accepts every previous progress state; legacy events and caches roundtrip without adding a verdict or changing their recorded result.",
+            "old_reads_new": "The previous strict reader rejects the three new progress states. Rollback must retain this additive reader support before reading events created by this release; never reinterpret a received response as accepted."
+          },
+          "test": "backend/tests/test_skill_creation_progress.py"
+        },
+        "ExecutionHistory": {
+          "reason": "Distinguish a received method review from accepted methods and required revisions in durable skill creation progress.",
+          "compatibility": "Add three progress status enum values without removing legacy values, changing defaults, or rewriting stored records. Writer version is unchanged; these are progress observations, not execution or installation evidence.",
+          "readers": {
+            "new_reads_old": "The new reader accepts every previous progress state; legacy events and caches roundtrip without adding a verdict or changing their recorded result.",
+            "old_reads_new": "The previous strict reader rejects the three new progress states. Rollback must retain this additive reader support before reading events created by this release; never reinterpret a received response as accepted."
+          },
+          "test": "backend/tests/test_skill_creation_progress.py"
+        }
+      }
     }
   ]
 }

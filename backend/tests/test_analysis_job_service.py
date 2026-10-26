@@ -113,7 +113,7 @@ async def _create(service: AnalysisJobService, **overrides):
         "user_id": "user-1",
         "session_id": "session-1",
         "task_id": "task-1",
-        "tool_name": "dataset_quicklook",
+        "tool_name": "program_run",
         "tool_call_id": "private-call-id",
         "execution_snapshot_id": "snapshot-1",
         "catalog_revision": "catalog-1",

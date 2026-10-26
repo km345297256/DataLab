@@ -18,8 +18,10 @@ STAGE_LABELS = {
 # These explanations are developer-authored. No exception message, model value,
 # source filename or provider response is suitable for public error text.
 RECIPE_ERRORS = {
+    "invalid_declared_script_interface": ("脚本调用与预先声明的输入输出契约不一致。", "Repair only the reported declaration or invocation coordinates before generating code. New interfaces must explicitly bind CLI options, input structure, output files and missing-value semantics; preserve the source method."),
+    "declared_script_interface_mismatch": ("脚本实现与冻结的输入输出契约存在明确冲突。", "Repair the proven conflict at interface_issues locations in the implementation. Preserve the frozen CLI, file/directory output binding, public field names and missing-value semantics. Unknown dynamic structure still needs independent execution validation; do not change the interface to fit the code."),
     "implementation_revision_invalid": ("实现修订未能准确对应原脚本，尚未应用修改。", "Return edits for existing scripts only. Each nonempty before must match the unchanged original source exactly once; use sufficient literal context, preserve whitespace, and keep all selected ranges nonoverlapping. Do not edit metadata or reference the result of another edit. Keep every resulting script complete and valid under the original package schema. Provide a substantive code change rather than an unchanged replacement."),
-    "private_package_content": ("生成内容仍包含会话专属信息，需要重新参数化。", "Remove source-specific identities, paths, URLs, filenames and credentials; replace them with current-input parameters."),
+    "private_package_content": ("生成内容中的来源名称或疑似敏感信息尚未处理完成。", "Resolve the reported source binding or sensitive value at its exact location. Bind source input filenames to current-input parameters, and remove actual identities, private paths, URLs and credentials. Preserve the method, scientific values and validation requirements."),
     "invalid_skill_metadata": ("技能说明或触发词格式不完整。", "Keep description and trigger phrases on one line; each trigger must contain 2 to 100 characters."),
     "unverified_document_link": ("生成内容包含未经校验的文档链接。", "Remove Markdown links from generated descriptions; preserve the method as plain text. The host creates validated package links."),
     "duplicate_skill_parameters": ("技能参数名称重复。", "Give each input parameter a unique name without deleting required parameters."),
@@ -31,6 +33,7 @@ RECIPE_ERRORS = {
 COVERAGE_CODES = frozenset({
     "duplicate_requirements", "duplicate_source_references", "unknown_requirement_source", "duplicate_exclusions",
     "unknown_source_exclusion", "source_exclusion_overlap", "missing_source_coverage", "method_identifiers_lost",
+    "invalid_historical_exclusion",
     "invalid_coverage_location", "unknown_coverage_location", "invalid_pending_script_declaration", "duplicate_script_plan",
     "duplicate_requirement_coverage", "incomplete_requirement_coverage", "requirement_wrong_section", "undeclared_script_requirement",
     "duplicate_source_review", "duplicate_requirement_review", "incomplete_method_review", "method_review_rejected",
@@ -52,6 +55,7 @@ SCRIPT_FAILURE_REASONS = {
 }
 SCRIPT_CODES = frozenset(SCRIPT_FAILURE_REASONS)
 VALIDATION_ERRORS = {
+    "declared_validation_interface_mismatch": "Correct only the reported CLI or output binding/field coordinates to match the frozen interface_contract. Preserve independently derived scientific inputs, expected values and tolerances; never change the contract or use candidate source/results as an oracle.",
     "candidate_method_audit_invalid": "Return exactly one source-bound assessment per requested script and requirement. Preserve any adverse judgment. Cite only the unchanged requirement's original source and an exact executable portion of the same candidate; do not infer claims from tests or invent new requirements.",
     "reference_output_interface_unconfirmed": "Fix the proven conflict at the reported JSON output location. Preserve the original declared column-name prefix and structure; do not rename, reorder, or remove its fixed fields. No specific source-code form is required: dynamic structure is checked independently against real outputs by the host. Do not invent names or expose scientific values as schema.",
     "validation_oracle_review_incomplete": "Return exactly one script review, one review per case and one review per host-assigned assertion target. Include every input-validity, exit-behavior, method-coverage and tolerance assessment without changing a scientific verdict to satisfy structure.",
@@ -101,13 +105,13 @@ class SkillCreationError(ValueError):
             raise KeyError("Unknown skill creation diagnostic")
         self.stage = stage
         self.code = code
-        self.retryable = (code not in {"analysis_not_ready", "session_unavailable", "identity_mismatch", "model_refused", "package_too_large"}
+        self.retryable = (code not in {"analysis_not_ready", "session_unavailable", "identity_mismatch", "source_evidence_invalid", "model_refused", "package_too_large"}
                           if retryable is None else retryable)
         reason = RECIPE_ERRORS.get(code, (None,))[0]
         if code in {"analysis_not_ready", "session_unavailable", "identity_mismatch"}:
             reason = "请先在当前账户中完成一次有实际执行和交付结果的分析，再创建技能。"
         elif code == "source_evidence_invalid":
-            reason = "已完成分析中的程序依据暂时无法安全提炼为技能，已停止创建。原分析结果保持不变，可稍后重试创建。"
+            reason = "已完成分析中的程序依据尚无法安全转换为技能，已停止创建。原分析结果保持不变；需修复证据转换问题或补充有效分析依据后再创建，重复重试不会解决此问题。"
         elif code in {"method_review_rejected", "method_revision_unchanged"}:
             reason = "方法审查仍发现遗漏或改变，自动修复后未达到原分析要求。"
         elif code == "candidate_method_rejected":

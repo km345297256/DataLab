@@ -156,7 +156,7 @@ export const resolveToolFunction = (tool: Pick<ToolContent, 'name' | 'function'>
 export const resolveToolName = (tool: Pick<ToolContent, 'name' | 'function'>): string => {
   if (TOOLKIT_NAMES.has(tool.name)) return tool.name;
   const functionName = resolveToolFunction(tool);
-  if (functionName.startsWith('shell_') || functionName.startsWith('dataset_') || functionName === 'program_run') return 'shell';
+  if (functionName.startsWith('shell_') || functionName.startsWith('dataset_') || ['program_run', 'python_inspect'].includes(functionName)) return 'shell';
   if (functionName.startsWith('file_')) return 'file';
   if (functionName.startsWith('browser_')) return 'browser';
   if (functionName.startsWith('info_')) return 'info';
@@ -213,6 +213,12 @@ export const getToolDisplayDetail = (tool: ToolContent): ToolDisplayDetail => {
     // Script arguments may carry data or credentials; the timeline needs only
     // the public sandbox script identity. Full details remain sanitized.
     detail = displaySandboxPath(safeStringArg(args, 'script_path'));
+  } else if (functionName === 'python_inspect') {
+    const names = Array.isArray(args.names)
+      ? args.names.filter((value): value is string => typeof value === 'string')
+        .slice(0, 8).map(sanitizeToolDisplayText).join(', ')
+      : '';
+    detail = [safeStringArg(args, 'module'), names].filter(Boolean).join(' · ');
   } else if (functionName === 'shell_wait') {
     const session = safeStringArg(args, 'id') || safeStringArg(args, 'shell');
     const seconds = safeStringArg(args, 'seconds');
@@ -221,8 +227,6 @@ export const getToolDisplayDetail = (tool: ToolContent): ToolDisplayDetail => {
     detail = safeStringArg(args, 'id') || safeStringArg(args, 'shell');
   } else if (functionName === 'dataset_unpack') {
     detail = joinPathAction(safeStringArg(args, 'archive_path'), safeStringArg(args, 'output_dir'));
-  } else if (functionName === 'dataset_quicklook') {
-    detail = joinPathAction(safeStringArg(args, 'input_path'), safeStringArg(args, 'output_dir'));
   } else if (functionName === 'dataset_inventory') {
     detail = displaySandboxPath(safeStringArg(args, 'input_path'));
   } else {

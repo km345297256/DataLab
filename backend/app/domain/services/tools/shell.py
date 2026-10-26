@@ -3,9 +3,10 @@ import json
 import logging
 import shlex
 import httpx
-from typing import Any, Awaitable, Callable, ClassVar, Literal, Optional
+from typing import Annotated, Any, Awaitable, Callable, ClassVar, Optional
+from pydantic import Field
 from app.domain.external.sandbox import Sandbox
-from app.domain.services.tools.base import BaseToolkit
+from app.domain.services.tools.base import BaseToolkit, tool_execution_contract
 from langchain.tools import tool
 from app.domain.models.tool_result import ToolResult
 
@@ -124,6 +125,61 @@ class ShellToolkit(BaseToolkit):
             timeout_seconds=timeout_seconds,
             launch=lambda: self.sandbox.exec_program(id, exec_dir, script_path, arguments),
         )
+
+    @tool_execution_contract(effects=("sandbox_read", "sandbox_write", "network"), cancellable=True)
+    @tool(parse_docstring=True)
+    async def python_inspect(
+        self, id: str,
+        module: Annotated[str, Field(max_length=256, pattern=r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")],
+        names: Annotated[list[str], Field(max_length=8)] | None = None,
+    ) -> ToolResult:
+        """Inspect installed Python APIs before writing code that relies on uncertain signatures or return semantics. Batch related names from one module. Returns actual distribution versions, attribute availability, signatures and bounded documentation including Returns sections. Imports run in the task sandbox through the normal tracked program executor and may have initialization effects; no target function is called and no analysis is performed. Observations are not proof of compatibility with the selected data. Reuse these observations unless the environment changes. This metadata probe has a 20-second time limit, independent of analysis runtime.
+
+        Args:
+            id: Unique identifier of the inspection process
+            module: Importable dotted Python module name, for example scipy.stats
+            names: Up to eight relative dotted attributes, for example ttest_ind or RegressionResults.compare_f_test; omit for the module documentation
+        """
+        import re
+        from app.domain.services.program_execution import program_command
+        names = names or []
+        if any(len(name) > 256 or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", name, re.ASCII)
+               for name in [module, *names]):
+            return ToolResult(success=False, message="Use module and attribute names, not Python expressions",
+                              data={"error_code": "invalid_api_reference", "side_effect_state": "not_started"})
+        script = "/usr/local/lib/ai-dataseek/python_inspect.py"
+        arguments = [json.dumps({"module": module, "names": names}, ensure_ascii=False)]
+        try:
+            async with asyncio.timeout(20):
+                result = await self._run_analysis_program(
+                    id=id, exec_dir="/home/ubuntu", command=program_command(script, arguments),
+                    timeout_seconds=15,
+                    launch=lambda: self.sandbox.exec_program(id, "/home/ubuntu", script, arguments),
+                )
+        except TimeoutError:
+            return ToolResult(success=False, message="Python API inspection timed out; no API availability was established",
+                              data={"error_code": "api_inspection_timeout"})
+        if not result.success:
+            preparation = self._result_data(result).get("program_preparation")
+            if isinstance(preparation, dict) and preparation.get("reason") == "script_missing":
+                return ToolResult(success=False,
+                    message="This existing sandbox has no Python API inspection helper. If needed, save a small API probe in writable task space and run it with program_run; do not recreate the installed helper or rerun completed analysis.",
+                    data={"error_code": "api_inspection_not_installed", "side_effect_state": "not_started"})
+            return result
+        data = self._result_data(result)
+        try:
+            output = data.get("output", "")
+            if not isinstance(output, str) or len(output.encode("utf-8")) > 30000:
+                raise ValueError("Unbounded API inspection")
+            observed = json.loads(output)
+            if (not isinstance(observed, dict) or observed.get("schema") != "python-api-inspection/v1"
+                    or observed.get("module") != module):
+                raise ValueError("Invalid API observation")
+        except (ValueError, TypeError):
+            return ToolResult(success=False, message="Python API inspection did not return a complete observation",
+                              data={"error_code": "api_inspection_unavailable"})
+        return ToolResult(success=True, message="Installed API observations; not analysis or scientific validation",
+                          data={"inspection": observed})
 
     async def _run_analysis_program(
         self, *, id: str, exec_dir: str, command: str, timeout_seconds: int,
@@ -275,50 +331,6 @@ class ShellToolkit(BaseToolkit):
             exec_dir="/home/ubuntu",
             command=command,
             timeout_seconds=timeout_seconds,
-        )
-
-    @tool(parse_docstring=True)
-    async def dataset_quicklook(
-        self,
-        id: str,
-        input_path: str,
-        output_dir: str,
-        max_plots: int = 4,
-        timeout_seconds: int = 90,
-        chart_formats: Optional[list[Literal["png", "svg"]]] = None,
-    ) -> ToolResult:
-        """Create a bounded model-free profile, compact evidence, and 1-4 useful charts for one selected CSV/TSV, Excel, GeoTIFF, directory, or ZIP/RAR/7z input. PNG is the default; request SVG or both formats without writing a custom export script. Archives, including nested archives, are extracted safely. This returns evidence and artifacts; use it only when its scope directly matches the user's request, then decide whether the evidence fully answers that request. Use a new output directory under /home/ubuntu/output.
-
-        Args:
-            id: Unique identifier of the target shell session
-            input_path: Absolute dataset file, archive, or directory path inside the sandbox
-            output_dir: Absolute new output directory under /home/ubuntu/output
-            max_plots: Maximum number of distinct charts, clamped to 1-4; each is exported in all requested formats
-            timeout_seconds: Status observation window in seconds (5-120), not a total runtime limit
-            chart_formats: Native chart exports, png and/or svg; omitted defaults to png. SVG retains vector marks and text paths; raster source layers remain raster.
-        """
-        if chart_formats is not None and (
-            not isinstance(chart_formats, list) or not chart_formats
-            or any(not isinstance(value, str) or value not in {"png", "svg"} for value in chart_formats)
-        ):
-            return ToolResult(success=False, message="chart_formats must be a nonempty list of png or svg",
-                              data={"reason": "tool_arguments_invalid", "execution_started": False})
-        formats_option = (
-            " --chart-formats " + " ".join(dict.fromkeys(chart_formats))
-            if chart_formats is not None else ""
-        )
-        bounded_plots = max(1, min(max_plots, 4))
-        bounded_timeout = max(5, min(timeout_seconds, 120))
-        command = (
-            f"ai-dataseek-quicklook {shlex.quote(input_path)} "
-            f"--output {shlex.quote(output_dir)} "
-            f"--max-plots {bounded_plots}{formats_option}"
-        )
-        return await self._run_bounded_command(
-            id=id,
-            exec_dir="/home/ubuntu",
-            command=command,
-            timeout_seconds=bounded_timeout,
         )
 
     @tool(parse_docstring=True)

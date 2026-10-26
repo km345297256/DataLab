@@ -64,7 +64,7 @@ def _preview_agent(tool_result: Any) -> ExecutionAgent:
         return json.loads(value)
 
     async def forbidden_execute(*_args, **_kwargs):
-        raise AssertionError("file preview must not enter model or quicklook execution")
+        raise AssertionError("file preview must not enter model analysis execution")
         yield  # pragma: no cover
 
     agent._parse_json = parse_json
@@ -200,8 +200,6 @@ def test_concise_answer_contract_preserves_quantitative_evidence_and_required_de
     assert "New execution, new calculations and current file availability or delivery require current " in contract
     assert "successful tool and file-validation evidence" in contract
     assert "Historical results do not satisfy a new execution or delivery requirement" in contract
-
-
 
 
 @pytest.mark.asyncio
@@ -470,161 +468,6 @@ async def test_file_preview_rejects_oversize_and_unsupported_artifacts(path, siz
     assert expected in step.result
 
 
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="superseded: quicklook is no longer a preselected workflow")
-async def test_quicklook_first_dataset_path_is_one_tool_plus_one_no_tool_synthesis():
-    agent = object.__new__(ExecutionAgent)
-    agent.reset_context = AsyncMock()
-    agent.usage_context = {}
-
-    async def forbidden_execute(*_args, **_kwargs):
-        raise AssertionError("successful quicklook-first must not enter the model tool loop")
-        yield  # pragma: no cover
-
-    async def fake_parse_json(value):
-        return json.loads(value)
-
-    payload = {
-        "success": True,
-        "output": "/home/ubuntu/output/quicklook-test",
-        "summary": {
-            "files_analyzed": 1,
-            "files_failed": 0,
-            "plot_count": 1,
-            "elapsed_seconds": 0.5,
-        },
-        "evidence": {
-            "datasets": [{
-                "path": "rain.tif",
-                "format": "geotiff",
-                "width": 10,
-                "height": 10,
-                "band_count": 1,
-                "crs": "EPSG:4326",
-                "declared_nodata": None,
-                "declared_unit": None,
-                "mask_provenance": ["all_valid"],
-                "zero_count": 20,
-                "valid_zero_count": 20,
-                "bands": [{
-                    "min": 0,
-                    "mean": 2,
-                    "max": 5,
-                    "std": 1,
-                    "declared_unit": None,
-                }],
-            }],
-            "capabilities": {"explicit_temporal_dimensions": []},
-        },
-        "files": ["chart.png", "quicklook_manifest.json", "../unsafe.tif"],
-        "artifacts": [
-            {
-                "path": "chart.png",
-                "title": "栅格快视图",
-                "role": "visualization",
-                "media_type": "image/png",
-            },
-            {
-                "path": "quicklook_manifest.json",
-                "title": "数据集快速探查清单",
-                "role": "manifest",
-                "media_type": "application/json",
-            },
-        ],
-    }
-    tool_result = ToolMessage(
-        tool_call_id="",
-        name="dataset_quicklook",
-        content=json.dumps(payload),
-        artifact=ToolResult(
-            success=True,
-            data={
-                "status": "completed",
-                "returncode": 0,
-                "output": json.dumps(payload),
-            },
-        ),
-    )
-    tool = SimpleNamespace(
-        name="dataset_quicklook",
-        toolkit=SimpleNamespace(name="shell"),
-    )
-    agent.execute = forbidden_execute
-    agent._parse_json = fake_parse_json
-    agent.get_tool = lambda name: tool if name == "dataset_quicklook" else None
-    agent.invoke_tool = AsyncMock(return_value=tool_result)
-    agent.ask_with_messages = AsyncMock(return_value=AIMessage(content=json.dumps({
-        "success": True,
-        "result": "专业证据合成完成",
-        "attachments": ["/home/ubuntu/output/invented.txt"],
-    }, ensure_ascii=False)))
-    step = Step(
-        id="dataset-fast-path",
-        description="Analyze mounted dataset",
-        inputs={
-            "execution_mode": "dataset_fast_path",
-            "dataset_intent": "visualization",
-            "requested_dimensions": ["spatial_pattern", "data_quality"],
-            "user_question": "分析空间分布和数据质量并给出图表",
-            "execution_guidance": "Use measured evidence.",
-            "allow_terminal_quicklook": False,
-            "prefer_quicklook_evidence": True,
-        },
-    )
-
-    dataset = MountedDataset(
-        dataset_id="tds_test",
-        name="Test",
-        data_center_id="center",
-        data_center_name="Center",
-        sandbox_path="/home/ubuntu/datasets/tds_test",
-        files=[],
-    )
-    events = [
-        event
-        async for event in agent.execute_step(
-            Plan(language="zh", steps=[step]),
-            step,
-            Message(
-                message="分析空间分布和数据质量并给出图表",
-                datasets=[dataset],
-            ),
-        )
-    ]
-
-    agent.invoke_tool.assert_awaited_once()
-    agent.ask_with_messages.assert_awaited_once()
-    assert agent.ask_with_messages.await_args.kwargs["allow_tools"] is False
-    assert agent.ask_with_messages.await_args.kwargs["max_tokens"] == 2048
-    synthesis_messages = agent.ask_with_messages.await_args.args[0]
-    assert isinstance(synthesis_messages[0], HumanMessage)
-    assert isinstance(synthesis_messages[1], AIMessage)
-    assert isinstance(synthesis_messages[2], ToolMessage)
-    assert "numeric zero" in synthesis_messages[3].content
-    assert "never infer" in synthesis_messages[3].content
-    assert "declared_unit=null" in synthesis_messages[3].content
-    assert "Do not write, assume, or hypothesize any domain unit" in synthesis_messages[3].content
-    assert "grid-cell proportions rather than study-area coverage" in synthesis_messages[3].content
-    assert "not `valid observations` / `有效像元`" in synthesis_messages[3].content
-    assert "栅格快视图" in synthesis_messages[3].content
-    assert '"task":"synthesize_verified_quicklook_evidence"' in synthesis_messages[0].content
-    assert '"required_dimension_checklist":["spatial_pattern","data_quality"]' in synthesis_messages[0].content
-    assert "exactly these three keys" in synthesis_messages[3].content
-    assert "dimension_assessment" in synthesis_messages[3].content
-    assert "1000 Chinese" in synthesis_messages[3].content
-    tool_events = [event for event in events if isinstance(event, ToolEvent)]
-    assert [event.status for event in tool_events] == [
-        ToolStatus.CALLING,
-        ToolStatus.CALLED,
-    ]
-    assert {event.function_name for event in tool_events} == {"dataset_quicklook"}
-    assert step.result == "专业证据合成完成"
-    assert step.attachments == [
-        "/home/ubuntu/output/quicklook-test/chart.png",
-        "/home/ubuntu/output/quicklook-test/quicklook_manifest.json",
-    ]
-
-
 def test_dataset_fast_path_exposes_only_dataset_execution_tools():
     allowed = SimpleNamespace(name="dataset_unpack")
     shell = SimpleNamespace(name="shell_run")
@@ -658,7 +501,7 @@ def test_dataset_fast_path_exposes_only_dataset_execution_tools():
     ]
 
 
-def test_dataset_tool_scope_exposes_quicklook_alongside_other_bounded_tools():
+def test_dataset_tool_scope_excludes_removed_quicklook_and_preserves_supported_tools():
     quicklook = SimpleNamespace(name="dataset_quicklook")
     unpack = SimpleNamespace(name="dataset_unpack")
     shell = SimpleNamespace(name="shell_run")
@@ -677,24 +520,23 @@ def test_dataset_tool_scope_exposes_quicklook_alongside_other_bounded_tools():
     agent.toolkits = [Toolkit([quicklook, unpack, shell])]
     agent._dataset_fast_path_mode = True
     assert [tool.name for tool in agent.get_tools()] == [
-        "dataset_quicklook",
         "dataset_unpack",
         "shell_run",
     ]
-    assert agent.get_tool("dataset_quicklook") is quicklook
+    assert agent.get_tool("dataset_quicklook") is None
     assert agent.get_tool("dataset_unpack") is unpack
     assert agent.get_tool("shell_run") is shell
 
 
-def test_quicklook_synthesis_rejects_blank_results_and_pins_attachments():
-    attachments = ["/home/ubuntu/output/quicklook/chart.png"]
+def test_dataset_synthesis_rejects_blank_results_and_pins_attachments():
+    attachments = ["/home/ubuntu/output/analysis/chart.png"]
 
-    assert ExecutionAgent._normalize_quicklook_synthesis("   ", attachments) is None
-    assert ExecutionAgent._normalize_quicklook_synthesis(
+    assert ExecutionAgent._normalize_dataset_synthesis("   ", attachments) is None
+    assert ExecutionAgent._normalize_dataset_synthesis(
         '{"success":true,"result":"   ","attachments":["/invented"]}',
         attachments,
     ) is None
-    assert ExecutionAgent._normalize_quicklook_synthesis(
+    assert ExecutionAgent._normalize_dataset_synthesis(
         '{"success":false,"result":"evidence-based answer","attachments":["/invented"]}',
         attachments,
     ) == {
@@ -704,10 +546,10 @@ def test_quicklook_synthesis_rejects_blank_results_and_pins_attachments():
     }
 
 
-def test_quicklook_synthesis_renders_python_literal_dimension_schema_as_markdown():
-    attachments = ["/home/ubuntu/output/quicklook/verified-chart.png"]
+def test_dataset_synthesis_renders_python_literal_dimension_schema_as_markdown():
+    attachments = ["/home/ubuntu/output/analysis/verified-chart.png"]
     literal = """{
-        'task': 'synthesize_verified_quicklook_evidence',
+        'task': 'synthesize_observed_dataset_evidence',
         'datasets': [{
             'name': '示例数据集',
             'dimension_assessment': {
@@ -732,7 +574,7 @@ def test_quicklook_synthesis_renders_python_literal_dimension_schema_as_markdown
         'attachments': ['/invented/by-model.png']
     }"""
 
-    normalized = ExecutionAgent._normalize_quicklook_synthesis(literal, attachments)
+    normalized = ExecutionAgent._normalize_dataset_synthesis(literal, attachments)
 
     assert normalized is not None
     assert normalized["success"] is True
@@ -753,11 +595,11 @@ def test_quicklook_synthesis_renders_python_literal_dimension_schema_as_markdown
     assert "/invented/by-model.png" not in report
 
 
-def test_quicklook_synthesis_literal_parser_never_executes_expressions():
+def test_dataset_synthesis_literal_parser_never_executes_expressions():
     content = "{'result': __import__('os').system('unsafe command')}"
 
     with patch("os.system") as system:
-        normalized = ExecutionAgent._normalize_quicklook_synthesis(content, [])
+        normalized = ExecutionAgent._normalize_dataset_synthesis(content, [])
 
     system.assert_not_called()
     assert normalized is None
@@ -772,14 +614,14 @@ def test_quicklook_synthesis_literal_parser_never_executes_expressions():
         "```python\n{'result': unknown_name}\n```",
     ],
 )
-def test_quicklook_synthesis_rejects_malformed_structured_payloads(structured):
-    assert ExecutionAgent._normalize_quicklook_synthesis(structured, []) is None
+def test_dataset_synthesis_rejects_malformed_structured_payloads(structured):
+    assert ExecutionAgent._normalize_dataset_synthesis(structured, []) is None
 
 
-def test_quicklook_synthesis_keeps_plain_markdown_answer():
+def test_dataset_synthesis_keeps_plain_markdown_answer():
     markdown = "## 综合结论\n\n数据具有基础探查价值，但源数据未声明单位。"
 
-    assert ExecutionAgent._normalize_quicklook_synthesis(markdown, []) == {
+    assert ExecutionAgent._normalize_dataset_synthesis(markdown, []) == {
         "success": True,
         "result": markdown,
         "attachments": [],
@@ -1132,205 +974,6 @@ async def test_provider_failure_does_not_promote_arbitrary_shell_output_to_final
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_mode", ["timeout", "exception"])
-async def test_analysis_quicklook_synthesis_failure_returns_validated_interim_evidence(
-    failure_mode,
-):
-    agent = object.__new__(ExecutionAgent)
-    agent.usage_context = {}
-    agent.DATASET_SYNTHESIS_TIMEOUT_SECONDS = 0.01
-    agent._dataset_fast_path_mode = False
-    agent._dataset_intent = ExecutionAgent.DATASET_INTENT_ANALYSIS
-    agent._allow_terminal_quicklook = False
-    agent._prefer_quicklook_evidence = False
-    agent._initial_quicklook_attempted = False
-    agent._disable_quicklook_retry = False
-    agent._current_plan = Plan(language="zh", steps=[Step(
-        status=ExecutionStatus.RUNNING,
-        inputs={"requested_dimensions": ["use_cases", "data_quality"]},
-    )])
-    payload = {
-        "success": True,
-        "output": "/home/ubuntu/output/quicklook-timeout",
-        "summary": {
-            "files_analyzed": 1,
-            "files_failed": 0,
-            "plot_count": 1,
-            "elapsed_seconds": 0.4,
-        },
-        "evidence": {
-            "datasets": [{
-                "path": "grid.tif",
-                "format": "geotiff",
-                "width": 20,
-                "height": 10,
-                "band_count": 1,
-                "crs": "EPSG:4326",
-                "declared_nodata": None,
-                "bands": [{"min": 0, "mean": 2.5, "max": 8, "std": 1.2}],
-            }],
-            "capabilities": {"explicit_temporal_dimensions": []},
-        },
-        "files": ["chart.png", "quicklook_manifest.json", "../private.txt"],
-    }
-    tool_result = ToolMessage(
-        tool_call_id="quicklook-timeout-call",
-        name="dataset_quicklook",
-        content="completed",
-        artifact=ToolResult(
-            success=True,
-            message="Command completed successfully",
-            data={
-                "status": "completed",
-                "returncode": 0,
-                "output": json.dumps(payload),
-            },
-        ),
-    )
-    tool = SimpleNamespace(
-        name="dataset_quicklook",
-        toolkit=SimpleNamespace(name="shell"),
-    )
-    agent.get_tool = lambda name: tool if name == "dataset_quicklook" else None
-    agent.invoke_tool = AsyncMock(return_value=tool_result)
-
-    async def failed_synthesis(*_args, **_kwargs):
-        if failure_mode == "timeout":
-            raise TimeoutError("external provider connection lost")
-        raise RuntimeError("provider unavailable")
-
-    agent.ask_with_messages = failed_synthesis
-    dataset = MountedDataset(
-        dataset_id="tds_timeout",
-        name="Timeout test",
-        description="该数据集可用于环境监测，并为灾害风险评估提供基础数据。",
-        data_center_id="center",
-        data_center_name="Center",
-        sandbox_path="/home/ubuntu/datasets/tds_timeout",
-        files=[],
-    )
-
-    events = [
-        event
-        async for event in agent._execute_preferred_quicklook(
-            "analyze dataset",
-            message=Message(message="综合分析数据价值", datasets=[dataset]),
-            dataset_intent=ExecutionAgent.DATASET_INTENT_ANALYSIS,
-            allow_terminal_quicklook=False,
-        )
-    ]
-
-    assert not hasattr(ExecutionAgent, "DATASET_SYNTHESIS_TIMEOUT_SECONDS")
-    assert not any(isinstance(event, ErrorEvent) for event in events)
-    message_event = next(event for event in events if isinstance(event, MessageEvent))
-    result = ExecutionResult.model_validate_json(message_event.message)
-    assert result.success is True
-    assert "数据探查工具已成功完成" in result.result
-    assert "finalization_" not in result.result
-    assert "登记用途与价值证据" in result.result
-    assert "灾害风险评估" in result.result
-    assert "20×10" in result.result
-    assert result.attachments == [
-        "/home/ubuntu/output/quicklook-timeout/chart.png",
-        "/home/ubuntu/output/quicklook-timeout/quicklook_manifest.json",
-    ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="superseded: quicklook evidence is not a terminal answer")
-async def test_successful_quicklook_is_a_terminal_fast_path_capability():
-    agent = object.__new__(ExecutionAgent)
-    agent.max_iterations = 10
-    agent._dataset_fast_path_mode = True
-    agent._dataset_intent = ExecutionAgent.DATASET_INTENT_VISUALIZATION
-    agent._current_plan = SimpleNamespace(language="zh")
-    tool_call_message = AIMessage(content="", tool_calls=[{
-        "name": "dataset_quicklook",
-        "args": {
-            "id": "quicklook",
-            "input_path": "/home/ubuntu/datasets/tds_test",
-            "output_dir": "/home/ubuntu/output/quicklook",
-        },
-        "id": "quicklook-call",
-    }])
-    raw_result = ToolMessage(
-        tool_call_id="quicklook-call",
-        name="dataset_quicklook",
-        content="completed",
-        artifact=ToolResult(
-            success=True,
-            message="Command completed successfully",
-            data={
-                "status": "completed",
-                "returncode": 0,
-                "output": json.dumps({
-                    "success": True,
-                    "output": "/home/ubuntu/output/quicklook",
-                    "summary": {
-                        "files_analyzed": 2,
-                        "files_failed": 0,
-                        "plot_count": 3,
-                        "elapsed_seconds": 0.8,
-                    },
-                    "evidence": {
-                        "datasets": [{
-                            "path": "rainfall.tif",
-                            "format": "geotiff",
-                            "width": 456,
-                            "height": 250,
-                            "band_count": 1,
-                            "crs": "EPSG:4326",
-                            "bands": [{
-                                "band": 1,
-                                "min": 0.0,
-                                "mean": 29.469,
-                                "max": 361.729,
-                                "std": 67.515,
-                            }],
-                            "spatial_profile": {
-                                "quantiles": {"p05": 0.0, "p50": 5.2, "p95": 180.0},
-                                "zone_means": {
-                                    "upper_left": 10.0,
-                                    "upper_right": 20.0,
-                                    "lower_left": 30.0,
-                                    "lower_right": 40.0,
-                                },
-                            },
-                        }],
-                        "capabilities": {"explicit_temporal_dimensions": []},
-                    },
-                    "files": ["chart.png", "quicklook_summary.md", "../unsafe"],
-                }),
-            },
-        ),
-    )
-    agent.ask = AsyncMock(return_value=tool_call_message)
-    agent.ask_with_messages = AsyncMock(
-        side_effect=AssertionError("terminal quicklook must not require another model turn")
-    )
-    agent.get_tool = lambda _name: SimpleNamespace(toolkit=SimpleNamespace(name="shell"))
-    agent.invoke_tool = AsyncMock(return_value=raw_result)
-
-    events = [event async for event in agent.execute("visualize")]
-
-    message_event = next(event for event in events if isinstance(event, MessageEvent))
-    payload = json.loads(message_event.message)
-    assert payload["success"] is True
-    assert payload["attachments"] == [
-        "/home/ubuntu/output/quicklook/chart.png",
-        "/home/ubuntu/output/quicklook/quicklook_summary.md",
-    ]
-    assert "生成 3 张图表" in payload["result"]
-    assert "456×250" in payload["result"]
-    assert "29.469" in payload["result"]
-    assert "P05/P50/P95" in payload["result"]
-    assert "10.0 / 20.0 / 30.0 / 40.0" in payload["result"]
-    assert "未发现显式时间维度" in payload["result"]
-    assert "有界抽样" in payload["result"]
-    agent.ask_with_messages.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 @pytest.mark.skip(reason="superseded: unpack evidence is not a terminal answer")
 async def test_successful_unpack_is_a_terminal_file_inventory_capability():
     agent = object.__new__(ExecutionAgent)
@@ -1499,66 +1142,22 @@ def test_unpack_result_is_not_final_answer_for_analysis_intent():
     assert agent._completion_from_tool_batch([tool_result]) is None
 
 
-def test_quicklook_evidence_never_finishes_before_agent_coverage_answer():
+def test_table_profile_evidence_does_not_finish_requested_visualization():
     agent = object.__new__(ExecutionAgent)
     agent._dataset_fast_path_mode = True
     agent._dataset_intent = ExecutionAgent.DATASET_INTENT_VISUALIZATION
     tool_result = SimpleNamespace(
-        name="dataset_quicklook",
+        name="table_profile",
         artifact=ToolResult(
             success=True,
             data={
-                "status": "completed",
-                "returncode": 0,
-                "output": json.dumps({
-                    "success": True,
-                    "output": "/home/ubuntu/output/quicklook",
-                    "summary": {"files_analyzed": 1, "plot_count": 3},
-                    "files": ["quicklook_manifest.json"],
-                }),
+                "rows": 3,
+                "columns": [{"name": "value", "min": 1, "max": 3}],
             },
         ),
     )
 
     assert agent._completion_from_tool_batch([tool_result]) is None
-
-
-def test_quicklook_table_evidence_prefers_measured_value_over_time_axis():
-    summary = ExecutionAgent._quicklook_evidence_summary(
-        {
-            "evidence": {
-                "datasets": [{
-                    "path": "rain.csv",
-                    "format": "csv",
-                    "table": {
-                        "rows_sampled": 3,
-                        "columns_profiled": 3,
-                        "columns": [
-                            {
-                                "name": "年份",
-                                "statistics": {"min": 2019, "mean": 2020, "max": 2021},
-                                "missing_percent": 0,
-                            },
-                            {
-                                "name": "降水量",
-                                "statistics": {"min": 10, "mean": 20, "max": 30},
-                                "missing_percent": 0,
-                            },
-                            {"name": "区域", "missing_percent": 33.33},
-                        ],
-                    },
-                }],
-                "capabilities": {
-                    "explicit_temporal_dimensions": [{"field": "年份"}],
-                },
-            },
-        },
-        language="zh",
-    )
-
-    assert "字段 降水量" in summary
-    assert "10 / 20 / 30" in summary
-    assert "区域 的 33.33%" in summary
 
 
 @pytest.mark.asyncio

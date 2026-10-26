@@ -44,6 +44,11 @@ implementation 是固定、独立的“实现方式是否适用于当前冻结�
 审查范围或响应格式错误由宿主处理，不是被审程序的缺陷；不得因自己生成未知编号而否决 implementation，也不得要求实现来源未规定的行为。不得为通过创建而改变真实负评。
 只返回 schema 指定的完整对象，不返回 implementation_appropriate、implementation_reason 或任何额外字段。"""
 
+REPAIR_SCOPE_INSTRUCTION = """repair_scope 只定位全部真实负评需要修改的内容，不得改变审查结论。
+若所有问题均能仅修改现有脚本源码解决，且工作流、参数、声明的接口、输出与验收要求本身正确，kind=implementation；列出全部受影响requirement_ids、负评source_ids及必须修改的现有script_paths。来源级负评必须包含该来源全部保留要求。
+若任一问题需要调整工作流、接口或声明，或不能确认只改源码足够，kind=workflow；不得把设计缺陷包装成实现缺陷。全部审查通过时kind=none且三个列表为空。
+宿主核对现有脚本承担的要求与定位是否完整。定位不代表批准：代码修订后仍执行完整校验和新的独立审查。"""
+
 
 class ReviewFormError(ValueError):
     """Fixed diagnostics, excluding response text and unknown model IDs."""
@@ -65,10 +70,11 @@ class ReviewFormAdapter:
     source_ids: tuple[str, ...]
     requirement_ids: tuple[str, ...]
     excluded_source_ids: frozenset[str] = frozenset()
+    script_paths: tuple[str, ...] | None = None
 
     @property
     def instruction(self):
-        return REVIEW_FORM_INSTRUCTION
+        return REVIEW_FORM_INSTRUCTION + ("\n" + REPAIR_SCOPE_INSTRUCTION if self.script_paths is not None else "")
 
     def request_schema(self):
         sources = {key: _assessment_schema(_SOURCE_STATUSES) for key in self.source_ids}
@@ -78,13 +84,23 @@ class ReviewFormAdapter:
         requirements = {key: _assessment_schema(_REQUIREMENT_STATUSES) for key in self.requirement_ids}
         implementation = _assessment_schema(("accepted", "rejected"))
         implementation["description"] = _IMPLEMENTATION_CRITERION
-        return {"title": "HostBoundMethodReview", "type": "object", "properties": {
+        result = {"title": "HostBoundMethodReview", "type": "object", "properties": {
             "sources": {"type": "object", "properties": sources, "required": list(sources),
                         "additionalProperties": False},
             "requirements": {"type": "object", "properties": requirements, "required": list(requirements),
                              "additionalProperties": False},
             "implementation": implementation,
         }, "required": ["sources", "requirements", "implementation"], "additionalProperties": False}
+        if self.script_paths is not None:
+            fields = {"kind": {"type": "string", "enum": ["implementation", "workflow", "none"]}}
+            for name, identifiers in (("requirement_ids", self.requirement_ids),
+                                      ("source_ids", self.source_ids), ("script_paths", self.script_paths)):
+                fields[name] = {"type": "array", "items": {"type": "string", "enum": list(identifiers)},
+                                "uniqueItems": True}
+            result["properties"]["repair_scope"] = {"type": "object", "properties": fields,
+                "required": list(fields), "additionalProperties": False}
+            result["required"].append("repair_scope")
+        return result
 
     @staticmethod
     def _section(document, name, identifiers, statuses):
@@ -107,7 +123,10 @@ class ReviewFormAdapter:
         rejection. Missing/invalid explanatory fields remain for canonical
         Pydantic validation and narrow repairs; statuses keep the form protocol.
         """
-        if not isinstance(document, dict) or set(document) != {"sources", "requirements", "implementation"}:
+        expected = {"sources", "requirements", "implementation"}
+        if self.script_paths is not None:
+            expected.add("repair_scope")
+        if not isinstance(document, dict) or set(document) != expected:
             raise ReviewFormError(["sources", "requirements", "implementation"])
         sources = self._section(document, "sources", self.source_ids, _SOURCE_STATUSES)
         requirements = self._section(document, "requirements", self.requirement_ids, _REQUIREMENT_STATUSES)
@@ -124,6 +143,18 @@ class ReviewFormAdapter:
         }
         if "explanation" in implementation:
             result["implementation_reason"] = implementation["explanation"]
+        if self.script_paths is not None:
+            scope = document["repair_scope"]
+            if (not isinstance(scope, dict) or set(scope) != {"kind", "requirement_ids", "source_ids", "script_paths"}
+                    or scope.get("kind") not in {"implementation", "workflow", "none"}):
+                raise ReviewFormError(["repair_scope"])
+            for name, identifiers in (("requirement_ids", self.requirement_ids),
+                                      ("source_ids", self.source_ids), ("script_paths", self.script_paths)):
+                values = scope[name]
+                if (not isinstance(values, list) or any(not isinstance(value, str) for value in values)
+                        or len(values) != len(set(values)) or not set(values) <= set(identifiers)):
+                    raise ReviewFormError(["repair_scope", name])
+            result["repair_scope"] = scope
         return result
 
     def observe(self, path, value):
@@ -180,4 +211,7 @@ def review_form_adapter(schema, stage, payload):
     excluded = _host_ids(contract.get("excluded_sources", []), "source_id", r"[A-Z][0-9]{3,}")
     # Withheld exclusions have no source body in a blind reference request.
     # The form does not introduce an obligation to review that absent body.
-    return ReviewFormAdapter(sources, requirements, frozenset(excluded) & set(sources))
+    scripts = None
+    if stage == "method_review" and isinstance(payload.get("skill_package"), dict):
+        scripts = _host_ids(payload["skill_package"].get("scripts", []), "path", r"scripts/[a-z][a-z0-9_-]{0,47}\.py")
+    return ReviewFormAdapter(sources, requirements, frozenset(excluded) & set(sources), scripts)

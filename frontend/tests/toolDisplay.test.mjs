@@ -19,6 +19,27 @@ const tool = (overrides = {}) => ({
   ...overrides,
 });
 
+test('Python interface inspection shows the module and requested APIs, including stored function names', () => {
+  const event = tool({
+    name: 'python_inspect', function: '',
+    args: { id: 'internal-process', module: 'scipy.stats', names: ['ttest_ind', 'linregress'] },
+  });
+  assert.equal(resolveToolName(event), 'shell');
+  assert.equal(resolveToolFunction(event), 'python_inspect');
+  assert.equal(getToolDisplayDetail(event).preview, 'scipy.stats · ttest_ind, linregress');
+  assert.equal(safeToolContentForDisplay(event).function, 'python_inspect');
+});
+
+test('Python inspection previews keep module-only requests useful and bound malformed member lists', () => {
+  assert.equal(getToolDisplayDetail(tool({ function: 'python_inspect', args: { module: 'numpy' } })).full, 'numpy');
+  const detail = getToolDisplayDetail(tool({ function: 'python_inspect', args: {
+    module: 'custom', names: [null, { secret: 'hidden' }, '/data2/private/member', ...Array.from({ length: 12 }, (_, i) => `api${i}`)],
+  } }));
+  assert.equal(detail.full.includes('/data2/private'), false);
+  assert.equal(detail.full.includes('hidden'), false);
+  assert.equal(detail.full.includes('api7'), false);
+});
+
 test('shell_run exposes a useful command preview and expandable full command', () => {
   const command = `python3 - <<'PY'\n${'print("scientific analysis")\n'.repeat(12)}PY`;
   const detail = getToolDisplayDetail(tool({ args: { command } }));

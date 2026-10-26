@@ -35,7 +35,7 @@ def test_recognizable_saved_programs_use_the_direct_runner(value):
     "printf '%s' 'python3 analysis.py | tail -80'",
     "python3 -c 'print(\"analysis.py\")'",
     "python3 -m json.tool evidence.json",
-    "ai-dataseek-quicklook /data/input.csv --output /home/ubuntu/output/quicklook",
+    "ai-dataseek-unpack /data/input.zip --output /home/ubuntu/output/unpacked",
     "python3 - <<'PY'\nprint('analysis.py')\nPY",
     "cat <<'TEXT'\npython3 analysis.py\nTEXT",
     "python3 '$SCRIPT_PATH'",

@@ -1378,7 +1378,7 @@ async def test_spilled_failed_shell_result_stays_failed_in_console_projection():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("function_name,renderer", [
     ("dataset_analysis_run", AgentTaskRunner._dataset_analysis_console),
-    ("dataset_quicklook", AgentTaskRunner._dataset_quicklook_console),
+    ("python_inspect", AgentTaskRunner._python_inspection_console),
 ])
 @pytest.mark.parametrize("success", [True, False])
 async def test_dataset_spill_console_preserves_status_without_raw_preview(

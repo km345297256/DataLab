@@ -114,7 +114,8 @@ def review_wire_response(messages, document):
         return requirement_wire_response(request, document)
     properties = request.get("schema", {}).get("properties", {})
     if not (request.get("stage") in {"method_review", "synthetic_reference_review"}
-            and set(properties) == {"sources", "requirements", "implementation"}
+            and set(properties) in ({"sources", "requirements", "implementation"},
+                                    {"sources", "requirements", "implementation", "repair_scope"})
             and all(properties[name].get("type") == "object" for name in properties)):
         return document
     assert type(document["implementation_appropriate"]) is bool
@@ -127,6 +128,18 @@ def review_wire_response(messages, document):
     result["implementation"] = {"status": "accepted" if document["implementation_appropriate"] else "rejected"}
     if "implementation_reason" in document:
         result["implementation"]["explanation"] = document["implementation_reason"]
+    if "repair_scope" in properties:
+        # Existing fixtures test old scientific decisions. Preserve their
+        # broad design route unless the test explicitly supplies localization.
+        items_preserved = (all(item["status"] == "preserved" for item in document["requirements"]) and
+            all(item["status"] in {"preserved", "valid_exclusion"} for item in document["sources"]))
+        accepted = document["implementation_appropriate"] and items_preserved
+        implementation_only = not document["implementation_appropriate"] and items_preserved
+        result["repair_scope"] = document.get("repair_scope", {
+            "kind": "none" if accepted else "implementation" if implementation_only else "workflow",
+            "requirement_ids": [], "source_ids": [], "script_paths":
+                [script["path"] for script in request.get("skill_package", {}).get("scripts", [])]
+                if implementation_only else []})
     return result
 
 
@@ -177,6 +190,23 @@ def stage_response(messages, payload=None):
                      "requirement_ids": [r["id"] for r in request["method_contract"]["requirements"]],
                      "implementation_source_ids": [r["id"] for r in request.get("implementation_sources", [])]}
                     for item in result.get("scripts", [])]})
+    # The model wire now authors an explicit interface before any source body.
+    # Keep stored-recipe fixtures legacy-compatible; this fixed artificial
+    # helper's contract is authored here, never inferred from generated code.
+    result["implementation"]["interface_version"] = 2
+    for script in result["implementation"]["scripts"]:
+        script.setdefault("interface_contract", {
+            "version": 1,
+            "cli_options": [{"flags": [flag], "required": True, "value_type": "str",
+                             "meaning": "Bind the currently selected input or isolated output path."}
+                            for flag in ("--input", "--output")],
+            "inputs": [{"argument": "--input", "format": "csv", "dynamic_columns": True,
+                        "structure": "CSV table with arbitrary caller-selected column names.",
+                        "missing_semantics": ["Empty cells are preserved; counting includes every parsed data row."]}],
+            "output_mode": "file", "outputs": [{"path": "@output", "format": "text",
+                "structure": "One decimal integer giving the number of parsed data rows.",
+                "missing_semantics": ["An empty input table yields a zero row count, not a missing value."]}],
+        })
     # Fixtures author local links, just as the production workflow schema does.
     # Stored recipes continue to use host-compiled coverage in separate tests.
     result.pop("scripts", None)

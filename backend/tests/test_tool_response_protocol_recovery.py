@@ -103,8 +103,6 @@ def make_agent(monkeypatch, responses, *, guard=None, agent_type=BaseAgent):
     agent._current_message = Message(message="分析合成数据")
     agent._dataset_fast_path_mode = False
     agent._dataset_intent = "analysis"
-    agent._allow_terminal_quicklook = False
-    agent._prefer_quicklook_evidence = False
     toolkit = ProbeToolkit()
     if guard is not None:
         toolkit.tool_execution_pipeline = ToolExecutionPipeline([guard])

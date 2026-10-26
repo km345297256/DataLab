@@ -2,6 +2,7 @@
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from app.domain.services.skills.method_contract import RequirementCoverage
+from .interface_contracts import ScriptInterfaceContract
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -42,11 +43,21 @@ class HelperScript(ScriptMetadata):
 class ScriptRequest(ScriptMetadata):
     requirement_ids: list[str] = Field(min_length=1)
     implementation_source_ids: list[str] = Field(default_factory=list)
+    interface_contract: ScriptInterfaceContract | None = Field(default=None, exclude_if=lambda value: value is None)
 
 class ImplementationPlan(_StrictModel):
+    interface_version: Literal[1, 2] = Field(default=1, exclude_if=lambda value: value == 1)
     kind: Literal["parameterized_scripts", "tool_workflow", "method_only"]
     reason: str = Field(min_length=12)
     scripts: list[ScriptRequest] = Field(default_factory=list)
+
+class ExplicitScriptRequest(ScriptRequest):
+    interface_contract: ScriptInterfaceContract
+
+class ExplicitImplementationPlan(ImplementationPlan):
+    """New authoring requires concrete interfaces; stored v1 recipes still load."""
+    interface_version: Literal[2] = 2
+    scripts: list[ExplicitScriptRequest] = Field(default_factory=list)
 
 class SkillRecipe(_StrictModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$", max_length=63)

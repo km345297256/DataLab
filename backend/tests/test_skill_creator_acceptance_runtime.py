@@ -6,6 +6,29 @@ import json
 import pytest
 
 
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("local_repair", [False, True])
+def test_workflow_boundary_accepts_versioned_contracts_and_scoped_repairs(version, local_repair):
+    from acceptance.skill_creator_real_model import assert_workflow_authoring_boundary
+    from app.domain.services.skills.skill_creation.workflow_authoring import WorkflowDraft, WorkflowDraftV2
+    from app.domain.services.skills.skill_creation.schema_repair import SchemaFieldRepairs
+    schema = (WorkflowDraft if version == 1 else WorkflowDraftV2).model_json_schema()
+    request = {"schema": schema}
+    if local_repair:
+        request = {"schema": SchemaFieldRepairs.model_json_schema(), "previous_candidate": {},
+                   "repair_feedback": {"document_schema": schema, "field_repairs": [{"field_id": "F001"}]}}
+    assert_workflow_authoring_boundary("workflow", request)
+
+
+def test_workflow_boundary_rejects_v2_schema_that_drops_required_contract():
+    from acceptance.skill_creator_real_model import assert_workflow_authoring_boundary
+    from app.domain.services.skills.skill_creation.workflow_authoring import WorkflowDraftV2
+    schema = WorkflowDraftV2.model_json_schema()
+    schema["$defs"]["ExplicitScriptRequest"]["required"].remove("interface_contract")
+    with pytest.raises(AssertionError, match="pre-code interface"):
+        assert_workflow_authoring_boundary("workflow", {"schema": schema})
+
+
 def test_artificial_draft_capture_obeys_real_storage_limits_and_unicode_bytes():
     from acceptance.skill_creator_real_model import assert_draft_package_limits
     from app.application.services.skill_draft_service import MAX_DRAFT_BYTES

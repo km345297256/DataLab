@@ -2,8 +2,8 @@
 
 Phase 4 gives sandbox analysis executions a durable, queryable lifecycle. The
 existing PlanActFlow, FastAPI host, SSE transport and read-only dataset mounts
-remain in use. Cordis plugin calls and the core `shell_run`, `dataset_unpack`
-and `dataset_quicklook` tools are tracked automatically. Interactive
+remain in use. Cordis plugin calls and the core `shell_run`, `program_run`,
+`python_inspect` and `dataset_unpack` tools are tracked automatically. Interactive
 `shell_exec` is excluded because returning “running” is not process completion.
 
 ## Lifecycle and execution
@@ -18,8 +18,16 @@ no synthetic completion percentage is shown.
 The job interceptor runs after the policy guard and encloses the existing
 timeout/concurrency interceptors. The actual operation runs in a separately
 cancellable asyncio task; the Agent still awaits its ordinary tool result.
-Production timeout limits are unchanged (currently at most 120 seconds).
-This release does not introduce an independent distributed job queue or
+Analysis jobs have no elapsed-time quota: the interceptor records
+`timeout_seconds=null`. Shell/program wait durations are bounded observation
+windows, not a deadline that terminates an analysis. A still-running operation
+is observed again through its original execution receipt rather than launched
+again. Individual operations can retain their own limits: for example,
+`python_inspect` has a separate 20-second metadata-query limit, which does not
+set an analysis-task deadline. The `timed_out` state remains available for
+actual operation timeouts and historical records.
+
+This lifecycle does not introduce an independent distributed job queue or
 detached jobs that outlive their Agent task.
 
 Cancelling a job invokes the existing sandbox process cleanup and stops the
@@ -62,8 +70,9 @@ share pages never expose cancellation controls.
 
 The existing `tool` SSE event gains an optional `analysis_job` object. Its
 `schema_version` and `revision` are independent of the session event's existing
-`version` and `seq`. Tool detail cards show state, elapsed time and the tool's
-time limit. While open, a live card queries the job to reconcile missed updates;
+`version` and `seq`. Tool detail cards show state and elapsed time; a timeout
+value, when present in a record, must not be inferred from a polling window.
+While open, a live card queries the job to reconcile missed updates;
 revision checks prevent stale SSE/poll responses from reverting state. Polling
 stops at a terminal state or when the card is closed.
 

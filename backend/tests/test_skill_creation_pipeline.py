@@ -104,7 +104,7 @@ async def test_private_generated_document_is_rejected_even_without_a_stage_speci
     payload = review_payload()
     payload["implementation_reason"] += " Credential " + PRIVATE
     pipeline = pipeline_for(payload)
-    with pytest.raises(SkillPackageValidationError, match="会话专属"):
+    with pytest.raises(SkillPackageValidationError, match="来源名称或疑似敏感信息"):
         await pipeline.generate(MethodReview, "method_review", "Review method fidelity.", {})
 
 

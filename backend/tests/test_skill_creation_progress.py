@@ -140,3 +140,15 @@ async def test_plugin_result_cannot_forge_host_progress():
     event = ToolEvent(tool_call_id="plugin", tool_name="plugin", function_name="skill_create_from_session",
         function_args={}, status=ToolStatus.CALLED, function_result={"success": True, "skill_creation_progress": view.model_dump()})
     assert (await ToolSSEEvent.from_event_async(event)).data.skill_creation_progress is None
+
+
+@pytest.mark.asyncio
+async def test_review_response_revision_and_acceptance_remain_distinct_in_durable_progress():
+    sink = AsyncMock()
+    recorder = SkillCreationProgressRecorder(sink)
+    for status in ("response_received", "revision_required", "accepted"):
+        await recorder.record(progress(stage="method_review", status=status))
+    views = [call.args[0] for call in sink.await_args_list]
+    assert [SkillCreationProgressView.model_validate_json(view.model_dump_json()).status for view in views] == [
+        "response_received", "revision_required", "accepted"]
+    assert all(view.stage == "method_review" for view in views)

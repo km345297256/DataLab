@@ -9,7 +9,7 @@ from app.domain.services.skills.skill_creation_error import KNOWN_CODES, STAGE_L
 class SkillCreationProgressView(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     stage: str
-    status: Literal["running", "repairing", "passed", "failed", "cancelled"]
+    status: Literal["running", "repairing", "passed", "failed", "cancelled", "response_received", "accepted", "revision_required"]
     attempt: int = Field(ge=0)
     code: str | None = None
 

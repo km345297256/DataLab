@@ -15,6 +15,7 @@ from app.domain.services.skills.skill_validation_extension import CoverageRefere
 from app.domain.services.skills.skill_reference_verification import verify_reference_plan
 from app.domain.services.skills.skill_creation.checkpoints import content_digest
 from app.domain.services.skills.skill_creation.script_policy import invocation_arguments
+from app.domain.services.skills.skill_creation.interface_contracts import declared_validation_interface, validate_declared_script_interface
 
 from app.domain.services.skills.skill_validation import (
     ScriptValidationInterface, SyntheticValidationPlan, VALIDATION_PLAN_PROMPT,
@@ -25,6 +26,16 @@ from app.domain.services.skills.skill_validation import (
 def script_interfaces(recipe):
     interfaces = []
     for script in recipe.scripts:
+        implementation = getattr(recipe, "implementation", None)
+        request = next((item for item in implementation.scripts if item.path == script.path), None) if implementation else None
+        if implementation is not None and implementation.interface_version == 2 and (request is None or request.interface_contract is None):
+            raise SkillPackageValidationError("invalid_declared_script_interface", details={
+                "interface_issues": [{"location": ["implementation", "scripts"], "reason": "explicit_interface_required"}]})
+        if request is not None and request.interface_contract is not None:
+            validate_declared_script_interface(script, request.interface_contract)
+            interfaces.append(declared_validation_interface(request,
+                validation_cases=[case.model_dump() for case in recipe.validation_cases]))
+            continue
         # CLI names and literal output filenames are interface information,
         # never an implementation or a source of expected numerical answers.
         tree = ast.parse(script.content)

@@ -1,12 +1,11 @@
 """Select a completed owned analysis and prepare non-executable method evidence."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 from typing import Any
 from app.domain.models.event import DoneEvent, ErrorEvent, MessageEvent, PlanEvent, StepEvent, ToolEvent, ToolStatus
 from app.domain.models.plan import ExecutionStatus
 from app.domain.services.skills.skill_creation_error import SkillCreationError
-from app.domain.services.skills.method_contract import evidence_sources
 from .intent import is_explicit_skill_create_command
 from .privacy import PrivacyContext, ensure_context
 
@@ -44,7 +43,7 @@ def _tool_succeeded(event: ToolEvent) -> bool:
         result = result.model_dump()
     return isinstance(result, dict) and result.get("success") is True
 
-def _verified_turn(events: list[Any]) -> None:
+def _latest_plan_steps(events: list[Any]):
     latest_steps: dict[str, Any] = {}
     latest_plan = None
     for event in events:
@@ -53,6 +52,10 @@ def _verified_turn(events: list[Any]) -> None:
             latest_steps = {step.id: step for step in event.plan.steps}
         elif isinstance(event, StepEvent):
             latest_steps[event.step.id] = event.step
+    return latest_plan, latest_steps
+
+def _verified_turn(events: list[Any]) -> None:
+    latest_plan, latest_steps = _latest_plan_steps(events)
     completed = any(isinstance(event, DoneEvent) for event in events) or (
         latest_plan is not None and latest_plan.status == ExecutionStatus.COMPLETED)
     if (not completed or any(isinstance(event, ErrorEvent) for event in events)
@@ -78,18 +81,12 @@ def build_synthesis_evidence(events: list[Any], *, private_values: PrivacyContex
     """Complete method evidence with no executable trace or raw tool output."""
     private_values = ensure_context(private_values)
     safe = lambda value: _safe_text(value, private_values)
-    plans = [event.plan for event in events if isinstance(event, PlanEvent)]
-    steps: dict[str, Any] = {}
-    for event in events:
-        if isinstance(event, PlanEvent):
-            steps.update({step.id: step for step in event.plan.steps})
-        elif isinstance(event, StepEvent):
-            steps[event.step.id] = event.step
+    latest_plan, steps = _latest_plan_steps(events)
     messages = [event for event in events if isinstance(event, MessageEvent)]
     final = next((event for event in reversed(messages) if event.role == "assistant"), None)
     return {
         "research_request": safe(next((event.message for event in messages if event.role == "user"), "")),
-        "goal": safe(plans[-1].goal if plans else ""),
+        "goal": safe(latest_plan.goal if latest_plan else ""),
         "verified_steps": [{"method": safe(step.description), "evidence_summary": safe(step.result or "")}
                            for step in steps.values() if _successful_step(step)],
         "successful_tool_capabilities": sorted({f"{event.tool_name}.{event.function_name}" for event in events
@@ -101,11 +98,12 @@ def build_synthesis_evidence(events: list[Any], *, private_values: PrivacyContex
 
 @dataclass(frozen=True)
 class AnalysisContext:
-    """One source turn; raw events never reach generation or delivery."""
+    """A verified current turn and typed history; raw events remain private."""
     privacy: PrivacyContext
     evidence: dict
     sources: list[dict]
     programs: list[dict]
+    history: list[dict] = field(default_factory=list)
 
 
 async def prepare_analysis_context(session_id, user_id, repository, registry):
@@ -114,24 +112,42 @@ async def prepare_analysis_context(session_id, user_id, repository, registry):
     if not await repository.find_by_id_and_user_id(session_id, user_id):
         raise SkillCreationError("source_analysis", "session_unavailable")
     try:
-        events = select_analysis_turn(await repository.get_events(session_id))
+        all_events = await repository.get_events(session_id)
+        events = select_analysis_turn(all_events)
         _verified_turn(events)
     except ValueError as exc:
         raise SkillCreationError("source_analysis", "analysis_not_ready") from exc
-    privacy = PrivacyContext.collect(events, session_id=session_id, user_id=user_id)
+    from .history import analysis_turns, bind_program_history, build_analysis_history, build_creation_sources, history_index
+    turns = analysis_turns(all_events)
+    # The existing latest-turn gate above prevents falling back across a failed
+    # or unrelated newest request. Creation-only turns never enter this history.
+    selected = next(index for index, turn in enumerate(turns) if turn[0] is events[0])
+    turns = turns[:selected + 1]
+    privacy = PrivacyContext.collect([event for turn in turns for event in turn], session_id=session_id, user_id=user_id)
     evidence = build_synthesis_evidence(events, private_values=privacy)
-    sequences = [event.seq for event in events if isinstance(event, ToolEvent)
+    history = build_analysis_history(turns, privacy)
+    sources = build_creation_sources(evidence, history)
+    evidence["analysis_history"] = history_index(history, sources)
+    sequence_turns = {event.seq: item["turn_id"] for turn, item in zip(turns, history)
+                     if item["execution_status"] == "completed" for event in turn
+                     if isinstance(event, ToolEvent) and type(event.seq) is int}
+    sequence_chronology = {event.seq: item["chronology"] - len(turn) + index + 1
+                           for turn, item in zip(turns, history) for index, event in enumerate(turn)
+                           if isinstance(event, ToolEvent) and event.seq in sequence_turns}
+    sequences = [event.seq for turn, item in zip(turns, history) if item["execution_status"] == "completed"
+                 for event in turn if isinstance(event, ToolEvent)
                  and event.function_name == "program_run" and _tool_succeeded(event)
                  and type(event.seq) is int]
     read_sources = getattr(repository, "get_successful_program_sources", None)
     records = await read_sources(session_id, user_id, sequences) if callable(read_sources) and sequences else []
     from app.domain.services.skills.program_method_evidence import ProgramMethodEvidenceError, method_program_references
     try:
-        programs = method_program_references(records, privacy_context=privacy)
+        programs = method_program_references(records, privacy_context=privacy, method_sources=sources)
+        bind_program_history(programs, records, sequence_turns, history[-1]["turn_id"], sequence_chronology)
     except ProgramMethodEvidenceError as exc:
         # Failure to extract a private method reference is an authoring failure,
         # not evidence that the original completed analysis failed. Never drop
         # the source silently or send its exception/source text to the model.
         logger.warning("Skill source evidence extraction rejected reason=%s", exc.reason)
         raise SkillCreationError("source_analysis", "source_evidence_invalid") from exc
-    return AnalysisContext(privacy, evidence, evidence_sources(evidence), programs)
+    return AnalysisContext(privacy, evidence, sources, programs, history)

@@ -46,8 +46,9 @@ class MethodRequirement(ContractModel):
 
 class SourceExclusion(ContractModel):
     source_id: str
-    reason: Literal["observed_result", "one_time_instruction", "duplicate"]
+    reason: Literal["observed_result", "one_time_instruction", "duplicate", "superseded", "outside_scope"]
     explanation: str = Field(min_length=8)
+    replacement_source_ids: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
 
 
 class MethodContract(ContractModel):
@@ -76,11 +77,22 @@ class SourceReview(ContractModel):
     explanation: str = Field(min_length=8)
 
 
+class MethodRepairScope(ContractModel):
+    """Reviewer localization is routing evidence, never a new verdict."""
+    kind: Literal["implementation", "workflow", "none"]
+    requirement_ids: list[str]
+    source_ids: list[str]
+    script_paths: list[str]
+
+
 class MethodReview(ContractModel):
     sources: list[SourceReview]
     requirements: list[RequirementReview]
     implementation_appropriate: bool
     implementation_reason: str = Field(min_length=8)
+    # Old saved reviews remain valid and retain their exact serialized shape.
+    # Only a host-checked localization can expand the narrow revision route.
+    repair_scope: MethodRepairScope | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CoverageError(ValueError):
@@ -270,8 +282,35 @@ def validate_contract(contract: MethodContract, sources: list[dict]) -> None:
         raise CoverageError("source_exclusion_overlap", sorted(overlap), details=details)
     if missing:
         raise CoverageError("missing_source_coverage", sorted(missing), details=details)
+    historical_exclusions = set()
+    for item in contract.excluded_sources:
+        source = source_map[item.source_id]
+        replacements = item.replacement_source_ids
+        historical = source.get("historical") is True
+        if item.reason in {"superseded", "outside_scope"}:
+            valid = historical and type(source.get("chronology")) is int
+            if item.reason == "superseded":
+                valid = valid and bool(replacements) and len(set(replacements)) == len(replacements)
+                for replacement in replacements:
+                    target = source_map.get(replacement, {})
+                    later = (target.get("historical") is not True or
+                             type(target.get("chronology")) is int and
+                             target["chronology"] > source.get("chronology", 0))
+                    valid = valid and replacement in covered and later
+            else:
+                valid = valid and not replacements
+            if not valid:
+                raise CoverageError("invalid_historical_exclusion", [item.source_id])
+            historical_exclusions.add(item.source_id)
+        elif replacements:
+            raise CoverageError("invalid_historical_exclusion", [item.source_id])
     missing_anchors = []
     for source in sources:
+        # A later, retained correction may deliberately replace an earlier
+        # algorithm. Its old names must not be forced back into the skill.
+        # The independent reviewer still judges the exclusion's semantics.
+        if source["id"] in historical_exclusions:
+            continue
         # The requested method names must survive extraction even if a model
         # labels a paragraph duplicate or a one-time instruction.
         if source["kind"] not in {"request", "method"}:

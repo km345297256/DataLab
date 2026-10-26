@@ -17,7 +17,7 @@ from .schema_repair import (
     SchemaRepairRejected, SchemaRepairSpec, _digest, apply_schema_repairs,
     build_existing_string_repair_spec,
 )
-from .workflow_authoring import WorkflowDraft
+from .workflow_authoring import WorkflowDraft, WorkflowDraftV2
 
 
 WORKFLOW_PRIVACY_REPAIR_INSTRUCTION = """只修复宿主指定的工作流隐私文本字段，不重新生成整份工作流。
@@ -60,18 +60,32 @@ def _editable(path: tuple) -> bool:
     if len(path) == 3:
         return (path[0] in _CONTENT_FIELDS and type(path[1]) is int and path[1] >= 0
                 and path[2] in _CONTENT_FIELDS[path[0]])
-    return (len(path) == 4 and path[:2] == ("implementation", "scripts")
-            and type(path[2]) is int and path[2] >= 0 and path[3] in {"purpose", "invocation"})
+    if not (len(path) >= 4 and path[:2] == ("implementation", "scripts")
+            and type(path[2]) is int and path[2] >= 0):
+        return False
+    if len(path) == 4:
+        return path[3] in {"purpose", "invocation"}
+    if path[3] != "interface_contract" or len(path) < 7 or type(path[5]) is not int or path[5] < 0:
+        return False
+    # Before implementation generation, privacy repairs may correct declared
+    # output names and prose. Option identities, defaults, structural keys,
+    # types and requirement links remain outside this transaction.
+    if len(path) == 7:
+        return ((path[4] == "cli_options" and path[6] == "meaning")
+                or (path[4] in {"inputs", "outputs"} and path[6] == "structure")
+                or (path[4] == "outputs" and path[6] == "path"))
+    return (len(path) == 8 and path[4] in {"inputs", "outputs"} and path[6] == "missing_semantics"
+            and type(path[7]) is int and path[7] >= 0)
 
 
 def _typed_document(candidate: WorkflowDraft) -> dict | None:
-    if type(candidate) is not WorkflowDraft:
+    if type(candidate) not in {WorkflowDraft, WorkflowDraftV2}:
         return None
     try:
         document = candidate.model_dump(mode="json")
         # model_copy/model_construct can bypass validation; do not derive edit
         # authority from a malformed typed instance or silently normalize it.
-        checked = WorkflowDraft.model_validate(document).model_dump(mode="json")
+        checked = type(candidate).model_validate(document).model_dump(mode="json")
         return document if _digest(document) == _digest(checked) else None
     except (ValidationError, TypeError, ValueError, RecursionError):
         return None

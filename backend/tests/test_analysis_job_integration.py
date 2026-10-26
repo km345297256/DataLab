@@ -105,7 +105,8 @@ async def test_job_lifecycle_sse_retains_display_identity_and_spill_reference():
 
 
 @pytest.mark.asyncio
-async def test_targeted_cancel_kills_execution_and_bypasses_retry_without_touching_other_job():
+@pytest.mark.parametrize("tool_name", ["shell_run", "python_inspect"])
+async def test_targeted_cancel_kills_execution_and_bypasses_retry_without_touching_other_job(tool_name):
     repository = InMemoryAnalysisJobRepository()
     service = AnalysisJobService(repository)
     started = asyncio.Event()
@@ -116,9 +117,10 @@ async def test_targeted_cancel_kills_execution_and_bypasses_retry_without_touchi
         started.set()
         await asyncio.Event().wait()
 
-    task = asyncio.create_task(invoke(pipeline(service), execute))
+    task = asyncio.create_task(invoke(pipeline(service), execute, name=tool_name))
     await asyncio.wait_for(started.wait(), 1)
     job_id = next(iter(repository.records))
+    assert repository.records[job_id].tool_name == tool_name
     assert await service.request_cancel("other-user", "session-1", job_id) is None
     assert not task.done()
     await service.request_cancel("user-1", "session-1", job_id)

@@ -114,7 +114,7 @@ const shouldLoadLiveShellSession = computed(() => props.live && props.toolConten
 // Older synthetic dataset/spill console records encoded success as 0/1.
 // They are operation summaries, not evidence of a process exit.
 const showProcessExit = computed(() => !props.toolContent.spill
-  && !['dataset_analysis_run', 'dataset_quicklook'].includes(props.toolContent.function));
+  && !['dataset_analysis_run', 'dataset_quicklook', 'python_inspect'].includes(props.toolContent.function));
 
 const escapeHtml = (value: unknown) => String(value ?? '')
   .replace(/&/g, '&amp;')

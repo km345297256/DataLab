@@ -8,7 +8,7 @@ DataLab's analysis runtime provides shell execution, file operations, scientific
 - Read selected inputs through read-only object-backed mounts and write computation files to separate workspaces.
 - Support file reads, writes, search, and version-checked atomic patching for eligible writable files.
 - Provide scientific readers and analysis packages for tabular, array, spatial, biological, and other supported data.
-- Render actual output artifacts for backend validation and durable delivery.
+- Render actual output artifacts for byte-identity checks and durable backend delivery; content and scientific checks have their own explicit scope.
 - Run Chromium, VNC, and supporting processes under Supervisor.
 
 The `sandbox-image` Compose service prepares the image and exits successfully. The backend creates actual per-session analysis containers. A new image is used by new containers; existing analysis containers are not replaced in place during an update.
@@ -80,6 +80,24 @@ The API prefix is `/api/v1`; routes are registered in [`app/api/router.py`](app/
 
 Use the local development server's `/docs` or `/openapi.json` for the exact current request/response schemas. Shell wait timeout may return `status: "running"` with `returncode: null`; it does not prove failure and must not trigger command resubmission. A command's confirmed exit and permission to replay partially completed work are separate decisions.
 
+## Explicit analysis and result checks
+
+Saved Python analysis programs use the backend's `program_run` interface with explicit script, working-directory, and argument bindings. The retired `dataset_quicklook` helper has been removed from the current sandbox source and tool catalog. Analysis chooses registered tools or saved programs based on the observed inputs and requested outputs.
+
+The new `python_inspect.py` helper supports the backend's `python_inspect` tool. It batches up to eight relative API names from one module and reports actual package versions, signatures, and bounded documentation. It runs through the tracked task program executor; importing a package can initialize code, but the inspected functions are not invoked. Existing containers without this helper report it unavailable and are not silently rebuilt or made to rerun completed analysis.
+
+Optional result-check helpers are installed alongside the normal scientific packages:
+
+| Module | Contract |
+| --- | --- |
+| `datalab_analysis` | `RowPartition` checks that accepted and disjoint excluded rows cover the original identities; `aligned_groups` requires aligned row/group identities. `StageCache` reuses only explicitly bound, validated stages. |
+| `datalab_statistics` | `nested_ols_f_test`, `linear_contrast`, and `residual_levene` validate their supported inputs and assumptions and return named dictionary results. Unlabeled nested models require both sets of row IDs. |
+| `datalab_results` | `ResultBundle` freezes finite JSON-compatible computed values and exports checked JSON, CSV, supported line/scatter plots, and controlled report facts from that snapshot. `verify()` rechecks registered artifacts and facts. |
+
+Inspect the actual helper signature before relying on an uncertain return convention. For example, `RowPartition.exclude()` mutates the audit and returns `None`, `RowPartition.verify()` returns evidence rather than row IDs, and `StageCache.run()` returns a `StageResult` object. Keep retained input identities separately.
+
+The helpers are optional and do not impose a library/API list or force a different statistical method. Export consistency does not prove scientific suitability, arbitrary report prose, or the statistical interpretation of supplied plot bounds. `ResultBundle` does not upload artifacts or copy source inputs. Its outputs still use the ordinary backend delivery path. See [result-check contracts](../docs/analysis-result-contracts.md) and the [release notes](../docs/releases/2026-10-26-analysis-and-skills.md).
+
 ## JSON result helper
 
 The image installs `datalab_json` for strict, atomic JSON output:
@@ -95,7 +113,7 @@ write_json("/home/ubuntu/output/summary.json", {
 
 This example assumes `dataframe` has already been created from an authorized input and the output directory is writable. `write_json` normalizes NumPy/pandas objects and atomically replaces a regular output file. Existing artifacts survive normalization or encoding failures before replacement. DataFrame/Series representations preserve axis labels; non-string mapping keys receive a structured representation to avoid collisions. Pandas missing values become JSON null, while NaN/infinity and unavailable estimates have explicit representations instead of silently becoming zero.
 
-The helper does not bypass backend artifact verification or object-storage delivery. See [execution reliability](../docs/changes-2026-10-25-execution-reliability.md) for version-checked patches, stage dependencies, and result-set evidence.
+The JSON helper does not bypass backend byte-identity checks or object-storage delivery. See [execution reliability](../docs/changes-2026-10-25-execution-reliability.md) for version-checked patches, stage dependencies, and result-set evidence.
 
 ## Configuration
 

@@ -6,7 +6,6 @@ Use in a disposable sandbox-image container, with no published ports.
 import asyncio
 import json
 from pathlib import Path
-import shlex
 import tempfile
 from uuid import uuid4
 
@@ -26,13 +25,35 @@ async def main():
         source = directory / "synthetic.xlsx"
         pd.DataFrame({"group": ["a", "b", "c"] * 4,
                       "x": range(12), "y": [index * 2 + 1 for index in range(12)]}).to_excel(source, index=False)
-        output = directory / "quicklook"
-        commands = [("failed", "python -c 'raise SystemExit(3)'", 3),
-                    ("render", f"ai-dataseek-quicklook {shlex.quote(str(source))} --output {shlex.quote(str(output))} --max-plots 1", 0)]
-        for name, command, expected in commands:
+        output = directory / "plots"
+        failed_script = directory / "failed.py"
+        failed_script.write_text("raise SystemExit(3)\n", encoding="utf-8")
+        render_script = directory / "render.py"
+        render_script.write_text('''from pathlib import Path
+import sys
+
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+import pandas as pd
+
+table = pd.read_excel(sys.argv[1])
+assert list(table.columns) == ["group", "x", "y"]
+assert len(table) == 12
+assert (table["y"] == 2 * table["x"] + 1).all()
+output = Path(sys.argv[2])
+output.mkdir()
+figure, axes = plt.subplots()
+axes.plot(table["x"], table["y"])
+figure.savefig(output / "trend.png")
+plt.close(figure)
+''', encoding="utf-8")
+        programs = [("failed", failed_script, [], 3),
+                    ("render", render_script, [str(source), str(output)], 0)]
+        for name, script, argv, expected in programs:
             operation = uuid4().hex
             try:
-                await service.exec_command(name, str(directory), command, operation_id=operation)
+                await service.exec_program(name, str(directory), str(script), argv, operation_id=operation)
                 await service.wait_for_process(name, 30, operation_id=operation)
                 receipt = await service.operation_status(name, operation)
                 assert receipt.state == "exited" and receipt.returncode == expected

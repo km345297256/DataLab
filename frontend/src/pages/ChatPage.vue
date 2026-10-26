@@ -158,7 +158,7 @@
               <button type="button" class="shrink-0 underline disabled:opacity-50" :disabled="taskDataLocked" @click="visualizationContexts.splice(index, 1)">移除范围</button>
             </div>
           </div>
-          <ChatBox ref="composer" class="!pb-0" compact-composer collapse-context :placeholder="waitingForUser ? '请回答上方问题，或补充你的要求…' : '输入分析问题，或针对已选资料继续提问…'" v-model="inputMessage" v-model:selected-skills="selectedSkills" v-model:selected-mcp-servers="selectedMcpServers" v-model:selected-connectors="selectedConnectors" v-model:data-discovery="dataDiscovery" :discovery-target="discoveryParent?.query" show-connector-actions show-library-actions allow-send-files-only :session-id="sessionId" :rows="1" @submit="handleSubmit" :isRunning="isLoading" @stop="handleStop"
+          <ChatBox ref="composer" class="!pb-0" compact-composer collapse-context :show-mcp-actions="false" :placeholder="waitingForUser ? '请回答上方问题，或补充你的要求…' : '输入分析问题，或针对已选资料继续提问…'" v-model="inputMessage" v-model:selected-skills="selectedSkills" v-model:selected-mcp-servers="selectedMcpServers" v-model:selected-connectors="selectedConnectors" v-model:data-discovery="dataDiscovery" :discovery-target="discoveryParent?.query" show-connector-actions show-library-actions allow-send-files-only :session-id="sessionId" :rows="1" @submit="handleSubmit" :isRunning="isLoading" @stop="handleStop"
             :disabled="isSavingDataContext || isRestoringHistory || dataContextFailed" :inert="isSavingDataContext || undefined" :attachments="attachments" />
           <p class="mt-1.5 text-center text-[10px] text-[var(--text-tertiary)]">DataLab 也可能会犯错。请核查重要信息。</p>
         </div>

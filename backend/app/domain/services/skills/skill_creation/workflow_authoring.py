@@ -16,7 +16,7 @@ from app.domain.services.skills.method_contract import (
     COVERAGE_SECTIONS_BY_KIND, CoverageError, MethodContract,
 )
 from .models import (
-    ImplementationPlan, OutputContract, SkillParameter, SkillRecipe,
+    ExplicitImplementationPlan, ImplementationPlan, OutputContract, SkillParameter, SkillRecipe,
     ValidationCase, WorkflowStep,
 )
 
@@ -83,6 +83,11 @@ class WorkflowDraft(BaseModel):
     validation_cases: list[AuthoredValidationCase] = _recipe_field("validation_cases")
     limitations: list[AuthoredCondition] = _recipe_field("limitations")
     implementation: ImplementationPlan | None = _recipe_field("implementation")
+
+
+class WorkflowDraftV2(WorkflowDraft):
+    """Production authoring cannot silently fall back to source-derived I/O."""
+    implementation: ExplicitImplementationPlan
 
 
 _CONTENT_ROOTS = ("parameters", "data_requirements", "dependencies", "steps",

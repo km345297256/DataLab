@@ -1,6 +1,7 @@
 import io
 import hashlib
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -53,6 +54,42 @@ def test_completed_shell_console_preserves_actual_exit_without_coercion(returnco
     assert console[0]["output"] == ""
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["observed", "import_failed", "transport_failed"])
+async def test_python_inspection_presents_observations_without_shell_readback_or_analysis_claim(state):
+    runner = object.__new__(AgentTaskRunner)
+    runner._agent_id = "inspection-agent"
+    runner._sandbox = SimpleNamespace(view_shell=AsyncMock(side_effect=AssertionError("No extra shell read")))
+    runner._report_analysis_tool_usage = AsyncMock()
+    observation = {
+        "schema": "python-api-inspection/v1", "module": "scipy.stats", "state": state,
+        "python_version": "3.12.1", "distributions": [{"name": "scipy", "version": "1.15.0"}],
+        "members": [{"name": "ttest_ind", "state": "observed", "signature": {"text": "(a, b, *, axis=0)"},
+                     "documentation": {"text": "private source documentation"}}],
+    }
+    event = ToolEvent(status=ToolStatus.CALLED, tool_call_id="api-inspection", tool_name="shell",
+        function_name="python_inspect", function_args={"id": "inspection-process", "module": "scipy.stats"},
+        function_result=ToolResult(success=state != "transport_failed", data=(
+            {"error_code": "api_inspection_timeout"} if state == "transport_failed" else {"inspection": observation})))
+
+    await runner._handle_tool_event(event)
+
+    runner._sandbox.view_shell.assert_not_awaited()
+    assert event.tool_content is not None
+    console = event.tool_content.console
+    assert len(console) == 1
+    assert "no data analysis was performed" in console[0]["output"]
+    assert "returncode" not in console[0]
+    assert "status" not in console[0]
+    assert "private source documentation" not in str(console)
+    if state == "transport_failed":
+        assert "api_inspection_timeout" in console[0]["output"]
+        assert "scipy.stats" not in console[0]["output"]
+    else:
+        assert f"Observation: {state}" in console[0]["output"]
+        assert "ttest_ind: observed (a, b, *, axis=0)" in console[0]["output"]
+
+
 def test_dataset_analysis_tool_renders_safe_result_console_without_program_source():
     event = ToolEvent(
         status=ToolStatus.CALLED,
@@ -76,31 +113,6 @@ def test_dataset_analysis_tool_renders_safe_result_console_without_program_sourc
         "status": "completed",
     }]
     assert "base64" not in str(console).lower()
-
-
-def test_dataset_quicklook_tool_renders_summary_instead_of_full_json():
-    event = ToolEvent(
-        status=ToolStatus.CALLED,
-        tool_call_id="quicklook-1",
-        tool_name="shell",
-        function_name="dataset_quicklook",
-        function_args={"input_path": "/home/ubuntu/datasets/example"},
-        function_result={
-            "success": True,
-            "data": {
-                "status": "completed",
-                "output": '{"success":true,"summary":{"files_analyzed":24,"files_failed":0,"plot_count":4,"elapsed_seconds":6.988},"evidence":{"discovery":{"truncated":true}},"datasets":[{"path":"secret-detail.nc"}]}',
-            },
-        },
-    )
-
-    console = AgentTaskRunner._dataset_quicklook_console(event)
-
-    assert console[0]["command"] == "快速探查数据集"
-    assert "文件：24 个" in console[0]["output"]
-    assert "图表：4 张" in console[0]["output"]
-    assert "有界抽样" in console[0]["output"]
-    assert "secret-detail.nc" not in console[0]["output"]
 
 
 async def _noop(*args, **kwargs):

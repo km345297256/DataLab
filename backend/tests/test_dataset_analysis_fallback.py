@@ -71,7 +71,7 @@ async def test_unregistered_selected_target_does_not_broaden_to_whole_dataset():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("route", ["catalog_metadata", "catalog_description", "inventory", "quicklook"])
+@pytest.mark.parametrize("route", ["catalog_metadata", "catalog_description", "inventory"])
 async def test_each_fallback_enters_shared_tool_scope_without_recursing_routing(route):
     agent, captured = agent_with_capture()
     message = Message(message="Inspect the requested data", datasets=[dataset()])
@@ -79,22 +79,15 @@ async def test_each_fallback_enters_shared_tool_scope_without_recursing_routing(
         execution = agent._execute_catalog_metadata(message.message, message=message, language="en", artifact_policy="required")
     elif route == "catalog_description":
         execution = agent._execute_catalog_description(message.message, message=message, language="en", artifact_policy="required")
-    elif route == "inventory":
-        execution = agent._execute_preferred_inventory(message.message, message=message, language="en", artifact_policy="required")
     else:
-        execution = agent._execute_preferred_quicklook(message.message, message=message,
-            dataset_intent="analysis", allow_terminal_quicklook=False)
+        execution = agent._execute_preferred_inventory(message.message, message=message, language="en", artifact_policy="required")
     events = [event async for event in execution]
     assert len(events) == len(captured) == 1
     assert json.loads(events[0].message)["result"] == "Supported result"
     prompt, kwargs, fast_path, intent, tools = captured[0]
     assert kwargs == {} and fast_path is True
     assert "program_run" in tools and "validate uncertain parsing" in prompt
-    if route == "quicklook":
-        assert "dataset_quicklook" not in tools
-        assert not agent._disable_quicklook_retry
-    else:
-        assert '"artifact_policy":"required"' in prompt
+    assert '"artifact_policy":"required"' in prompt
     assert not agent._dataset_fast_path_mode
     agent.invoke_tool.assert_not_awaited()
     agent.ask_with_messages.assert_not_awaited()

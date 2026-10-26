@@ -22,10 +22,22 @@ def test_runtime_catalog_is_available_before_script_creation(monkeypatch):
     assert "path" not in json.dumps(report)
 
 
-def test_runtime_endpoint_never_requires_a_user_script():
-    import requests
+def test_optional_result_helpers_are_observed_without_importing(monkeypatch):
+    import app.services.program_dependencies as dependencies
+    seen = []
+    def available(module, paths):
+        seen.append(module)
+        return module != "datalab_results"
+    monkeypatch.setattr(dependencies, "_module_available", available)
+    report = dependencies.runtime_capabilities()
+    assert report["analysis_helpers"]["datalab_statistics"] is True
+    assert report["analysis_helpers"]["datalab_results"] is False
+    assert {"datalab_statistics", "datalab_results"} <= set(seen)
+
+
+def test_runtime_endpoint_never_requires_a_user_script(client):
     from conftest import BASE_URL
-    response = requests.get(f"{BASE_URL}/api/v1/shell/runtime-capabilities", timeout=10)
+    response = client.get(f"{BASE_URL}/api/v1/shell/runtime-capabilities", timeout=10)
     response.raise_for_status()
     data = response.json()["data"]
     assert data["check"] == "runtime_catalog"

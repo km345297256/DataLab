@@ -75,7 +75,8 @@ def runtime_capabilities(*, cancelled=None) -> dict:
     paths = list(sys.path)
     return {"version": 1, "check": "runtime_catalog", "state": "observed",
             **_runtime(paths), "analysis_helpers": {
-                "datalab_analysis": _module_available("datalab_analysis", paths)}}
+                name: _module_available(name, paths)
+                for name in ("datalab_analysis", "datalab_statistics", "datalab_results")}}
 
 
 def _catches_import_error(handler: ast.ExceptHandler) -> bool:
