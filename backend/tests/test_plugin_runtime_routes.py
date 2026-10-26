@@ -14,7 +14,8 @@ from app.domain.external.plugin_runtime import (
     ToolExecutionDescriptor,
     ToolPresentationDescriptor,
 )
-from app.interfaces.dependencies import get_plugin_runtime
+from app.interfaces.dependencies import get_plugin_runtime, get_current_user
+from app.domain.models.user import User, UserRole
 from app.interfaces.api.plugin_runtime_routes import (
     get_runtime_snapshot,
     reload_runtime_snapshot,
@@ -79,6 +80,8 @@ def _snapshot(
         ),
     )
 
+
+_ADMIN = User(id="admin", fullname="Test Admin", email="admin@test.local", role=UserRole.ADMIN)
 
 class FakeRuntime:
     def __init__(self, snapshot: PluginCatalogSnapshot):
@@ -194,7 +197,7 @@ def test_reload_returns_only_the_completed_candidate_generation():
     runtime = FakeRuntime(_snapshot())
     runtime.reload_result = _snapshot(revision="revision-two")
 
-    response = asyncio.run(reload_runtime_snapshot(runtime))
+    response = asyncio.run(reload_runtime_snapshot(runtime, current_user=_ADMIN))
     payload = response.model_dump(mode="json")["data"]
 
     assert runtime.reload_calls == 1
@@ -210,7 +213,7 @@ def test_failed_reload_keeps_previous_generation_and_redacts_error_paths():
         "Invalid manifest at file:/Users/alice/My Plugins/manifest.json; api_key=top-secret",
     )
 
-    failed = asyncio.run(reload_runtime_snapshot(runtime)).model_dump(mode="json")["data"]
+    failed = asyncio.run(reload_runtime_snapshot(runtime, current_user=_ADMIN)).model_dump(mode="json")["data"]
 
     assert failed["status"] == "error"
     assert failed["healthy"] is True
@@ -225,7 +228,7 @@ def test_failed_reload_keeps_previous_generation_and_redacts_error_paths():
 
     runtime.reload_error = None
     runtime.reload_result = _snapshot(revision="revision-two")
-    recovered = asyncio.run(reload_runtime_snapshot(runtime)).model_dump(mode="json")["data"]
+    recovered = asyncio.run(reload_runtime_snapshot(runtime, current_user=_ADMIN)).model_dump(mode="json")["data"]
     assert recovered["status"] == "healthy"
     assert recovered["revision"] == "revision-two"
     assert recovered["last_error"] is None
@@ -257,8 +260,8 @@ def test_concurrent_reload_responses_are_serialized_by_generation():
     async def run():
         runtime = ConcurrentRuntime()
         return runtime, await asyncio.gather(
-            reload_runtime_snapshot(runtime),
-            reload_runtime_snapshot(runtime),
+            reload_runtime_snapshot(runtime, current_user=_ADMIN),
+            reload_runtime_snapshot(runtime, current_user=_ADMIN),
         )
 
     runtime, responses = asyncio.run(run())
@@ -274,6 +277,7 @@ def test_concurrent_reload_responses_are_serialized_by_generation():
 def _reload_client(runtime: FakeRuntime) -> TestClient:
     app = FastAPI()
     app.include_router(plugin_runtime_router)
+    app.dependency_overrides[get_current_user] = lambda: _ADMIN
     app.dependency_overrides[get_plugin_runtime] = lambda: runtime
     app.dependency_overrides[get_settings] = lambda: SimpleNamespace(
         server_host="http://localhost:7001"
@@ -341,6 +345,7 @@ def test_reload_fails_closed_when_public_server_origin_is_not_configured():
     runtime = FakeRuntime(_snapshot())
     app = FastAPI()
     app.include_router(plugin_runtime_router)
+    app.dependency_overrides[get_current_user] = lambda: _ADMIN
     app.dependency_overrides[get_plugin_runtime] = lambda: runtime
     app.dependency_overrides[get_settings] = lambda: SimpleNamespace(server_host=None)
     client = TestClient(app, base_url="http://localhost:7001")

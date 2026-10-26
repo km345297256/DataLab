@@ -37,3 +37,18 @@ export function heatColor(value: number | null, extent: [number, number] | null)
 export function tickLabel(value: number): string {
   return Number.isFinite(value) ? Number(value.toPrecision(5)).toString() : '—';
 }
+
+export type PlotRange = [number, number];
+export function clampRange(range: PlotRange, extent: PlotRange): PlotRange {
+  const low = Math.min(...extent), high = Math.max(...extent);
+  return [Math.max(low, Math.min(high, Math.min(...range))), Math.max(low, Math.min(high, Math.max(...range)))];
+}
+export function nearestCoordinate(values: readonly number[], value: number): number {
+  let closest = -1, distance = Infinity;
+  values.forEach((coordinate, index) => { const d=Math.abs(coordinate-value); if(d<distance){closest=index;distance=d;} });
+  return closest;
+}
+export function rangeFromPixels(start: number, end: number, size: number, extent: PlotRange): PlotRange {
+  const map=(p:number)=>extent[0]+Math.max(0,Math.min(1,p/size))*(extent[1]-extent[0]);
+  return clampRange([map(start),map(end)],extent);
+}

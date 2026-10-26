@@ -3,8 +3,7 @@
     <div class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-5">
       <h2 class="text-lg font-semibold">数据连接器</h2>
       <p class="mt-2 text-sm text-[var(--text-secondary)]">连接数据源，让系统在对话中检索和读取数据，再用技能完成处理与分析。</p>
-      <p class="mt-2 text-xs text-[var(--text-tertiary)]">下面列出已接入统一调用标准的连接器。已有 MCP 服务仍在 MCP 页面管理。</p>
-      <RouterLink to="/plugins?tab=mcp" class="mt-3 inline-block text-sm underline">管理 MCP 服务</RouterLink>
+      <p class="mt-2 text-xs text-[var(--text-tertiary)]">选择适合研究问题的数据源，在对话中查找并获取可分析的数据。</p>
     </div>
     <p v-if="loading" role="status">正在读取连接器…</p>
     <div v-else-if="error" role="alert">{{ error }} <button class="underline" @click="load">重试</button></div>

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
@@ -12,7 +15,10 @@ import httpx
 from docker.types import Mount
 
 from app.core.config import get_settings
-from app.infrastructure.models.documents import JupyterSessionDocument
+from app.infrastructure.models.documents import JupyterSessionDocument, SessionDocument, UserDocument
+from app.application.errors.exceptions import NotFoundError
+from app.domain.models.analysis_input import UPLOAD_INPUT_ROOT, safe_upload_filename
+from app.infrastructure.external.sandbox.dataset_mount_validator import docker_host_path
 
 
 class JupyterService:
@@ -27,11 +33,131 @@ class JupyterService:
 
     @staticmethod
     def _name(session_id: str) -> str:
+        JupyterService._validate_session_id(session_id)
         return f"{get_settings().jupyter_name_prefix}-{session_id}"
 
     @staticmethod
     def _volume(session_id: str) -> str:
+        JupyterService._validate_session_id(session_id)
         return f"{get_settings().jupyter_name_prefix}-work-{session_id}"
+
+    @staticmethod
+    def _validate_session_id(session_id: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", session_id):
+            raise RuntimeError("Invalid Jupyter session identity")
+
+    async def _authorize(self, session_id: str, user_id: str, *, sandbox_id: str | None = None):
+        """A short-lived ticket never replaces current account/session ownership."""
+        self._validate_session_id(session_id)
+        session = await SessionDocument.find_one({"session_id": session_id, "user_id": user_id})
+        user = await UserDocument.find_one({"user_id": user_id, "is_active": True})
+        if (session is None or user is None or not user.is_active
+                or session.user_id != user_id or (sandbox_id is not None and session.sandbox_id != sandbox_id)):
+            raise NotFoundError("Jupyter session is not available")
+        return session
+
+    def _workspace_options(self, session_id: str) -> dict[str, str] | None:
+        host_root = getattr(self._settings, "jupyter_workspaces_host_root", "")
+        if not host_root:
+            return None
+        self._volume(session_id)
+        storage_root = self._settings.jupyter_workspaces_storage_root
+        for value in (host_root, storage_root):
+            path = PurePosixPath(value)
+            if (not path.is_absolute() or str(path) != value or value == "/"
+                    or ".." in path.parts or any(ord(char) < 32 for char in value)):
+                raise RuntimeError("Invalid Jupyter workspace root")
+        device = docker_host_path(
+            str(PurePosixPath(host_root) / session_id),
+            getattr(self._settings, "dataset_docker_host_root", ""),
+        )
+        return {"type": "none", "o": "bind", "device": device}
+
+    def _prepare_workspace(self, session_id: str, user_id: str, *, existing_volume: bool) -> None:
+        """Create only the owned session directory beneath a symlink-free root.
+
+        The owner record stays in the backend-only parent, outside the writable
+        notebook directory. Expired notebooks retain this directory as an archive.
+        """
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        root_fd = os.open("/", flags)
+        try:
+            for part in PurePosixPath(self._settings.jupyter_workspaces_storage_root).parts[1:]:
+                next_fd = os.open(part, flags, dir_fd=root_fd)
+                os.close(root_fd)
+                root_fd = next_fd
+            owner_name = f".owner-{session_id}.json"
+            expected = {"session_id": session_id, "user_id": user_id}
+            try:
+                owner_fd = os.open(owner_name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
+            except FileNotFoundError:
+                # A migrated directory may predate owner records, but must have
+                # a verified Docker volume identifying this session first.
+                if not existing_volume:
+                    try:
+                        os.stat(session_id, dir_fd=root_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        raise RuntimeError("Unowned Jupyter workspace directory")
+                owner_fd = os.open(owner_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                   0o600, dir_fd=root_fd)
+                with os.fdopen(owner_fd, "w") as owner_file:
+                    json.dump(expected, owner_file)
+            else:
+                with os.fdopen(owner_fd) as owner_file:
+                    if json.loads(owner_file.read(4097)) != expected:
+                        raise RuntimeError("Jupyter workspace identity mismatch")
+            try:
+                os.mkdir(session_id, mode=0o750, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            workspace_fd = os.open(session_id, flags, dir_fd=root_fd)
+            os.close(workspace_fd)
+        finally:
+            os.close(root_fd)
+
+    def _ensure_work_volume(self, client, session_id: str, user_id: str) -> None:
+        name = self._volume(session_id)
+        labels = {"ai-dataseek.session_id": session_id, "ai-dataseek.kind": "jupyter-work"}
+        options = self._workspace_options(session_id)
+
+        def validate(volume, *, existing=False) -> bool:
+            actual_labels = volume.attrs.get("Labels") or {}
+            if (any(actual_labels.get(key) != value for key, value in labels.items())
+                    or actual_labels.get("ai-dataseek.user_id", user_id) != user_id):
+                raise RuntimeError("Jupyter work volume identity mismatch")
+            # Turning on host archives must not replace an existing named
+            # volume with an empty directory. Old sessions retain their data.
+            legacy = existing and volume.attrs.get("Driver") == "local" and not volume.attrs.get("Options")
+            if options is not None and not legacy and (volume.attrs.get("Driver") != "local"
+                                                       or volume.attrs.get("Options") != options):
+                raise RuntimeError("Jupyter work volume storage mismatch")
+            if options is None and volume.attrs.get("Options"):
+                raise RuntimeError("Jupyter work volume storage requires its archive configuration")
+            return legacy
+
+        try:
+            volume = client.volumes.get(name)
+        except docker.errors.NotFound:
+            volume = None
+        if volume is not None:
+            if validate(volume, existing=True):
+                return
+        if options is not None:
+            try:
+                self._prepare_workspace(session_id, user_id, existing_volume=volume is not None)
+            except (OSError, ValueError):
+                # Host paths must never escape through API error text.
+                raise RuntimeError("Jupyter workspace storage unavailable") from None
+        if volume is None:
+            kwargs = {"name": name, "labels": {**labels, "ai-dataseek.user_id": user_id}}
+            if options is not None:
+                kwargs.update(driver="local", driver_opts=options)
+            volume = client.volumes.create(**kwargs)
+            # Docker can return a concurrently created volume without applying
+            # our options, so creation success is not proof of ownership/storage.
+            validate(volume)
 
     @staticmethod
     def proxy_base_path(session_id: str) -> str:
@@ -47,11 +173,23 @@ class JupyterService:
             display_name = f"source-{index + 1}-{display_name}"
         return f"/home/jovyan/work/datasets/{display_name}"
 
+    @staticmethod
+    def _is_input_mount(destination: str) -> bool:
+        """Recognize only the server-owned, per-file analysis input namespace."""
+        if destination != UPLOAD_INPUT_ROOT and not destination.startswith(UPLOAD_INPUT_ROOT + "/"):
+            return False
+        match = re.fullmatch(re.escape(UPLOAD_INPUT_ROOT) + r"/([0-9a-f]{24})/([^/]+)", destination)
+        if (match is None or str(PurePosixPath(destination)) != destination
+                or match.group(2) != safe_upload_filename(match.group(2))):
+            raise RuntimeError("Invalid read-only Jupyter input mount")
+        return True
+
     async def open_notebook(self, *, session_id: str, user_id: str, code: str, language: str, sandbox_id: str | None) -> dict[str, Any]:
         if language.lower() not in {"python", "py", "python3"}:
             raise ValueError("Only Python code can be opened in Jupyter")
         if not code.strip() or len(code) > 200_000:
             raise ValueError("Code must contain between 1 and 200000 characters")
+        await self._authorize(session_id, user_id, sandbox_id=sandbox_id)
 
         async with self._lock(session_id):
             document = await JupyterSessionDocument.find_one(
@@ -83,6 +221,7 @@ class JupyterService:
         """
         if not sandbox_id:
             return
+        await self._authorize(session_id, user_id, sandbox_id=sandbox_id)
         async with self._lock(session_id):
             document = await JupyterSessionDocument.find_one(
                 JupyterSessionDocument.session_id == session_id,
@@ -103,6 +242,9 @@ class JupyterService:
             )
 
     async def _ensure_running(self, document: JupyterSessionDocument, *, sandbox_id: str | None = None) -> bool:
+        if (document.container_name != self._name(document.session_id)
+                or document.work_volume != self._volume(document.session_id)):
+            raise RuntimeError("Jupyter runtime identity mismatch")
         def ensure() -> bool:
             client = docker.from_env(timeout=60)
             try:
@@ -110,16 +252,32 @@ class JupyterService:
                     container = client.containers.get(document.container_name)
                 except docker.errors.NotFound:
                     return False
+                container.reload()
                 labels = container.labels or {}
-                if labels.get("ai-dataseek.session_id") != document.session_id or labels.get("ai-dataseek.user_id") != document.user_id:
+                if (labels.get("ai-dataseek.session_id") != document.session_id
+                        or labels.get("ai-dataseek.user_id") != document.user_id
+                        or labels.get("ai-dataseek.kind") != "jupyter"):
                     raise RuntimeError("Jupyter container identity mismatch")
                 if labels.get("ai-dataseek.jupyter_proxy") != "v1":
                     return False
-                if labels.get("ai-dataseek.jupyter_layout") != "visible-datasets-v1":
+                if labels.get("ai-dataseek.jupyter_layout") != "visible-inputs-v2":
                     return False
-                if sandbox_id and labels.get("ai-dataseek.sandbox_id") != sandbox_id:
+                if labels.get("ai-dataseek.sandbox_id", "") != (sandbox_id or ""):
                     return False
-                container.reload()
+                self._ensure_work_volume(client, document.session_id, document.user_id)
+                workspace_mounts = [mount for mount in container.attrs.get("Mounts", [])
+                                    if mount.get("Destination") == "/home/jovyan/work"]
+                if (len(workspace_mounts) != 1 or workspace_mounts[0].get("Type") != "volume"
+                        or workspace_mounts[0].get("Name") != document.work_volume):
+                    raise RuntimeError("Jupyter workspace mount mismatch")
+                for mount in container.attrs.get("Mounts", []):
+                    destination = str(mount.get("Destination", ""))
+                    is_input = self._is_input_mount(destination)
+                    if is_input and mount.get("Type") != "bind":
+                        raise RuntimeError("Invalid read-only Jupyter input mount")
+                    if is_input or destination.startswith(("/home/ubuntu/datasets/", "/home/jovyan/work/datasets/")):
+                        if mount.get("RW") is not False:
+                            raise RuntimeError("Jupyter dataset mount must be read-only")
                 if container.status != "running":
                     container.start()
                     container.reload()
@@ -143,6 +301,7 @@ class JupyterService:
         raise RuntimeError("JupyterLab did not become ready")
 
     async def _create(self, session_id: str, user_id: str, sandbox_id: str | None) -> JupyterSessionDocument:
+        await self._authorize(session_id, user_id, sandbox_id=sandbox_id)
         token = secrets.token_urlsafe(32)
         container_name = self._name(session_id)
         volume_name = self._volume(session_id)
@@ -153,11 +312,14 @@ class JupyterService:
         def create_container() -> None:
             client = docker.from_env(timeout=60)
             try:
+                self._ensure_work_volume(client, session_id, user_id)
                 try:
                     container = client.containers.get(container_name)
                     container.reload()
                     labels = container.labels or {}
-                    if labels.get("ai-dataseek.session_id") != session_id or labels.get("ai-dataseek.user_id") != user_id:
+                    if (labels.get("ai-dataseek.session_id") != session_id
+                            or labels.get("ai-dataseek.user_id") != user_id
+                            or labels.get("ai-dataseek.kind") != "jupyter"):
                         raise RuntimeError("Jupyter container identity mismatch")
                     # A database record is required to recover its token. A
                     # container without the matching record is stale and must
@@ -165,24 +327,27 @@ class JupyterService:
                     container.remove(force=True)
                 except docker.errors.NotFound:
                     pass
-                try:
-                    client.volumes.create(name=volume_name, labels={"ai-dataseek.session_id": session_id, "ai-dataseek.kind": "jupyter-work"})
-                except docker.errors.APIError:
-                    volume = client.volumes.get(volume_name)
-                    labels = volume.attrs.get("Labels") or {}
-                    if labels.get("ai-dataseek.session_id") != session_id or labels.get("ai-dataseek.kind") != "jupyter-work":
-                        raise RuntimeError("Jupyter work volume identity mismatch")
                 mounts = [Mount(target="/home/jovyan/work", source=volume_name, type="volume")]
                 dataset_mounts: list[tuple[str, str, str]] = []
                 if sandbox_id:
                     sandbox = client.containers.get(sandbox_id)
+                    sandbox.reload()
                     for mount in sandbox.attrs.get("Mounts", []):
                         destination = str(mount.get("Destination", ""))
-                        if not destination.startswith("/home/ubuntu/datasets/"):
+                        is_input = self._is_input_mount(destination)
+                        if not is_input and not destination.startswith("/home/ubuntu/datasets/"):
                             continue
+                        # Copy only the already validated, owner-bound sandbox
+                        # mounts. Never accept a browser-provided host path.
+                        if (str(PurePosixPath(destination)) != destination or ".." in PurePosixPath(destination).parts
+                                or mount.get("RW") is not False or mount.get("Type") not in {"bind", "volume"}
+                                or (is_input and mount.get("Type") != "bind")):
+                            raise RuntimeError("Invalid read-only Jupyter dataset mount")
                         source = mount.get("Name") if mount.get("Type") == "volume" else mount.get("Source")
-                        if not source:
-                            continue
+                        if (not isinstance(source, str) or not source or any(ord(char) < 32 for char in source)
+                                or (is_input and (not PurePosixPath(source).is_absolute()
+                                    or str(PurePosixPath(source)) != source or ".." in PurePosixPath(source).parts))):
+                            raise RuntimeError("Invalid Jupyter dataset source")
                         mount_type = mount.get("Type", "bind")
                         dataset_mounts.append((destination, source, mount_type))
                         # Preserve the Sandbox logical path so Agent-generated
@@ -220,7 +385,7 @@ class JupyterService:
                         "ai-dataseek.user_id": user_id,
                         "ai-dataseek.kind": "jupyter",
                         "ai-dataseek.jupyter_proxy": "v1",
-                        "ai-dataseek.jupyter_layout": "visible-datasets-v1",
+                        "ai-dataseek.jupyter_layout": "visible-inputs-v2",
                         "ai-dataseek.sandbox_id": sandbox_id or "",
                     },
                     mem_limit=self._settings.jupyter_memory_limit,
@@ -272,17 +437,19 @@ class JupyterService:
 
     async def proxy_target(self, *, session_id: str, user_id: str) -> tuple[str, str]:
         """Return an authenticated internal origin for the task-owned runtime."""
+        session = await self._authorize(session_id, user_id)
         document = await JupyterSessionDocument.find_one(
             JupyterSessionDocument.session_id == session_id,
             JupyterSessionDocument.user_id == user_id,
         )
-        if document is None or not await self._ensure_running(document):
+        if document is None or not await self._ensure_running(document, sandbox_id=session.sandbox_id):
             raise RuntimeError("Jupyter runtime is not available")
         document.last_used_at = datetime.now(UTC)
         await document.save()
         return f"http://{document.container_name}:8888", document.token
 
-    async def delete(self, *, session_id: str, user_id: str) -> None:
+    async def delete(self, *, session_id: str, user_id: str, preserve_workspace: bool = False) -> None:
+        self._validate_session_id(session_id)
         async with self._lock(session_id):
             document = await JupyterSessionDocument.find_one(
                 JupyterSessionDocument.session_id == session_id,
@@ -290,6 +457,9 @@ class JupyterService:
             )
             if document is None:
                 return
+            if (document.container_name != self._name(session_id)
+                    or document.work_volume != self._volume(session_id)):
+                raise RuntimeError("Jupyter runtime identity mismatch")
 
             def remove() -> None:
                 client = docker.from_env(timeout=60)
@@ -297,13 +467,26 @@ class JupyterService:
                     try:
                         container = client.containers.get(document.container_name)
                         labels = container.labels or {}
-                        if labels.get("ai-dataseek.session_id") == session_id and labels.get("ai-dataseek.user_id") == user_id:
-                            container.remove(force=True)
+                        if (labels.get("ai-dataseek.session_id") != session_id
+                                or labels.get("ai-dataseek.user_id") != user_id
+                                or labels.get("ai-dataseek.kind") != "jupyter"):
+                            raise RuntimeError("Jupyter container identity mismatch")
+                        container.remove(force=True)
                     except docker.errors.NotFound:
                         pass
                     try:
                         volume = client.volumes.get(document.work_volume)
-                        if (volume.attrs.get("Labels") or {}).get("ai-dataseek.session_id") == session_id:
+                        labels = volume.attrs.get("Labels") or {}
+                        if (labels.get("ai-dataseek.session_id") != session_id
+                                or labels.get("ai-dataseek.kind") != "jupyter-work"
+                                or labels.get("ai-dataseek.user_id", user_id) != user_id):
+                            raise RuntimeError("Jupyter work volume identity mismatch")
+                        if (not preserve_workspace and document.work_volume == self._volume(session_id)
+                                and labels.get("ai-dataseek.session_id") == session_id
+                                and labels.get("ai-dataseek.kind") == "jupyter-work"
+                                and labels.get("ai-dataseek.user_id", user_id) == user_id):
+                            # Bind-backed data remains archived under the private
+                            # workspace root. Never recursively delete host paths.
                             volume.remove(force=True)
                     except docker.errors.NotFound:
                         pass
@@ -319,5 +502,7 @@ class JupyterService:
             JupyterSessionDocument.last_used_at < cutoff,
         ).to_list()
         for document in documents:
-            await self.delete(session_id=document.session_id, user_id=document.user_id)
+            # Idle runtime reclamation is not a request to delete notebooks.
+            # Named volumes and host archives both survive the next reopen.
+            await self.delete(session_id=document.session_id, user_id=document.user_id, preserve_workspace=True)
         return len(documents)

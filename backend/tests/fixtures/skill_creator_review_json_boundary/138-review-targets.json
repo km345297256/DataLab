@@ -1,0 +1,585 @@
+[
+  {
+    "script_path": "scripts/longitudinal_report.py",
+    "cases": [
+      {
+        "case_id": "boundary_edges_and_overrides",
+        "targets": [
+          {
+            "target_id": "T058",
+            "kind": "json_value",
+            "assertion_index": 57,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/comparison/n_b",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T043",
+            "kind": "json_value",
+            "assertion_index": 42,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/paired/0/n",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T051",
+            "kind": "json_value",
+            "assertion_index": 50,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/paired/1/n",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T012",
+            "kind": "json_value",
+            "assertion_index": 11,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/missing",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T011",
+            "kind": "json_value",
+            "assertion_index": 10,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/rows",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T026",
+            "kind": "json_value",
+            "assertion_index": 25,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/1/n",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T023",
+            "kind": "json_value",
+            "assertion_index": 22,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/1/rows",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T005",
+            "kind": "json_value",
+            "assertion_index": 4,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/quality/association_complete",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T002",
+            "kind": "json_value",
+            "assertion_index": 1,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/quality/profile_count",
+            "expected": {
+              "value": 2,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T007",
+            "kind": "json_value",
+            "assertion_index": 6,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/quality/hypotheses",
+            "expected": {
+              "value": 3,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T046",
+            "kind": "json_value",
+            "assertion_index": 45,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/paired/0/permutations",
+            "expected": {
+              "value": 4,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T054",
+            "kind": "json_value",
+            "assertion_index": 53,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/paired/1/permutations",
+            "expected": {
+              "value": 4,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T003",
+            "kind": "json_value",
+            "assertion_index": 2,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/quality/complete_pairs",
+            "expected": {
+              "value": 4,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T001",
+            "kind": "json_value",
+            "assertion_index": 0,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/quality/observation_rows",
+            "expected": {
+              "value": 4,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T073",
+            "kind": "json_value",
+            "assertion_index": 72,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/mean_x",
+            "expected": {
+              "value": 5,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T062",
+            "kind": "json_value",
+            "assertion_index": 61,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/comparison/permutations",
+            "expected": {
+              "value": 6,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T088",
+            "kind": "json_value",
+            "assertion_index": 87,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/0/bh",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T086",
+            "kind": "json_value",
+            "assertion_index": 85,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/0/p",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T089",
+            "kind": "json_value",
+            "assertion_index": 88,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/0/reject_bh",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T092",
+            "kind": "json_value",
+            "assertion_index": 91,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/1/bonferroni",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T079",
+            "kind": "json_value",
+            "assertion_index": 78,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/intercept",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T076",
+            "kind": "json_value",
+            "assertion_index": 75,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/pearson",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T081",
+            "kind": "json_value",
+            "assertion_index": 80,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/r_squared",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T078",
+            "kind": "json_value",
+            "assertion_index": 77,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/slope",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T082",
+            "kind": "json_value",
+            "assertion_index": 81,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/slope_se",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T077",
+            "kind": "json_value",
+            "assertion_index": 76,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/spearman",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T080",
+            "kind": "json_value",
+            "assertion_index": 79,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/association/sse",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T068",
+            "kind": "json_value",
+            "assertion_index": 67,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/comparison/cohen_d",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T070",
+            "kind": "json_value",
+            "assertion_index": 69,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/comparison/hedges_g",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T066",
+            "kind": "json_value",
+            "assertion_index": 65,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/comparison/welch_df",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T065",
+            "kind": "json_value",
+            "assertion_index": 64,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/comparison/welch_t",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T020",
+            "kind": "json_value",
+            "assertion_index": 19,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/iqr",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T019",
+            "kind": "json_value",
+            "assertion_index": 18,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/mad",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T015",
+            "kind": "json_value",
+            "assertion_index": 14,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/mean",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T016",
+            "kind": "json_value",
+            "assertion_index": 15,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/median",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T017",
+            "kind": "json_value",
+            "assertion_index": 16,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/sample_sd",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T018",
+            "kind": "json_value",
+            "assertion_index": 17,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/profiles/0/standard_error",
+            "expected": {
+              "value": null,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T101",
+            "kind": "json_value",
+            "assertion_index": 100,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/2/reject_bh",
+            "expected": {
+              "value": true,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T104",
+            "kind": "json_value",
+            "assertion_index": 103,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/2/reject_bonferroni",
+            "expected": {
+              "value": true,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T102",
+            "kind": "json_value",
+            "assertion_index": 101,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/2/reject_by",
+            "expected": {
+              "value": true,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T103",
+            "kind": "json_value",
+            "assertion_index": 102,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/adjustments/2/reject_holm",
+            "expected": {
+              "value": true,
+              "atol": 0.0,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T069",
+            "kind": "json_value",
+            "assertion_index": 68,
+            "assertion_type": "json_value",
+            "path": "report.json",
+            "pointer": "/comparison/hedges_correction",
+            "expected": {
+              "value": 0.5714285714,
+              "atol": 1e-09,
+              "rtol": 0.0
+            }
+          },
+          {
+            "target_id": "T040",
+            "kind": "json_array_length",
+            "assertion_index": 39,
+            "assertion_type": "json_array_length",
+            "path": "report.json",
+            "pointer": "/paired",
+            "expected": 2
+          },
+          {
+            "target_id": "T008",
+            "kind": "json_array_length",
+            "assertion_index": 7,
+            "assertion_type": "json_array_length",
+            "path": "report.json",
+            "pointer": "/profiles",
+            "expected": 2
+          },
+          {
+            "target_id": "T083",
+            "kind": "json_array_length",
+            "assertion_index": 82,
+            "assertion_type": "json_array_length",
+            "path": "report.json",
+            "pointer": "/adjustments",
+            "expected": 3
+          }
+        ]
+      }
+    ]
+  }
+]

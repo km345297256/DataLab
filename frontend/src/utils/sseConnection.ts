@@ -14,6 +14,7 @@ export interface SSEOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
   headers?: Record<string, string>;
+  getHeaders?: () => Promise<Record<string, string>>;
   /** Supply a fresh body on each attempt; never replay a serialized stale cursor. */
   getBody?: () => unknown;
   /** Enable only for read-only requests or callers with a stable idempotency key. */
@@ -24,11 +25,13 @@ export interface SSEOptions {
 
 export class SSEConnectionError extends Error {
   readonly kind: 'transport' | 'http' | 'protocol';
+  readonly status?: number;
 
-  constructor(kind: 'transport' | 'http' | 'protocol', message: string) {
+  constructor(kind: 'transport' | 'http' | 'protocol', message: string, status?: number) {
     super(message);
     this.name = 'SSEConnectionError';
     this.kind = kind;
+    this.status = status;
   }
 }
 
@@ -64,14 +67,11 @@ export function startSSEConnection<T>(
   const retryAllowed = options.retryOnError ?? method === 'GET';
   const maxAttempts = 6;
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...options.headers };
-  for (const name of Object.keys(headers)) {
-    if (['authorization', 'x-api-key'].includes(name.toLowerCase())) {
-      delete headers[name];
-    }
-  }
+
 
   const finished = (async () => {
     let retries = 0;
+    let terminalDelivered = false;
     while (!controller.signal.aborted) {
       const attemptController = new AbortController();
       const cancelAttempt = () => attemptController.abort();
@@ -80,7 +80,7 @@ export function startSSEConnection<T>(
         const body = options.getBody ? options.getBody() : options.body;
         await connect(url, {
           method,
-          headers,
+          headers: { ...headers, ...await options.getHeaders?.() },
           body: body == null ? undefined : JSON.stringify(body),
           signal: attemptController.signal,
           openWhenHidden: true,
@@ -91,7 +91,7 @@ export function startSSEConnection<T>(
               if (response.status === 409 && response.headers.get('x-dataseek-error') === 'skill-selection-unavailable') {
                 throw new SSEConnectionError('http', '所选技能已不可用、尚未添加或版本身份不唯一，请重新选择后发送。');
               }
-              throw new SSEConnectionError('http', `连接请求失败（HTTP ${response.status}）`);
+              throw new SSEConnectionError('http', `连接请求失败（HTTP ${response.status}）`, response.status);
             }
             if (!response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) {
               throw new SSEConnectionError('protocol', '服务器返回了非事件流响应，请刷新页面后重试。');
@@ -111,7 +111,10 @@ export function startSSEConnection<T>(
               if (error instanceof SSEConnectionError) throw error;
               throw new SSEConnectionError('protocol', '事件流数据无法解析，请刷新页面；后台任务状态尚未确认。');
             }
-            if (options.isComplete?.()) attemptController.abort();
+            if (options.isComplete?.()) {
+              terminalDelivered = true;
+              attemptController.abort();
+            }
           },
           onerror(error) {
             // Disable the library's implicit retries: each retry needs a new body.
@@ -126,6 +129,10 @@ export function startSSEConnection<T>(
         return;
       } catch (cause) {
         if (controller.signal.aborted) return;
+        if (terminalDelivered && options.isComplete?.()) {
+          callbacks.onClose?.();
+          return;
+        }
         const isTransport = cause instanceof TypeError
           || (cause instanceof SSEConnectionError && cause.kind === 'transport')
           || (cause instanceof DOMException && ['NetworkError', 'AbortError'].includes(cause.name));

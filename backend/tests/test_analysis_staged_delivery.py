@@ -31,7 +31,8 @@ def runner_for(records_and_files, events=(), *, summary=False):
     records = {item["path"]: item for item, _ in records_and_files}
     files = [info for _, info in records_and_files]
 
-    async def validate(items):
+    async def validate(items, *, purpose="delivery"):
+        assert purpose == "delivery"
         return SimpleNamespace(success=True, data={"version": 1, "files": [deepcopy(records[item["path"]]) for item in items]})
 
     class Flow:
@@ -178,7 +179,8 @@ async def test_staged_validation_keeps_other_successful_bounded_batches():
     runner = runner_for(entries)
     valid = runner._sandbox.validate_artifacts.side_effect
 
-    async def validate(items):
+    async def validate(items, *, purpose="delivery"):
+        assert purpose == "delivery"
         assert len(items) <= 32
         if items[0]["path"].endswith("file-032.csv"):
             raise OSError("one unavailable batch")
@@ -297,7 +299,8 @@ async def test_buffered_step_files_survive_terminal_boundaries_without_early_del
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal", [DoneEvent, lambda: ErrorEvent(error="interrupted")])
-async def test_final_delivery_withholds_artifact_modified_after_step_validation(terminal):
+@pytest.mark.parametrize("via_summary", [False, True])
+async def test_final_delivery_withholds_artifact_modified_after_step_validation(terminal, via_summary):
     good = artifact()
     step = Step(success=True, result="All done.")
     runner = runner_for([good])
@@ -309,6 +312,9 @@ async def test_final_delivery_withholds_artifact_modified_after_step_validation(
     async def flow(_message):
         yield StepEvent(step=step, status=StepStatus.COMPLETED)
         good[0]["sha256"] = "b" * 64
+        if via_summary:
+            runner._flow.status = AgentStatus.SUMMARIZING
+            yield MessageEvent(message="All done.")
         yield terminal()
 
     runner._flow.run = flow
@@ -320,3 +326,39 @@ async def test_final_delivery_withholds_artifact_modified_after_step_validation(
     assert delivery.metadata["partial"] is True
     assert "未完整交付" in delivery.message or "未能完整完成" in delivery.message
     assert "All done" not in delivery.message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", [WaitEvent, DoneEvent, lambda: ErrorEvent(error="interrupted")])
+@pytest.mark.parametrize("via_summary", [False, True])
+async def test_invalidated_stage_prose_does_not_hide_independent_verified_stage(terminal, via_summary):
+    first, second = artifact("measurements.csv"), artifact("comparison.csv")
+    stages = [Step(id="measure", success=True, result="Observed mean=7."),
+              Step(id="compare", success=True, result="All comparisons delivered.")]
+    runner = runner_for([first, second])
+
+    async def finalize(event, *_args, **_kwargs):
+        event.step.outcome = AnalysisOutcome(status="succeeded", reason_code="completed")
+        return [first[1] if event.step.id == "measure" else second[1]]
+
+    async def flow(_message):
+        for step in stages:
+            yield StepEvent(step=step, status=StepStatus.COMPLETED)
+            yield MessageEvent(message=step.result)
+        second[0]["sha256"] = "b" * 64
+        if via_summary:
+            runner._flow.status = AgentStatus.SUMMARIZING
+            yield MessageEvent(message="All comparisons delivered.")
+        yield terminal()
+
+    runner._flow.run = flow
+    runner._finalize_analysis_step = finalize
+    runner._sync_step_attachments_to_storage = AsyncMock(side_effect=[[first[1]], [second[1]]])
+    runner._sync_discovered_artifacts_to_storage = AsyncMock(return_value=[])
+    events = await run(runner)
+    delivery = events[-2]
+    assert delivery.attachments == [first[1]]
+    assert "Observed mean=7" in delivery.message
+    assert "All comparisons delivered" not in delivery.message
+    if via_summary:
+        assert delivery.metadata["partial"] is True

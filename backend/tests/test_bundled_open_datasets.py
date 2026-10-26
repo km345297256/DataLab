@@ -5,7 +5,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.domain.models.dataset import CuratedDatasetSeed
-from app.application.services.data_center_dataset_service import DataCenterDatasetService
 
 ROOT = Path(__file__).resolve().parents[1] / 'app/resources/datasets'
 DOMAINS = {'general', 'tabular', 'geoscience', 'image_science', 'chemistry', 'sequence', 'space', 'documents', 'spectroscopy'}
@@ -24,14 +23,13 @@ def test_catalog_has_two_real_bundles_per_system_domain():
             parsed = urlsplit(seed.metadata[field])
             assert parsed.scheme == 'https' and parsed.netloc
             assert not parsed.username and not parsed.password
-        validated = DataCenterDatasetService._verified_managed_files(path.parent, seed.files)
-        assert len(validated) == len(seed.files)
         provenance = {entry['path']: entry for entry in seed.metadata['provenance']}
         for item in seed.files:
             assert item.sha256 and item.size and item.size > 0
             assert provenance[item.path]['sha256'] == item.sha256
             assert urlsplit(provenance[item.path]['download_url']).scheme == 'https'
             raw = (path.parent / item.path).read_bytes()
+            assert len(raw) == item.size
             assert hashlib.sha256(raw).hexdigest() == item.sha256
             # Reject accidental downloads of an HTML error/login page.
             assert not raw.lstrip().lower().startswith((b'<!doctype html', b'<html'))

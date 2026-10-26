@@ -15,6 +15,7 @@ function mount(name, dependencies) {
   const module = { exports: {} }, mounted = [];
   const modules = { vue: { ...vue, onMounted: callback => mounted.push(callback) },
     '../../composables/usePreviewLoad': { usePreviewLoad }, '../boundedBinary': { readBoundedBinary },
+    '../../utils/authenticatedFetch': { authenticatedApiFetch: (_base, url, init) => fetch(url, init) },
     '../runtime': { visualizationJobsPath: file => `/files/${file.file_id}/visualization/jobs`, readVisualizationResult: async response => (await response.json()).data }, ...dependencies };
   new Function('require', 'module', 'exports', code)(id => { assert.ok(id in modules, id); return modules[id]; }, module, module.exports);
   const scope = vue.effectScope();
@@ -75,4 +76,49 @@ test('QC cancelled view never starts a new status request after its pending canc
   adapter.state.job.value = { job_id: 'test-job', status: 'running' };
   const cancelling = adapter.state.cancel(); adapter.stop(); assert.equal(signal.aborted, true);
   resolve({}); await cancelling; assert.equal(reads, 0);
+});
+
+test('QC reads private results and cancels discarded jobs through the authenticated transport', async () => {
+  const calls = [];
+  const adapter = mount('FastQcPreview', {
+    '../../api/client': { BASE_URL: '/api/v1', apiClient: {
+      get: async () => ({ data: { data: [{ job_id: 'test-job', status: 'succeeded' }] } }),
+    } },
+    '../../utils/authenticatedFetch': { authenticatedApiFetch: async (base, url, init) => {
+      calls.push({ base, url, init });
+      return new Response(JSON.stringify({ data: { kind: 'report', payload: { sections: [], table: { columns: [], rows: [] } }, warnings: [] } }));
+    } },
+  });
+  await adapter.start();
+  assert.equal(adapter.state.error.value, '');
+  assert.equal(calls[0].base, '/api/v1');
+  assert.equal(calls[0].url, '/api/v1/files/synthetic-file/visualization/jobs/test-job/result');
+  assert.ok(calls[0].init.signal instanceof AbortSignal);
+  adapter.state.job.value = { job_id: 'running-job', status: 'running' };
+  adapter.stop();
+  assert.equal(calls[1].url, '/api/v1/files/synthetic-file/visualization/jobs/running-job/cancel');
+  assert.equal(calls[1].init.keepalive, true);
+  assert.equal(calls[1].init.headers['X-Analysis-Job-Action'], 'cancel');
+});
+
+test('Office lease revocation authenticates only the owner API, not the document frame origin', async t => {
+  const previous = globalThis.window;
+  globalThis.window = { removeEventListener() {} };
+  t.after(() => { globalThis.window = previous; });
+  const calls = [];
+  const adapter = mount('OnlyOfficePreview', {
+    '../../api/client': { BASE_URL: '/api/v1' },
+    '../runtime': { requestVisualization: async () => assert.fail('This test revokes an existing lease') },
+    './onlyOfficeResource': { parseOfficeResource: () => assert.fail('No new frame expected') },
+    '../../utils/authenticatedFetch': { authenticatedApiFetch: async (base, url, init) => {
+      calls.push({ base, url, init }); return new Response('{}');
+    } },
+  });
+  await adapter.state.revoke('opaque-lease');
+  adapter.stop();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].base, '/api/v1');
+  assert.equal(calls[0].url, '/api/v1/office-viewer/leases/opaque-lease/revoke');
+  assert.equal(calls[0].init.keepalive, true);
+  assert.equal(calls[0].init.headers['X-Visualization-Action'], 'revoke');
 });

@@ -1,5 +1,6 @@
 """Additive read-only dataset reference routing; ordinary storage is unchanged."""
 from app.application.services.dataset_file_preview import DatasetFilePreviewService, PREFIX
+from app.domain.models.object_file import ObjectFileMountError, UNSUPPORTED_OBJECT_MOUNT
 
 
 class DatasetPreviewFileStorage:
@@ -21,6 +22,16 @@ class DatasetPreviewFileStorage:
 
     async def download_file_range(self, file_id, user_id, *, offset, length):
         return await self._reader(file_id).download_file_range(file_id, user_id, offset=offset, length=length)
+
+    async def get_object_reference(self, file_id, user_id):
+        if file_id.startswith(PREFIX):
+            raise ObjectFileMountError(UNSUPPORTED_OBJECT_MOUNT)
+        return await self.storage.get_object_reference(file_id, user_id)
+
+    async def read_object_range(self, reference, user_id, *, offset, length):
+        if reference.file_id.startswith(PREFIX):
+            raise ObjectFileMountError(UNSUPPORTED_OBJECT_MOUNT)
+        return await self.storage.read_object_range(reference, user_id, offset=offset, length=length)
 
     async def authorize_visualization_resource(self, source_id, resource_id, user_id, plugin_id):
         if not all(file_id.startswith(PREFIX) for file_id in (source_id, resource_id)):

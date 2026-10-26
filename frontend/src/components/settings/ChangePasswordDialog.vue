@@ -12,7 +12,7 @@
             <div class="text-[16px] text-[var(--text-secondary)] leading-[24px]">{{ t('Current Password') }}</div>
             <div class="relative w-full">
               <input v-model="currentPassword"
-                class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] pt-1 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] min-h-[48px] bg-[var(--fill-tsp-white-dark)] pr-[48px]"
+                class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] pt-1 pb-1 pl-3 min-h-[48px] bg-[var(--fill-tsp-white-dark)] pr-[48px]"
                 :placeholder="t('Enter current password')" :type="showCurrentPassword ? 'text' : 'password'">
               <div @click="toggleCurrentPasswordVisibility"
                 class="text-[var(--icon-tertiary)] absolute z-30 top-[50%] p-[6px] rounded-md transform -translate-y-1/2 cursor-pointer hover:text-[--icon-primary] active:opacity-90 transition-all right-[10px]">
@@ -37,7 +37,7 @@
             <div class="text-[16px] text-[var(--text-secondary)] leading-[24px]">{{ t('New Password') }}</div>
             <div class="relative w-full">
               <input v-model="newPassword"
-                class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] pt-1 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] min-h-[48px] bg-[var(--fill-tsp-white-dark)] pr-[48px]"
+                class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] pt-1 pb-1 pl-3 min-h-[48px] bg-[var(--fill-tsp-white-dark)] pr-[48px]"
                 :placeholder="t('Enter new password')" :type="showNewPassword ? 'text' : 'password'">
               <div @click="toggleNewPasswordVisibility"
                 class="text-[var(--icon-tertiary)] absolute z-30 top-[50%] p-[6px] rounded-md transform -translate-y-1/2 cursor-pointer hover:text-[--icon-primary] active:opacity-90 transition-all right-[10px]">
@@ -62,7 +62,7 @@
             <div class="text-[16px] text-[var(--text-secondary)] leading-[24px]">{{ t('Confirm New Password') }}</div>
             <div class="relative w-full">
               <input v-model="confirmPassword"
-                class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] pt-1 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] min-h-[48px] bg-[var(--fill-tsp-white-dark)] pr-[48px]"
+                class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] pt-1 pb-1 pl-3 min-h-[48px] bg-[var(--fill-tsp-white-dark)] pr-[48px]"
                 :placeholder="t('Enter new password again')" :type="showConfirmPassword ? 'text' : 'password'">
               <div @click="toggleConfirmPasswordVisibility"
                 class="text-[var(--icon-tertiary)] absolute z-30 top-[50%] p-[6px] rounded-md transform -translate-y-1/2 cursor-pointer hover:text-[--icon-primary] active:opacity-90 transition-all right-[10px]">

@@ -29,7 +29,7 @@ def runner_for(step, pairs):
     runner._artifact_baseline_paths = set()
     runner._generated_files = [item for _, item in pairs if item.file_id]
     receipts = {item["path"]: item for item, _ in pairs}
-    runner._sandbox = SimpleNamespace(validate_artifacts=AsyncMock(side_effect=lambda items: SimpleNamespace(
+    runner._sandbox = SimpleNamespace(validate_artifacts=AsyncMock(side_effect=lambda items, *, purpose="delivery": SimpleNamespace(
         success=True, data={"version": 1, "files": [receipts[item["path"]] for item in items]})))
     runner._list_sandbox_artifacts = AsyncMock(return_value=list(receipts))
     runner._session_repository = SimpleNamespace()
@@ -50,14 +50,14 @@ async def test_saved_script_cannot_complete_visualization(model_success):
     files = await runner._finalize_analysis_step(event, Message(message="绘图"), [pair[1]])
     assert event.status == StepStatus.FAILED
     assert step.status == ExecutionStatus.FAILED and step.success is False
-    assert step.outcome.status == "partial" and step.outcome.missing[0].kind == "image"
+    assert step.outcome.status == "failed" and step.outcome.missing[0].kind == "image"
     assert step.outcome.can_resume is False  # no source snapshot
-    assert step.result.startswith("本次分析部分完成。")
-    # The script is verified, not the draft's measurement claims.
-    assert findings not in step.result
-    assert "分析说明尚未通过完整核验" in step.result
+    assert step.result.startswith("本次分析未完成。")
+    # Explanations remain available; a helper script still cannot fulfil the chart.
+    assert findings in step.result
+    assert "分析说明尚未通过完整核验" not in step.result
     assert not step.result.startswith("本次分析已完成")
-    assert files == [pair[1]]  # actual script retained, never described as a plot
+    assert files == []
 
 
 @pytest.mark.asyncio
@@ -110,12 +110,12 @@ async def test_runner_never_repeats_success_prose_after_failed_delivery_contract
     events = [event async for event in runner._run_flow(Message(message="绘图"))]
     answers = [event for event in events if isinstance(event, MessageEvent)]
     assert len(answers) == 1
-    assert answers[0].metadata["analysis_outcome"]["status"] == "partial"
-    assert answers[0].message.startswith("本次分析部分完成。")
-    assert findings not in answers[0].message
+    assert answers[0].metadata["analysis_outcome"]["status"] == "failed"
+    assert answers[0].message.startswith("本次分析未完成。")
+    assert findings in answers[0].message
     assert "已全部完成，所有图表已交付。" not in answers[0].message
     assert answers[0].metadata["analysis_outcome"]["missing"][0]["kind"] == "image"
-    assert answers[0].attachments == [pair[1]]
+    assert not answers[0].attachments
 
 
 def test_task_checklist_is_bound_to_final_step_and_survives_replanning():
@@ -175,8 +175,9 @@ async def test_copied_step_delivery_failure_updates_authoritative_state_without_
 
 
 @pytest.mark.asyncio
-async def test_unlimited_accounting_does_not_disable_safe_delivery_checkpoint(monkeypatch):
-    from app.domain.models.dataset import MountedDataset
+@pytest.mark.parametrize("has_source", [True, False])
+async def test_unlimited_accounting_does_not_disable_safe_delivery_checkpoint(monkeypatch, has_source):
+    from app.domain.models.dataset import DatasetFile, MountedDataset
     from app.domain.services.model_runtime import analysis_budget_scope
 
     step = Step(id="deliver", success=True, deliverables=[DeliverableRequirement(kind="image")],
@@ -192,15 +193,22 @@ async def test_unlimited_accounting_does_not_disable_safe_delivery_checkpoint(mo
     monkeypatch.setattr("app.domain.services.analysis_checkpoint.save_checkpoint", save)
     message = Message(message="deliver the already computed image", datasets=[MountedDataset(
         data_center_id="test", data_center_name="Test", name="Synthetic",
-        sandbox_path="/home/ubuntu/datasets/synthetic")])
+        sandbox_path="/home/ubuntu/datasets/synthetic",
+        files=[DatasetFile(path="input.csv")] if has_source else [])])
     with analysis_budget_scope(handle):
         await runner._finalize_analysis_step(
             StepEvent(status=StepStatus.COMPLETED, step=step), message, [], source_seq=7)
 
     assert step.outcome.reason_code == "delivery_failed"
-    assert step.outcome.can_resume is True
-    assert step.outcome.resume_from == "a" * 32
-    save.assert_awaited_once()
+    assert step.outcome.can_resume is has_source
+    if has_source:
+        assert step.outcome.resume_from == "a" * 32
+        save.assert_awaited_once()
+    else:
+        # A catalog binding without an authorized input inventory cannot
+        # create a source-bound continuation merely because its budget is open.
+        assert step.outcome.resume_from is None
+        save.assert_not_awaited()
     handle.snapshot.assert_awaited_once()
 
 
@@ -247,3 +255,45 @@ def test_step_outcome_contract_cannot_claim_run_completion():
         AnalysisOutcome(scope="run", status="succeeded", reason_code="completed")
     legacy = AnalysisOutcome.model_validate({"status": "succeeded", "reason_code": "completed"})
     assert legacy.model_dump()["scope"] == "step"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_kind", ["wait", "error", "done"])
+@pytest.mark.parametrize("with_file", [False, True])
+async def test_completed_prose_survives_every_delivery_terminal(terminal_kind, with_file):
+    from app.domain.models.event import WaitEvent, ErrorEvent
+    first = Step(id="measure", success=True, status=ExecutionStatus.COMPLETED,
+                 result="Observed mean=7, based on six measurements.")
+    second = Step(id="compare", success=True, status=ExecutionStatus.COMPLETED,
+                  result="The comparison contains two groups.")
+    pair = artifact("measurements.csv", "table")
+    runner = runner_for(first, [pair] if with_file else [])
+
+    class Flow:
+        status = AgentStatus.EXECUTING
+        plan = Plan(steps=[first, second, Step(id="pending", status=ExecutionStatus.RUNNING)])
+
+        async def run(self, message):
+            for step in (first, second):
+                yield StepEvent(status=StepStatus.COMPLETED, step=step)
+                yield MessageEvent(message=step.result)
+            yield {"wait": WaitEvent(), "error": ErrorEvent(error="Later model unavailable"), "done": DoneEvent()}[terminal_kind]
+
+    runner._flow = Flow()
+    runner._front_controller_resolution = FrontControllerResolution(
+        decision=RequestDecision(safety=SafetyReview(decision="allow", risk_level="low"),
+            execution=ExecutionDecision(mode="sandbox", required_evidence="file_content")), answer="", controller_metadata={})
+    runner._record_safety_audit = AsyncMock()
+    runner._initialize_mcp_tool = AsyncMock()
+    runner._sync_step_attachments_to_storage = AsyncMock(return_value=[pair[1]] if with_file else [])
+    runner._sync_discovered_artifacts_to_storage = AsyncMock(return_value=[])
+    runner._sync_message_attachments_to_storage = AsyncMock()
+    events = [event async for event in runner._run_flow(Message(message="Measure, compare, then ask for the missing input"))]
+    messages = [event for event in events if isinstance(event, MessageEvent)]
+    assert len(messages) == 1
+    assert "Observed mean=7" in messages[0].message
+    assert "two groups" in messages[0].message
+    assert len(messages[0].attachments) == int(with_file)
+    assert events[-1].type == terminal_kind
+    assert events.index(messages[0]) < len(events) - 1
+    assert not (messages[0].metadata or {}).get("analysis_outcome", {}).get("status") == "succeeded"

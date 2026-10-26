@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
 import { ref } from 'vue';
+import { useAnalysisSession } from '../src/composables/useAnalysisSession.ts';
 import { useAnalysisProgress } from '../src/composables/useAnalysisProgress.ts';
 import { isAnalysisProgressEvent, isAnalysisProgressMessage } from '../src/utils/analysisProgress.ts';
 import { acceptAgentEvent, createAgentEventCursor } from '../src/utils/agentEventCursor.ts';
@@ -32,10 +33,15 @@ function pageHandler(page, name, scope) {
 }
 
 function harness(page) {
+  if (page === 'ChatPage') {
+    const session = useAnalysisSession({ api: {} });
+    return { scope: session, receive: session.handleEvent };
+  }
   const scope = {
     ...useAnalysisProgress(), isAnalysisProgressEvent, isAnalysisProgressMessage,
     acceptAgentEvent, eventCursor: createAgentEventCursor(), messages: ref([]), timelineRevision: ref(0),
     lastEventId: ref(), lastEventSeq: ref(), isLoading: ref(true), taskStartedAtMs: ref(),
+    waitingForUser: ref(false),
     completionAdvice: ref(), currentPlan: ref(),
     isPlaceholderAssistantMessage: () => false, isLegacyPlanProgressMessage: () => false,
     closeUnconfirmedSteps() {}, failRunningSteps() {}, insertTaskExecutionSummary() {},
@@ -44,12 +50,12 @@ function harness(page) {
     handlePlanEvent() {}, handleTitleEvent() {}, handleErrorEvent() {},
   };
   scope.startUserTurn = scope.beginAnalysisProgress;
-  const messageHandler = pageHandler(page, page === 'DatasetSeekPage' ? 'handleMessage' : 'handleMessageEvent', scope);
+  const messageHandler = pageHandler(page, 'handleMessageEvent', scope);
   scope.handleMessage = scope.handleMessageEvent = messageHandler;
   return { scope, receive: pageHandler(page, 'handleEvent', scope) };
 }
 
-for (const page of ['ChatPage', 'DatasetSeekPage', 'SharePage']) {
+for (const page of ['ChatPage', 'SharePage']) {
   test(`${page}: repeated progress changes one transient status without appending or scrolling chat`, () => {
     const { scope, receive } = harness(page);
     for (let seq = 1; seq <= 100; seq++) receive(progress(seq));
@@ -145,10 +151,10 @@ test('eager and paginated history consistently hide all progress without mutatin
 });
 
 test('each page renders the shared transient state outside ChatMessage and clears it on unmount', () => {
-  for (const page of ['ChatPage', 'DatasetSeekPage', 'SharePage']) {
+  for (const page of ['ChatPage', 'SharePage']) {
     const source = readFileSync(new URL(`../src/pages/${page}.vue`, import.meta.url), 'utf8');
     assert.match(source, /analysisProgress \|\|/);
-    assert.match(source, /onUnmounted\(\(\) => \{[\s\S]*?clearAnalysisProgress\(\)/);
+    assert.match(source, page === 'ChatPage' ? /analysis\.dispose\(\)/ : /onUnmounted\(\(\) => \{[\s\S]*?clearAnalysisProgress\(\)/);
   }
 });
 
@@ -198,7 +204,7 @@ test('shared timed replay cannot append or clear a new view after its timer resu
 });
 
 
-for (const page of ['ChatPage', 'DatasetSeekPage', 'SharePage']) {
+for (const page of ['ChatPage', 'SharePage']) {
   test(`${page}: stream end preserves confirmed steps and marks an unfinished step unknown`, () => {
     const { scope, receive } = harness(page);
     scope.closeUnconfirmedSteps = closeUnconfirmedSteps;

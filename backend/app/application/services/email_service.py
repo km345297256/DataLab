@@ -1,6 +1,7 @@
 import smtplib
 import logging
-import random
+import hashlib
+import hmac
 import asyncio
 import secrets
 from datetime import datetime, timedelta
@@ -9,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from typing import Optional, Dict
 from app.core.config import get_settings
 from app.domain.external.cache import Cache
-from app.application.errors.exceptions import BadRequestError
+from app.application.errors.exceptions import AppException, BadRequestError
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,11 @@ class EmailService:
     
     def _generate_verification_code(self) -> str:
         """Generate 6-digit verification code"""
-        return f"{random.randint(100000, 999999)}"
+        return str(100_000 + secrets.randbelow(900_000))
+
+    def _code_digest(self, email: str, code: str) -> str:
+        return hmac.new(self.settings.jwt_secret_key.encode(),
+                        f"password-reset:{email}:{code}".encode(), hashlib.sha256).hexdigest()
 
     def _generate_email_verification_token(self) -> str:
         return secrets.token_urlsafe(32)
@@ -74,7 +79,7 @@ class EmailService:
         now = datetime.now()
         # Create verification code data
         code_data = {
-            "code": code,
+            "code_hash": self._code_digest(email, code),
             "created_at": now.isoformat(),
             "expires_at": (now + timedelta(seconds=self.VERIFICATION_CODE_EXPIRY_SECONDS)).isoformat(),
             "attempts": 0
@@ -82,43 +87,17 @@ class EmailService:
         
         # Store in cache with TTL
         key = f"{self.VERIFICATION_CODE_PREFIX}{email}"
-        await self.cache.set(key, code_data, ttl=self.VERIFICATION_CODE_EXPIRY_SECONDS)
+        if not await self.cache.set(key, code_data, ttl=self.VERIFICATION_CODE_EXPIRY_SECONDS):
+            raise AppException(503, "Password reset is temporarily unavailable", 503)
     
     async def verify_code(self, email: str, code: str) -> bool:
         """Verify if the provided code is valid for the email"""
+        email = email.strip().lower()
         key = f"{self.VERIFICATION_CODE_PREFIX}{email}"
-        
-        # Get stored data from cache
-        stored_data = await self.cache.get(key)
-        if not stored_data:
-            return False
-        
-        # Check if code has expired (cache TTL should handle this, but double-check)
-        expires_at = datetime.fromisoformat(stored_data["expires_at"])
-        if datetime.now() > expires_at:
-            await self.cache.delete(key)
-            return False
-        
-        # Check attempts limit (max 3 attempts)
-        if stored_data["attempts"] >= 3:
-            await self.cache.delete(key)
-            return False
-        
-        # Increment attempt count
-        stored_data["attempts"] += 1
-        
-        # Check if code matches
-        if stored_data["code"] == code:
-            # Remove the code after successful verification
-            await self.cache.delete(key)
-            return True
-        
-        # Update attempt count in cache
-        remaining_ttl = int((expires_at - datetime.now()).total_seconds())
-        if remaining_ttl > 0:
-            await self.cache.set(key, stored_data, ttl=remaining_ttl)
-        
-        return False
+        try:
+            return await self.cache.verify_one_time_code(key, self._code_digest(email, code), code)
+        except Exception:
+            raise AppException(503, "Password reset is temporarily unavailable", 503) from None
 
     async def create_email_verification_token(self, email: str, user_id: str) -> str:
         token = self._generate_email_verification_token()
@@ -191,36 +170,27 @@ class EmailService:
         """Send verification code to email address"""
         self._ensure_smtp_configured()
         
-        # Check if there's an existing verification code that's too recent
-        key = f"{self.VERIFICATION_CODE_PREFIX}{email}"
-        existing_data = await self.cache.get(key)
-        if existing_data:
-            try:
-                # Check if the existing code was created less than 60 seconds ago
-                created_at = datetime.fromisoformat(existing_data["created_at"])
-                time_since_creation = (datetime.now() - created_at).total_seconds()
-                
-                if time_since_creation < 60:
-                    remaining_wait = int(60 - time_since_creation)
-                    raise BadRequestError(f"Please wait {remaining_wait} seconds before requesting a new verification code")
-            except (KeyError, ValueError):
-                # Invalid data, continue with new code generation
-                pass
+        email = email.strip().lower()
+        try:
+            reserved = await self.cache.set_if_absent(f"password_reset_cooldown:{email}", True, ttl=60)
+        except Exception:
+            raise AppException(503, "Password reset is temporarily unavailable", 503) from None
+        if not reserved:
+            raise BadRequestError("Please wait 60 seconds before requesting a new verification code")
         
         # Generate verification code
         code = self._generate_verification_code()
-        logger.debug(f"Generated verification code: {code}")
         
         # Create email message
         msg = self._create_verification_email(email, code)
-        logger.debug(f"Created email message: {msg}")
+
+        # Never send a code that cannot be verified. The independent cooldown
+        # remains after consumption, preventing reset requests from bypassing it.
+        await self._store_verification_code(email, code)
         
         # Send email using SMTP
         await self._send_smtp_email(msg, email)
 
-        # Store verification code
-        await self._store_verification_code(email, code)
-        
         logger.info(f"Verification code sent to {email}")
 
     async def send_email_verification_link(self, email: str, verify_url: str) -> None:
@@ -231,14 +201,17 @@ class EmailService:
     
     async def _send_smtp_email(self, msg: MIMEMultipart, email: str) -> None:
         """Send email using SMTP (runs in thread pool to avoid blocking)"""
+        await asyncio.to_thread(self._send_smtp_email_sync, msg, email)
+
+    def _send_smtp_email_sync(self, msg: MIMEMultipart, email: str) -> None:
         logger.debug(f"Sending email to {email}")
         server = None
         try:
             logger.debug(f"Creating SMTP server connection to {self.smtp_host}:{self.smtp_port}")
             if int(self.smtp_port) == 465:
-                server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port)
+                server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=10)
             else:
-                server = smtplib.SMTP(self.smtp_host, self.smtp_port)
+                server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10)
                 if self.settings.smtp_tls is not False:
                     server.starttls()
             logger.debug(f"SMTP server created, {server}")

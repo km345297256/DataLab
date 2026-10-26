@@ -24,6 +24,8 @@ class User(BaseModel):
     fullname: str
     email: str  # Now required field for login
     password_hash: Optional[str] = None
+    # Incremented on security changes; legacy accounts and credentials start at zero.
+    auth_version: int = Field(default=0, ge=0)
     role: UserRole = UserRole.USER
     is_active: bool = True
     # Existing documents without this field are treated as approved.
@@ -38,8 +40,8 @@ class User(BaseModel):
     installed_skill_ids: list[str] = Field(default_factory=list)
     installed_mcp_names: list[str] = Field(default_factory=list)
     installed_renderer_ids: list[str] = Field(default_factory=list)
-    created_at: datetime = datetime.now(UTC)
-    updated_at: datetime = datetime.now(UTC)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_login_at: Optional[datetime] = None
     
     @field_validator('fullname')

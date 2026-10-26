@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from app.domain.models.skill import SkillScope
+from app.domain.models.skill_draft import SkillCreationView
 
 
 class SkillResponse(BaseModel):
@@ -74,4 +75,4 @@ class CreateSkillRequest(BaseModel):
 
 
 class CreateSkillResponse(BaseModel):
-    skill: SkillResponse
+    draft: SkillCreationView

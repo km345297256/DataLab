@@ -154,10 +154,10 @@ async def test_whole_bytes_use_chunks_and_hold_admission_until_stream_closed(env
 
 
 @pytest.mark.asyncio
-async def test_original_image_budget_not_reduced_to_extended_reader_limit(environment, monkeypatch):
+async def test_image_budget_is_enforced_before_bounded_reads(environment, monkeypatch):
     storage, catalog = environment
     storage.infos["file"].filename = "image.png"
-    storage.infos["file"].size = 65 * 1024 * 1024
+    storage.infos["file"].size = 32 * 1024 * 1024
     reached = False
     async def bounded(*_, **kwargs):
         nonlocal reached
@@ -166,8 +166,13 @@ async def test_original_image_budget_not_reduced_to_extended_reader_limit(enviro
         raise NotImplementedError("stop before materializing large data")
     storage.download_file_range = bounded
     with pytest.raises(NotImplementedError): await invoke(environment, "image", "bytes")
-    assert reached and (await catalog.require_enabled("owner", "image")).limits.max_input_bytes == 256 * 1024 * 1024
+    assert reached and (await catalog.require_enabled("owner", "image")).limits.max_input_bytes == 32 * 1024 * 1024
     assert service._BYTE_SLOTS._value == 2
+    reached = False
+    storage.infos["file"].size += 1
+    with pytest.raises(service.ScientificPreviewRejected):
+        await invoke(environment, "image", "bytes")
+    assert not reached and service._BYTE_SLOTS._value == 2
 
 
 @pytest.mark.asyncio
@@ -616,6 +621,101 @@ async def test_expanded_reader_dispatch_has_same_public_envelope(environment, mo
     monkeypatch.setattr(service, "extended_visualization", AsyncMock(return_value=result))
     public = await invoke(environment, "viz-plotly", "preview", options={"row_offset": 0})
     assert public.kind == "table" and public.payload["table"]["rows"] == [[1]]
+
+
+@pytest.fixture
+def reusable_preview(environment, monkeypatch):
+    storage, catalog = environment
+    files = FileService(storage)
+    async def worker(*args):
+        request = args[5]
+        return {"reader": "tabular", "kind": "table", "table": {"columns": ["a"], "rows": [[1]]},
+            "plugin_id": "viz-plotly", "version": preview_version(storage.infos["file"]),
+            "revision": (await catalog.list_for_user("owner")).revision,
+            "metadata": {}, "warnings": [], "sampled": True}
+    mocked = AsyncMock(side_effect=worker)
+    monkeypatch.setattr(service, "extended_visualization", mocked)
+    async def request(*, user="owner", image="sandbox:test", **kwargs):
+        return await service.unified_visualization(files, catalog, image, "file", user,
+            service.VisualizationRequest(plugin_id="viz-plotly", operation="preview", **kwargs))
+    return request, mocked, files
+
+
+@pytest.mark.asyncio
+async def test_repeated_selection_reuses_derived_json_without_mutable_aliases(reusable_preview):
+    request, worker, _ = reusable_preview
+    first = await request(options={"row_offset": 0, "column_offset": 0})
+    first.payload["table"]["rows"][0][0] = 999
+    second = await request(options={"column_offset": 0, "row_offset": 0})
+    assert second.payload["table"]["rows"] == [[1]]
+    assert worker.await_count == 1
+    await request(options={"row_offset": 200, "column_offset": 0})
+    await request(options={"row_offset": 0, "column_offset": 0})
+    assert worker.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["file", "catalog", "capability", "worker"])
+async def test_reuse_key_changes_with_every_execution_identity(environment, reusable_preview, change):
+    storage, catalog = environment
+    request, worker, _ = reusable_preview
+    await request()
+    kwargs = {}
+    if change == "file": storage.infos["file"].metadata = {"sha256": "new"}
+    if change == "worker": kwargs["image"] = "sandbox:new"
+    if change in {"catalog", "capability"}:
+        snapshot = await catalog.runtime.visualization_snapshot()
+        updates = {"revision": "b" * 64} if change == "catalog" else {"plugins": [
+            plugin.model_copy(update={"limits": plugin.limits.model_copy(update={"max_input_bytes": 1024})})
+            if plugin.id == "viz-plotly" else plugin for plugin in snapshot.plugins]}
+        catalog.runtime.visualization_snapshot.return_value = snapshot.model_copy(update=updates)
+    await request(**kwargs)
+    assert worker.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["owner", "deleted", "private", "disabled", "version"])
+async def test_cached_selection_still_requires_current_authority(environment, reusable_preview, reason):
+    storage, catalog = environment
+    request, worker, _ = reusable_preview
+    await request()
+    kwargs = {}
+    if reason == "owner": kwargs["user"] = "other"
+    if reason == "deleted": storage.infos.pop("file")
+    if reason == "private": storage.infos["file"].metadata = {"source": "tool_output_spill"}
+    if reason == "disabled": await catalog.set_state("owner", "viz-plotly", False)
+    if reason == "version": kwargs["version"] = "0" * 64
+    with pytest.raises((FileNotFoundError, VisualizationDisabledError, PreviewVersionChanged)):
+        await request(**kwargs)
+    assert worker.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reused_result_rechecks_authority_at_delivery(environment, reusable_preview):
+    storage, _ = environment
+    request, worker, _ = reusable_preview
+    await request()
+    original = storage.get_file_info
+    calls = 0
+    async def revoke(file_id, user_id):
+        nonlocal calls
+        calls += 1
+        return None if calls > 1 else await original(file_id, user_id)
+    storage.get_file_info = revoke
+    with pytest.raises(FileNotFoundError): await request()
+    assert worker.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_media_is_never_retained_as_a_derived_result(reusable_preview):
+    request, worker, files = reusable_preview
+    worker.side_effect = None
+    worker.return_value = {"reader": "tabular", "kind": "image", "data_base64": "aW1hZ2U=",
+        "plugin_id": "viz-plotly", "version": "a" * 64, "revision": "a" * 64,
+        "metadata": {}, "warnings": [], "sampled": False}
+    await request()
+    await request()
+    assert worker.await_count == 2 and files._visualization_results.size_bytes == 0
 
 
 @pytest.mark.asyncio

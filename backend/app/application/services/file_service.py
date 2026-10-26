@@ -29,6 +29,17 @@ def _is_private_spill(file_info: FileInfo | None) -> bool:
     return metadata.get("source") == "tool_output_spill"
 
 
+def _can_read_file(file_info: FileInfo | None, user_id: str | None) -> bool:
+    """Recheck storage results at the application boundary.
+
+    A missing principal is reserved for an already verified download
+    capability. Authenticated requests never inherit that capability merely
+    because a storage adapter returned metadata for a different owner.
+    """
+    return bool(file_info and not _is_private_spill(file_info)
+                and (user_id is None or (user_id and file_info.user_id == user_id)))
+
+
 def _contains_reserved_spill_metadata(metadata: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(metadata, dict):
         return False
@@ -59,6 +70,28 @@ class FileService:
         self._file_storage = file_storage
         self._token_service = token_service
 
+    async def download_chunks(self, file_id: str, user_id: str | None, *, offset: int,
+                              length: int, version: str):
+        """Deliver arbitrarily large stored files with bounded memory.
+
+        Read ranges directly from the store so GridFS and hosted datasets need
+        not materialize the entire file before the browser receives bytes.
+        """
+        position, remaining = offset, length
+        while remaining:
+            requested = min(8 * 1024 * 1024, remaining)
+            data, info = await self._file_storage.download_file_range(
+                file_id, user_id, offset=position, length=requested)
+            if not _can_read_file(info, user_id):
+                raise FileNotFoundError("File not found")
+            if preview_version(info) != version:
+                raise PreviewVersionChanged("File changed during download")
+            if len(data) != requested:
+                raise ValueError("Incomplete download range")
+            yield data
+            position += requested
+            remaining -= requested
+
     async def preview_file(self, file_id: str, user_id: str, *, offset: int = 0, mode: str = "text", version: str | None = None, delimiter: str | None = None, header_pending: bool = False) -> FilePreviewPage:
         if mode not in {"text", "csv"} or delimiter not in {None, ",", "\t"} or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("Invalid preview request")
@@ -77,7 +110,7 @@ class FileService:
         if not callable(read_range):
             raise NotImplementedError("Storage does not support bounded previews")
         data, ranged_info = await read_range(file_id, user_id, offset=offset, length=length)
-        if _is_private_spill(ranged_info):
+        if not _can_read_file(ranged_info, user_id):
             raise FileNotFoundError("File not found")
         if preview_version(ranged_info) != expected:
             raise PreviewVersionChanged("File changed; restart preview from the first page")
@@ -232,10 +265,10 @@ class FileService:
             # Preflight metadata before obtaining a potentially huge stream.
             # Missing and unauthorized files share the same public response.
             file_info = await self._file_storage.get_file_info(file_id, user_id)
-            if file_info is None or _is_private_spill(file_info):
+            if not _can_read_file(file_info, user_id):
                 raise FileNotFoundError("File not found")
             result = await self._file_storage.download_file(file_id, user_id)
-            if _is_private_spill(result[1]):
+            if not _can_read_file(result[1], user_id):
                 _close_download_stream(result[0])
                 raise FileNotFoundError("File not found")
             logger.info("File downloaded successfully file=%s user=%s", file_ref, user_ref)
@@ -260,7 +293,7 @@ class FileService:
         
         try:
             file_info = await self._file_storage.get_file_info(file_id, user_id)
-            if _is_private_spill(file_info):
+            if not user_id or not _can_read_file(file_info, user_id):
                 return False
             result = await self._file_storage.delete_file(file_id, user_id)
             if result:
@@ -288,7 +321,7 @@ class FileService:
         
         try:
             result = await self._file_storage.get_file_info(file_id, user_id)
-            if _is_private_spill(result):
+            if not _can_read_file(result, user_id):
                 return None
             if result:
                 logger.info("File info retrieved successfully file=%s user=%s", file_ref, user_ref)

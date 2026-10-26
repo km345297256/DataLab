@@ -1,3 +1,4 @@
+import { viewModules } from './helpers/viewModules.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -13,7 +14,7 @@ const variable = () => ({ id: identifier, label: 'temperature', shape: [4], dtyp
 const slice = (start = 0, stop = 4, step = 1) => ({ start, stop, step });
 const selection = () => ({ variable: identifier, selection: [slice()], decode: 'raw' });
 function fixture(kind = 'tree', options = selection()) {
-  const metadata = { format: 'nc', container: 'HDF5', input_mode: 'window', value_semantics: data.ARRAY_VALUE_SEMANTICS,
+  const metadata = { format: 'nc', container: 'HDF5', input_mode: 'window', value_semantics: data.ARRAY_VALUE_SEMANTICS, units:'',calendar:'',missing_value_policy:'non-finite values are null; finite fill values retained',coordinate_semantics:'zero-based dimension indices',
     source_bytes: 1024 ** 3, read_bytes: 16384, read_requests: 1, chunks_touched: 0, decoded_chunk_bytes: 0, catalog_truncated: false,
     attributes: {}, nonfinite_values: 0, coordinates: 'zero-based dimension indices; not geospatial coordinates',
     limits: { max_elements: 16384, max_chunk_bytes: 4194304, max_decoded_bytes: 16777216, max_nodes: 128 } };
@@ -69,12 +70,12 @@ function mount(t, request, render) {
   globalThis.document = { createElement() { const element = { style: {}, remove() { seen.removed.push(element); } }; return element; } };
   t.after(() => { globalThis.document = previous; });
   const library = { newPlot: async (element, traces, layout) => { seen.plots.push({ element, traces, layout }); await render?.(); }, purge: element => seen.purged.push(element), Plots: { resize: element => seen.resize.push(element) } };
-  const modules = { vue, '../../composables/usePreviewLoad': { usePreviewLoad }, '../runtime': { requestVisualization: async (_file, _plugin, _operation, options, signal) => { seen.requests.push({ options, signal }); return request(options, signal); } }, '../previewIdentity': identity, './scientific/browserLibraries': { loadBrowserLibrary: async () => library }, './arrayWindowData': data };
+  const modules = { ...viewModules, vue, '../../composables/usePreviewLoad': { usePreviewLoad }, '../runtime': { requestVisualization: async (_file, _plugin, _operation, options, signal) => { seen.requests.push({ options, signal }); return request(options, signal); } }, '../previewIdentity': identity, './scientific/browserLibraries': { loadBrowserLibrary: async () => library }, './arrayWindowData': data };
   const source = readFileSync(new URL('../src/visualizations/extended/ArrayWindowPreview.vue', import.meta.url), 'utf8');
   const compiled = ts.transpileModule(compileScript(parse(source).descriptor, { id: 'array-window' }).content, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const module = { exports: {} }; new Function('require', 'module', 'exports', compiled)(id => { assert.ok(id in modules, id); return modules[id]; }, module, module.exports);
   const scope = vue.effectScope(), props = vue.reactive({ file: { file_id: 'file-a', filename: 'data.nc', size: 1024 ** 3, metadata: { dataset_file_version: 'a' } }, plugin: { id: 'viz-array-window', version: '1', enabled: true, capabilities: { operations: ['preview'], shared: false, input_mode: 'window' }, limits: { max_input_bytes: 8388608, max_output_bytes: 2097152 } } });
-  const state = scope.run(() => module.exports.default.setup(props, { expose() {} })); state.target.value = { replaceChildren() {} };
+  const state = scope.run(() => module.exports.default.setup(props, { expose() {}, emit() {} })); state.target.value = { replaceChildren() {} };
   const stop = () => scope.stop(); t.after(stop);
   return { state, props, seen, stop };
 }
@@ -141,3 +142,15 @@ test('late Plotly render cleans its own element without restoring stale data', a
   const task = pending(), view = mount(t, requestFixture, () => task.promise); await flush(); const running = view.state.loadWindow(); await flush(); assert.equal(view.seen.plots.length, 1); view.props.plugin.enabled = false; await flush(); task.resolve(); await running; await flush(); assert.equal(view.state.data.value, undefined); assert.ok(view.seen.purged.includes(view.seen.plots[0].element));
 });
 test('template exposes raw semantics and does not accept executable HTML/URLs', () => { const source = readFileSync(new URL('../src/visualizations/extended/ArrayWindowPreview.vue', import.meta.url), 'utf8'); assert.match(source, /原始存储值/); assert.match(source, /未应用 CF/); assert.doesNotMatch(source, /v-html|localStorage|sessionStorage|https?:\/\//); });
+
+test('physical mode binds decoder semantics and permits scaled fractional values from unsigned storage', () => {
+  const raw=fixture('series');raw.payload.selected.decode='physical';raw.payload.choices.variables[0].dtype='<u2';
+  raw.metadata.decoded_chunk_bytes=raw.metadata.chunks_touched*4;
+  raw.metadata.value_semantics=data.ARRAY_PHYSICAL_SEMANTICS;
+  raw.metadata.missing_value_policy='finite fill values masked before scale/add_offset; non-finite values are null';
+  raw.payload.array.values=[-1.5,null,0.25,2];raw.metadata.nonfinite_values=1;
+  const parsed=data.parseArrayWindow('series',raw.payload,raw.metadata,raw.payload.selected);
+  assert.equal(parsed.valueSemantics,'physical');assert.deepEqual(parsed.array.values,[-1.5,null,0.25,2]);
+  raw.metadata.value_semantics=data.ARRAY_VALUE_SEMANTICS;
+  assert.throws(()=>data.parseArrayWindow('series',raw.payload,raw.metadata,raw.payload.selected));
+});

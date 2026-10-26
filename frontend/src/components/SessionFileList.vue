@@ -39,12 +39,20 @@
                 <DataSourceCandidates :key="activeSessionId()" :session-id="activeSessionId()" :files="files" />
             </div>
             <div class="flex-1 min-h-0 flex flex-col">
-                <div v-if="files.length > 0" class="flex-1 min-h-0 overflow-auto px-3 mt-4 pb-4">
+                <p v-if="loading" class="px-6 py-8 text-sm text-[var(--text-secondary)]" role="status">正在读取当前会话的文件…</p>
+                <div v-else-if="error" class="px-6 py-8 text-sm text-[var(--text-secondary)]" role="alert">
+                    {{ error }} <button type="button" class="ml-2 underline" @click="fetchFiles">重试</button>
+                </div>
+                <div v-else-if="files.length > 0" class="flex-1 min-h-0 overflow-auto px-3 mt-4 pb-4">
                     <div class="flex flex-col gap-1 first:pt-0 pt-2">
                         <div class="">
                             <div v-for="file in files"
                                 :key="file.file_id || file.filename"
                                 class="flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--fill-tsp-gray-main)] transition-colors rounded-lg clickable">
+                                <div v-if="!shared" class="flex shrink-0 flex-col gap-1 text-xs">
+                                    <button type="button" class="rounded border border-[var(--border-main)] px-2 py-1" @click="useForAnalysis(file)">继续分析</button>
+                                    <button type="button" class="rounded border border-[var(--border-main)] px-2 py-1" @click="saveFiles = [file]">保存到我的数据</button>
+                                </div>
                                 <div class="relative flex items-center justify-center">
                                     <component :is="getFileType(file.filename).icon" />
                                 </div>
@@ -79,13 +87,16 @@
                 </div>
             </div>
         </div>
+        <SaveToLibraryDialog :visible="saveFiles.length > 0" :files="saveFiles" :session-id="activeSessionId()" @close="saveFiles = []" @saved="saveFiles = []" />
     </div>
 </template>
 
 <script setup lang="ts">
 import DataSourceCandidates from './DataSourceCandidates.vue';
+import SaveToLibraryDialog from './SaveToLibraryDialog.vue';
+import { eventBus } from '../utils/eventBus';
 import { X, Download, File } from 'lucide-vue-next';
-import { ref, watch } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import type { FileInfo } from '../api/file';
 import { getFileDownloadUrl } from '../api/file';
@@ -100,6 +111,17 @@ const props = defineProps<{
     sessionId?: string;
 }>();
 const files = ref<FileInfo[]>([]);
+const saveFiles = ref<FileInfo[]>([]);
+const loading = ref(false);
+const error = ref('');
+let generation = 0;
+let active = true;
+let loadedSessionId = '';
+function useForAnalysis(file: FileInfo) {
+    if (shared.value || !isCurrentFile(file)) return;
+    eventBus.emit('exploration-data-selected', { sessionId: activeSessionId(), files: [file] });
+    hideSessionFileList();
+}
 const sortBy = ref<SessionFileSortBy>('upload_date');
 const sortOrder = ref<SessionFileSortOrder>('desc');
 
@@ -109,29 +131,51 @@ const { visible, hideSessionFileList, shared } = useSessionFileList();
 
 const activeSessionId = () => props.sessionId || route.params.sessionId as string || '';
 
-const fetchFiles = async (sessionId: string) => {
-    if (!sessionId) {
-        return;
-    }
-    let response: FileInfo[] = [];
+function isCurrentFile(file: FileInfo) {
+    return active && visible.value && !loading.value && loadedSessionId === activeSessionId()
+        && files.value.some(item => item.file_id === file.file_id);
+}
+
+const fetchFiles = async () => {
+    const version = ++generation;
+    const sessionId = activeSessionId();
+    const isShared = shared.value;
+    files.value = [];
+    saveFiles.value = [];
+    loadedSessionId = '';
+    error.value = '';
+    loading.value = false;
+    if (!active || !visible.value || !sessionId) return;
+    loading.value = true;
     const sortOptions = {
         sort_by: sortBy.value,
         sort_order: sortOrder.value,
     };
-    if (shared.value) {
-        response = await getSharedSessionFiles(sessionId, sortOptions);
-    } else {
-        response = await getSessionFiles(sessionId, sortOptions);
+    const isCurrent = () => active && version === generation && visible.value
+        && activeSessionId() === sessionId && shared.value === isShared;
+    try {
+        const response = isShared
+            ? await getSharedSessionFiles(sessionId, sortOptions)
+            : await getSessionFiles(sessionId, sortOptions);
+        if (!isCurrent()) return;
+        files.value = response;
+        loadedSessionId = sessionId;
+    } catch {
+        if (isCurrent()) error.value = '未能读取当前会话的文件，请重试。';
+    } finally {
+        if (isCurrent()) loading.value = false;
     }
-    files.value = response;
 }
 
 const downloadFile = async (fileInfo: FileInfo) => {
+    if (!isCurrentFile(fileInfo)) return;
+    const version = generation;
     const url = await getFileDownloadUrl(fileInfo);
-    window.open(url, '_blank');
+    if (version === generation && isCurrentFile(fileInfo)) window.open(url, '_blank');
 }
 
 const showFile = (file: FileInfo) => {
+    if (!isCurrentFile(file)) return;
     showFilePanel(file, files.value);
     hideSessionFileList();
 }
@@ -149,24 +193,11 @@ const formatFileSize = (size?: number) => {
     return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
-watch(visible, (newVisible) => {
-    if (newVisible) {
-        const sessionId = activeSessionId();
-        if (sessionId) {
-            fetchFiles(sessionId);
-        }
-    }
-})
-
-watch([sortBy, sortOrder], () => {
-    if (!visible.value) return;
-    const sessionId = activeSessionId();
-    if (sessionId) {
-        fetchFiles(sessionId);
-    }
-})
-
-watch(() => props.sessionId, () => {
-    if (visible.value) fetchFiles(activeSessionId());
-})
+watch([activeSessionId, visible, shared, sortBy, sortOrder], () => { void fetchFiles(); }, { immediate: true });
+onUnmounted(() => {
+    active = false;
+    generation += 1;
+    files.value = [];
+    saveFiles.value = [];
+});
 </script>

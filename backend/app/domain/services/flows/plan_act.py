@@ -5,8 +5,11 @@ import logging
 import re
 from datetime import datetime, UTC
 from pathlib import PurePosixPath
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.domain.services.flows.base import BaseFlow
+from app.domain.services.execution_history import ExecutionHistory, analysis_history_steps
+from app.domain.models.result_assessment import has_user_evaluated_result
 from app.domain.models.message import Message
 from typing import Any, AsyncGenerator, Optional
 from enum import Enum
@@ -64,11 +67,13 @@ from app.domain.services.tools.interceptors import (
 )
 from app.domain.services.execution_identity import private_identity_hmac
 from app.domain.services.skills import SkillRegistry, SkillRenderer
-from app.domain.services.skills.session_skill_creator import is_skill_create_request
+from app.domain.services.skills.skill_creation.intent import is_explicit_skill_create_command
+from app.domain.services.skills.skill_creation_error import SkillCreationError
 from app.core.config import get_settings
 from app.domain.models.agent_profile import AgentSubAgentConfig, default_subagents
 from app.application.services.data_center_dataset_service import render_dataset_context
 from app.domain.models.dataset import DatasetFile
+from app.domain.models.analysis_input import render_upload_context, analysis_catalog_sources
 from app.domain.models.spill import SpillArtifactOwner
 
 logger = logging.getLogger(__name__)
@@ -245,6 +250,8 @@ class PlanActFlow(BaseFlow):
             session_id=self._session_id,
             user_id=self._user_id,
             session_repository=self._session_repository,
+            llm_overrides=base_llm_overrides,
+            usage_context={"user_id": self._user_id, "session_id": self._session_id},
         )
         self.dataset_catalog_toolkit = DatasetCatalogToolkit()
         self.data_discovery_toolkit = DataDiscoveryToolkit(user_id=self._user_id, session_id=self._session_id, sandbox=sandbox)
@@ -320,6 +327,7 @@ class PlanActFlow(BaseFlow):
             tools=agent_tools,
             dynamic_system_prompt_provider=self._dynamic_system_prompt,
             dynamic_user_context_provider=self._dynamic_user_context,
+            runtime_facts_provider=self._runtime_context_prompt,
             llm_overrides=self._agent_llm_overrides(base_llm_overrides, "planner"),
             usage_context=usage_context,
         )
@@ -334,6 +342,7 @@ class PlanActFlow(BaseFlow):
             tools=agent_tools,
             dynamic_system_prompt_provider=self._dynamic_system_prompt,
             dynamic_user_context_provider=self._dynamic_user_context,
+            runtime_facts_provider=self._runtime_context_prompt,
             llm_overrides=self._agent_llm_overrides(base_llm_overrides, "execution"),
             usage_context=usage_context,
         )
@@ -348,6 +357,7 @@ class PlanActFlow(BaseFlow):
             tools=agent_tools,
             dynamic_system_prompt_provider=self._dynamic_system_prompt,
             dynamic_user_context_provider=self._dynamic_user_context,
+            runtime_facts_provider=self._runtime_context_prompt,
             llm_overrides=self._agent_llm_overrides(base_llm_overrides, "vision"),
             usage_context=usage_context,
             file_storage=self._file_storage,
@@ -412,6 +422,7 @@ class PlanActFlow(BaseFlow):
                 tools=[view, discovery, *core],
                 dynamic_system_prompt_provider=lambda view=view: self._domain_system_prompt(view),
                 dynamic_user_context_provider=self._dynamic_user_context,
+                runtime_facts_provider=self._runtime_context_prompt,
                 llm_overrides=overrides, usage_context=dict(usage_context),
             )
             # Persisted memory and model-trace roles must be isolated even for
@@ -423,7 +434,7 @@ class PlanActFlow(BaseFlow):
 
     def _domain_system_prompt(self, view: PluginToolView) -> str:
         return "\n\n".join(filter(None, (
-            self._runtime_context_prompt(), self.dataset_context,
+            self.dataset_context,
             view.preset.instructions, self._tool_selection_prompt(view),
             "You are a bounded domain step executor in the existing plan. Do not delegate, invent tools, "
             "run shell commands or propose a new Agent loop. Use only supplied tool schemas. "
@@ -667,10 +678,7 @@ class PlanActFlow(BaseFlow):
                 "session_id": self._session_id,
                 "user_id": self._user_id,
             },
-            # Preserve the existing sandbox safety ceiling even if a future
-            # manifest advertises a larger host-side budget.
-            default_timeout_seconds=120.0,
-            maximum_timeout_seconds=120.0,
+            # Task execution and spill persistence have no elapsed-time cutoff.
             spill_store=(
                 spill_store
                 if settings.spill_enabled
@@ -687,7 +695,6 @@ class PlanActFlow(BaseFlow):
             spill_max_inline_bytes=settings.spill_max_inline_bytes,
             spill_max_artifact_bytes=settings.spill_max_artifact_bytes,
             spill_preview_bytes=settings.spill_preview_bytes,
-            spill_store_timeout_seconds=settings.spill_store_timeout_seconds,
         )
         next_disposer = getattr(self, "_governed_tool_registry", self._tool_registry).register_interceptors(
             interceptors,
@@ -750,15 +757,45 @@ class PlanActFlow(BaseFlow):
         session = await self._session_repository.find_by_id(self._session_id)
         if not session:
             raise ValueError(f"Session {self._session_id} not found")
+
+        # Refresh once per user turn before planning or writing any code. Older
+        # sandboxes explicitly report unknown instead of a fabricated catalog.
+        from app.domain.services.runtime_capabilities import inspect_runtime_capabilities
+        self._analysis_runtime_prompt = await inspect_runtime_capabilities(getattr(self, "_sandbox", None))
         
         resumed_waiting_question = False
-        if session.status != SessionStatus.PENDING:
-            logger.debug(
-                "Session is not pending; rolling back session=%s",
-                opaque_log_identifier(self._session_id, namespace="session"),
-            )
-            resumed_waiting_question = await self.executor.roll_back(message)
-            await self.planner.roll_back(message)
+        clarification_resume = message._clarification_resume
+        replacing_clarification = message._clarification_response == "replace"
+        if message._clarification_response == "cancel":
+            raise ValueError("待确认任务已取消，不再执行。")
+        resumed_plan = None
+        if clarification_resume is not None:
+            resumed_plan = Plan.model_validate(clarification_resume["plan"])
+            pending_step = resumed_plan.get_next_step()
+            if pending_step is None or pending_step.id != clarification_resume.get("step_id"):
+                raise ValueError("待确认步骤已经变化，系统没有重新执行。")
+            # The admission pipeline already set RUNNING. An explicit bound
+            # reply, not that mutable status, determines whether to resume.
+            answer_message = message.model_copy(update={"message": clarification_resume["answer"]})
+            waiting_executor = getattr(self, "_domain_agents", {}).get(pending_step.agent, self.executor)
+            resumed_waiting_question = await waiting_executor.roll_back(answer_message)
+            if not resumed_waiting_question:
+                raise ValueError("待确认任务的执行记忆不可用，系统没有重新运行已有步骤。")
+            pending_step.status = ExecutionStatus.PENDING
+        elif replacing_clarification or session.status != SessionStatus.PENDING:
+            # Only an explicit host-bound answer may resume a tool question.
+            # Cancellation/replacement can finish in the lightweight path and
+            # leave an old ask receipt in memory. Never consume a new request
+            # as its answer, even if the session still says WAITING/RUNNING.
+            agents = [self.planner, self.executor, *getattr(self, "_domain_agents", {}).values()]
+            seen_agents = set()
+            for agent in agents:
+                if id(agent) in seen_agents:
+                    continue
+                seen_agents.add(id(agent))
+                agent._preserve_context_for_next_request = False
+                await agent.reset_context()
+            self.status = AgentStatus.PLANNING
         
         if session.status == SessionStatus.RUNNING:
             logger.debug(
@@ -782,9 +819,18 @@ class PlanActFlow(BaseFlow):
         events = getattr(message, "_session_events_snapshot", None)
         if events is None:
             events = await self._session_repository.get_events(self._session_id)
-        last_plan_event = next((e for e in reversed(events) if isinstance(e, PlanEvent)), None)
+        last_plan_event = (events.latest_plan if isinstance(events, ExecutionHistory)
+                           else next((e for e in reversed(events) if isinstance(e, PlanEvent)), None))
         self.plan = last_plan_event.plan if last_plan_event else None
-        if message._resume_checkpoint:
+        if replacing_clarification:
+            self.plan = None
+        elif resumed_plan is not None:
+            self.plan = resumed_plan
+            self.status = AgentStatus.EXECUTING
+            pending_step = self.plan.get_next_step()
+            self._dataset_fast_path_active = bool(pending_step and
+                pending_step.inputs.get("execution_mode") == "dataset_fast_path")
+        elif message._resume_checkpoint:
             self.plan = Plan.model_validate(message._resume_checkpoint["plan"])
             for unfinished in self.plan.steps:
                 if not unfinished.success:
@@ -792,20 +838,38 @@ class PlanActFlow(BaseFlow):
                     unfinished.outcome = None
             self.status = AgentStatus.EXECUTING
             self._dataset_fast_path_active = len(self.plan.steps) == 1
+        elif self.status != AgentStatus.EXECUTING:
+            self.plan = None
         self.session_context = self._render_session_context(
             events,
             current_user_message=message.message,
+            dataset_ids={item.dataset_id for item in message.datasets},
+            input_file_ids=set(message.attachment_file_ids),
         )
+        self._request_context = (
+            "Server completion_mode=" + message._completion_mode
+            + ". background_acquisition means submit the real persistent job only; no sandbox deliverable, "
+            "no completed-download or analysis claim. inline keeps the requested artifact and analysis contract."
+        )
+        if message.request_intent is not None:
+            self._request_context += (
+                "\nAccepted user intent (request data, not tool authorization): "
+                + message.request_intent.model_dump_json()
+                + "\nPlan and execute the current actions within the stated constraints. "
+                "Deferred actions are future wishes, not steps to execute now. "
+                "Do not replace the current analysis with skill creation when skill_creation is deferred "
+                "or after_analysis, and do not claim a skill has been created without its actual successful receipt."
+            )
         discovery = getattr(self, "data_discovery_toolkit", None)
         if discovery is not None:
             discovery.selected_connectors = list(message.data_connectors)
         if message.data_connectors:
-            self.session_context += "\n本次用户已选择数据连接器：" + ", ".join(message.data_connectors) + "。需要新的外部证据时先读取 data_connector_list，再用 data_connector_call 调用所选来源的能力；复用已成功返回的结果，不为格式整理重复读取；纯元数据问答不要求文件交付，不要把元数据结果当成已下载文件。"
-        self.dataset_context = render_dataset_context(message.datasets)
+            self._request_context += "\n本次用户已选择数据来源：" + ", ".join(message.data_connectors) + "。通用数据查找应使用 data_search，并将全部所选来源传入 source_ids，保留手动多源选择并生成统一持久结果卡；不要先转去旧 data_connector_call。只有 ncbi-datasets-v2 的明确基因组组装/完整 accession 请求使用旧 NCBI 工具。已有元数据结果可直接复用，不为格式整理重复读取；纯元数据问答不要求文件交付，元数据不代表文件已经下载。"
+        self.dataset_context = render_dataset_context(message.datasets) + render_upload_context(message.analysis_inputs)
         catalog_toolkit = getattr(self, "dataset_catalog_toolkit", None)
         if catalog_toolkit is not None:
-            catalog_toolkit.set_datasets(message.datasets)
-        if is_skill_create_request(message.message):
+            catalog_toolkit.set_datasets(self._analysis_catalog_sources(message))
+        if self._requests_immediate_skill_creation(message) and clarification_resume is None:
             self._dataset_fast_path_active = False
             async for event in self._run_skill_create_command():
                 yield event
@@ -1031,11 +1095,11 @@ class PlanActFlow(BaseFlow):
         return self.status == AgentStatus.IDLE
 
     async def _run_skill_create_command(self) -> AsyncGenerator[BaseEvent, None]:
-        """Execute the built-in session-to-Skill command without an LLM round trip."""
+        """Prepare a downloadable Skill draft; installation is a separate user action."""
         function_name = "skill_create_from_session"
-        tool_call_id = f"skill-create-{self._session_id}"
+        tool_call_id = f"skill-creator-{uuid4().hex}"
         function_args: dict = {}
-        yield TitleEvent(title="保存分析流程")
+        yield TitleEvent(title="创建可复用技能")
         yield ToolEvent(
             status=ToolStatus.CALLING,
             tool_call_id=tool_call_id,
@@ -1059,14 +1123,35 @@ class PlanActFlow(BaseFlow):
         )
 
         if not result.success:
+            failure = (result.data or {}).get("skill_creation_failure") if isinstance(result.data, dict) else None
+            if isinstance(failure, dict) and isinstance(failure.get("retryable"), bool):
+                # Reconstruct the safe diagnostic: arbitrary provider/tool
+                # strings never become the trusted recovery message.
+                try:
+                    error = SkillCreationError(failure.get("stage"), failure.get("code"),
+                                               retryable=failure["retryable"])
+                except (KeyError, TypeError):
+                    pass
+                else:
+                    yield MessageEvent(role="assistant", message=(
+                        error.public_message + "\n\n已有分析结果保持不变。"
+                        + ("你可以点击“重试创建技能”，或再次发送 `/skill-creator`。重试只重新整理技能，不会重跑原分析。"
+                           if error.retryable else "请按上述提示补充或调整后，再创建技能。")
+                    ), metadata={"skill_creation_failure": {
+                        "stage": error.stage, "code": error.code,
+                        "retryable": error.retryable,
+                    }})
+                    yield DoneEvent()
+                    return
             raise RuntimeError(result.message or "Skill creation failed")
         skill = result.data or {}
         name = skill.get("name") or "未命名技能"
         yield MessageEvent(
             role="assistant",
             message=(
-                f"已将当前任务的分析流程保存为技能 `{name}`。"
-                "后续遇到相似数据与分析目标时，可以直接复用该流程。"
+                f"已将本轮分析流程整理为技能包 `{name}`，尚未添加到你的技能库。"
+                "你可以查看下方介绍，选择“添加到我的技能”，或直接下载技能包。"
+                "技能包已通过结构与静态检查，尚未在新数据上运行验证。"
             ),
         )
         yield DoneEvent()
@@ -1077,19 +1162,50 @@ class PlanActFlow(BaseFlow):
         Files from earlier successful steps count towards this final check.
         Replanning cannot silently discard the front-controller checklist.
         """
-        if not self.plan or not self.plan.steps or not message.deliverables:
+        from app.domain.services.analysis_request_contract import current_artifact_requirement
+        if not self.plan or not self.plan.steps:
+            return
+        if current_artifact_requirement(message) is False:
+            for step in self.plan.steps:
+                step.deliverables = []
+                step.inputs.update(artifact_policy="optional", require_downloadable_result=False)
+            return
+        if not message.deliverables:
             return
         final = self.plan.steps[-1]
-        mandatory = [item.model_copy(deep=True) for item in message.deliverables]
-        # Keep additional planner requirements, but do not count the same
-        # requirement twice merely because two planning stages declared it.
-        for requirement in final.deliverables:
-            match = next((item for item in mandatory if item.kind == requirement.kind
-                          and set(item.formats) == set(requirement.formats)), None)
+        # A type/count floor and a specific planned chart are not two separate
+        # files. Preserve distinct analytical commitments first, then add only
+        # the generic slots still needed to satisfy the original count floor.
+        # This also keeps repeated binding/replanning idempotent.
+        groups = {}
+        for requirement in [*message.deliverables, *final.deliverables]:
+            key = (requirement.kind, tuple(sorted(requirement.formats)))
+            group = groups.setdefault(key, {"floor": None, "specific": []})
+            if not requirement.objective and not requirement.output_paths:
+                floor = group["floor"]
+                if floor is None or requirement.min_count > floor.min_count:
+                    group["floor"] = requirement.model_copy(deep=True)
+                continue
+            match = next((item for item in group["specific"]
+                          if item.objective == requirement.objective), None)
             if match is None:
-                mandatory.append(requirement)
+                group["specific"].append(requirement.model_copy(deep=True))
             else:
-                match.min_count = max(match.min_count, requirement.min_count)
+                paths = list(dict.fromkeys([*match.output_paths, *requirement.output_paths]))
+                replacement = type(match).model_validate({**match.model_dump(), "output_paths": paths,
+                    "min_count": max(match.min_count, requirement.min_count, len(paths))})
+                group["specific"][group["specific"].index(match)] = replacement
+        mandatory = []
+        for group in groups.values():
+            specific, floor = group["specific"], group["floor"]
+            residual = (floor.min_count if floor else 0) - sum(item.min_count for item in specific)
+            if residual > 0:
+                if len(specific) == 1:
+                    # Preserve the compact single-contract form where possible.
+                    specific[0] = specific[0].model_copy(update={"min_count": floor.min_count})
+                else:
+                    mandatory.append(floor.model_copy(update={"min_count": residual}))
+            mandatory.extend(specific)
         final.deliverables = mandatory
 
     @staticmethod
@@ -1113,13 +1229,12 @@ class PlanActFlow(BaseFlow):
 
     def _dynamic_system_prompt(self) -> str:
         if getattr(self, "_dataset_fast_path_active", False):
-            # Keep the hot path focused. Skill/MCP/vision requests are excluded
-            # from this path and therefore do not need their orchestration
-            # capabilities repeated in every execution-model request.
+            # Skills supply methods to the same executor; selecting one does not
+            # require another planning or summarization pass.
             return "\n\n".join(
                 part
                 for part in [
-                    self._runtime_context_prompt(),
+                    self.active_skill_context,
                     self.dataset_context,
                     DISCOVERY_GUIDANCE,
                     self._tool_selection_prompt(),
@@ -1129,7 +1244,6 @@ class PlanActFlow(BaseFlow):
         parts = [
             part
             for part in [
-                self._runtime_context_prompt(),
                 self._subagent_capabilities_prompt(),
                 self.active_skill_context,
                 DISCOVERY_GUIDANCE,
@@ -1141,39 +1255,64 @@ class PlanActFlow(BaseFlow):
         return "\n\n".join(parts)
 
     def _dynamic_user_context(self) -> str:
-        return getattr(self, "session_context", "")
+        return "\n\n".join(filter(None, (
+            getattr(self, "session_context", ""), getattr(self, "_request_context", ""),
+        )))
+
+    @staticmethod
+    def _requests_immediate_skill_creation(message: Message) -> bool:
+        # Natural-language timing belongs to the admitted semantic contract.
+        # A future/deferred wish must never preempt this turn's analysis.
+        if is_explicit_skill_create_command(message.message):
+            return True
+        return bool(message.request_intent and message.request_intent.skill_creation == "now")
 
     def _should_use_dataset_fast_path(self, message: Message) -> bool:
         """Use one bounded execution step for ordinary mounted-dataset requests.
 
-        Skills, MCP servers, and image understanding have their own orchestration
-        contracts and continue through the planner. All other dataset exploration,
+        MCP servers and image understanding have their own orchestration
+        contracts and continue through the planner. Selected skills remain
+        available as methods within the single execution step. Dataset exploration,
         profiling, analysis, and visualization requests can be handled directly by
         the execution agent with the authoritative mounted manifest.
         """
         return bool(
-            message.datasets
+            (message.datasets or (message.analysis_inputs and message.analysis_inputs.files))
+            and message._completion_mode == "inline"
             and not getattr(self, "_domain_agents", {})
             and "execution" in self._enabled_subagents()
-            and not is_skill_create_request(message.message)
-            and not message.skills
+            and not self._requests_immediate_skill_creation(message)
             and not message.mcp_servers
             and not message.data_connectors
             and not self._message_has_image_attachment(message)
         )
 
     @staticmethod
+    def _analysis_catalog_sources(message: Message):
+        # These upload views are request-local metadata adapters only. They are
+        # never registered, persisted as datasets, or used for mount allocation.
+        return analysis_catalog_sources(message)
+
+    @staticmethod
     def _create_dataset_fast_path_plan(message: Message) -> Plan:
+        from app.domain.services.analysis_request_contract import current_artifact_requirement
+        artifact_requirement = current_artifact_requirement(message)
         dataset_name = next(
-            (dataset.name.strip() for dataset in message.datasets if dataset.name.strip()),
-            "dataset",
+            (dataset.name.strip() for dataset in PlanActFlow._analysis_catalog_sources(message) if dataset.name.strip()),
+            "分析资料",
         )
         target_files = PlanActFlow._resolve_dataset_file_references(message)[
             :PlanActFlow.MAX_TARGET_FILES
         ]
         target_file = target_files[0] if len(target_files) == 1 else None
         dataset_intent = PlanActFlow._dataset_request_intent(message.message)
-        if target_file and PlanActFlow._is_file_preview_request(
+        if artifact_requirement is False and dataset_intent == "visualization":
+            dataset_intent = "analysis"
+        if not message.datasets and dataset_intent == "catalog_description":
+            # Upload filenames/technical metadata cannot establish scientific
+            # purpose. Inspect the supplied file instead of inventing provenance.
+            dataset_intent = "analysis"
+        if target_file and not message.deliverables and PlanActFlow._is_file_preview_request(
             message.message,
             target_file,
             classified_intent=dataset_intent,
@@ -1215,7 +1354,7 @@ class PlanActFlow(BaseFlow):
             "catalog_metadata": {
                 "description": "读取数据集目录元数据并回答用户问题",
                 "instruction": (
-                    "仅使用数据中心已验证的登记清单回答总大小、文件数量和格式分组；"
+                    "仅使用当前输入的已验证清单回答总大小、文件数量和格式分组；"
                     "不读取或推断文件内容，不暴露宿主机真实路径。登记清单不完整时必须回退到挂载数据检查。"
                 ),
                 "include_archive_tree": False,
@@ -1246,12 +1385,16 @@ class PlanActFlow(BaseFlow):
         requested_dimensions = PlanActFlow._dataset_requested_dimensions(
             message.message
         )
+        if artifact_requirement is False:
+            requested_dimensions = [item for item in requested_dimensions if item != "visualization"] or ["question_answering"]
         if dataset_intent == "file_preview":
             requested_dimensions = ["file_preview"]
         explicit_artifact_request = PlanActFlow._requests_downloadable_result(
             message.message
         )
-        if explicit_artifact_request or dataset_intent == "visualization":
+        if artifact_requirement is False:
+            artifact_policy = "optional"
+        elif artifact_requirement is True or explicit_artifact_request or dataset_intent == "visualization":
             artifact_policy = "required"
         elif dataset_intent in {"file_preview", "visualization"}:
             artifact_policy = "capability"
@@ -1344,7 +1487,8 @@ class PlanActFlow(BaseFlow):
         rule. Ambiguous requests remain normal model-assisted analysis, so an
         unrelated user question is never silently converted into visualization.
         """
-        normalized = " ".join((user_message or "").casefold().split())
+        from app.domain.services.analysis_request_contract import affirmative_request_text
+        normalized = affirmative_request_text(user_message)
         file_structure_markers = (
             "包含哪些文件",
             "都有哪些文件",
@@ -1492,7 +1636,7 @@ class PlanActFlow(BaseFlow):
         the message or controller supplies a unique directory-qualified suffix.
         """
         inventory: list[tuple[DatasetFile, str]] = []
-        for dataset in message.datasets or []:
+        for dataset in cls._analysis_catalog_sources(message):
             for dataset_file in dataset.files or []:
                 normalized_path = cls._safe_dataset_file_path(dataset_file)
                 if normalized_path:
@@ -1576,11 +1720,46 @@ class PlanActFlow(BaseFlow):
         *,
         classified_intent: str,
     ) -> bool:
-        normalized = " ".join((user_message or "").casefold().split())
-        has_preview_action = any(
-            marker in normalized for marker in cls._FILE_PREVIEW_ACTION_MARKERS
-        )
-        return cls._is_previewable_dataset_file(dataset_file) and has_preview_action
+        """Shortcut only a request whose entire scope is the original file.
+
+        Displaying plot labels or asking to preview *and* compute must still run
+        the analysis. A substring anywhere in the question (or even in a file
+        name such as overview.csv) cannot authorize skipping the executor.
+        Unrecognized phrasing takes the normal analysis path without losing the
+        original question; this shortcut is deliberately conservative.
+        """
+        if not cls._is_previewable_dataset_file(dataset_file):
+            return False
+        normalized = " ".join((user_message or "").replace("\\", "/").casefold().split())
+        path = cls._safe_dataset_file_path(dataset_file)
+        if not path:
+            return False
+        parts = PurePosixPath(path).parts
+        variants = ["/".join(parts[index:]) for index in range(len(parts))]
+        reference = next((item for item in variants if item in normalized), None)
+        if reference is None or normalized.count(reference) != 1:
+            return False
+        before, after = normalized.split(reference, 1)
+        remainder = before + " " + after
+        actions = "|".join(re.escape(item) for item in sorted(cls._FILE_PREVIEW_ACTION_MARKERS, key=len, reverse=True))
+        # Only neutral request words may surround the selected file and action.
+        # An extra instruction, field name, output name, or negation falls back.
+        neutral = ("please", "could", "can", "you", "me", "the", "this", "file", "image",
+                   "original", "contents", "content", "of", "请", "帮我", "给我", "一下", "下",
+                   "这个", "这份", "该", "指定", "文件", "图片", "图像", "原图", "内容", "的", "谢谢")
+        tokens = actions + "|" + "|".join(re.escape(item) for item in sorted(neutral, key=len, reverse=True))
+        punctuation = r"[\s`'\"“”‘’《》<>（）()，,。.!！?？:：;；]"
+        token_pattern = re.compile(rf"{tokens}|{punctuation}")
+        position, has_action = 0, False
+        # Consume each token once. A repeated-alternation fullmatch would allow
+        # exponential backtracking for overlapping phrases such as 显示原图.
+        while position < len(remainder):
+            match = token_pattern.match(remainder, position)
+            if match is None:
+                return False
+            has_action = has_action or match.group() in cls._FILE_PREVIEW_ACTION_MARKERS
+            position = match.end()
+        return has_action
 
     @staticmethod
     def _is_catalog_metadata_request(user_message: str) -> bool:
@@ -1659,7 +1838,8 @@ class PlanActFlow(BaseFlow):
 
     @staticmethod
     def _requests_downloadable_result(user_message: str) -> bool:
-        normalized = " ".join((user_message or "").casefold().split())
+        from app.domain.services.analysis_request_contract import affirmative_request_text
+        normalized = affirmative_request_text(user_message)
         markers = (
             "下载", "导出", "保存", "生成报告", "分析报告", "输出文件", "生成 csv",
             "生成csv", "生成 json", "生成json", "生成 markdown", "生成markdown",
@@ -1804,7 +1984,8 @@ class PlanActFlow(BaseFlow):
     @staticmethod
     def _dataset_requested_dimensions(user_message: str) -> list[str]:
         """Extract a stable analysis checklist without dataset-specific tuning."""
-        normalized = " ".join((user_message or "").casefold().split())
+        from app.domain.services.analysis_request_contract import affirmative_request_text
+        normalized = affirmative_request_text(user_message)
         dimensions: list[str] = []
         marker_groups = (
             (
@@ -2104,7 +2285,8 @@ class PlanActFlow(BaseFlow):
             f"- Local timezone: {timezone_name}\n"
             f"- Current UTC time: {now_utc.isoformat()}\n"
             f"- Current Unix timestamp: {int(now_utc.timestamp())}\n"
-            "</runtime_context>"
+            "</runtime_context>\n"
+            + getattr(self, "_analysis_runtime_prompt", "")
         )
 
     def _load_subagents(self, agent_profile_config: dict) -> list[AgentSubAgentConfig]:
@@ -2123,17 +2305,18 @@ class PlanActFlow(BaseFlow):
         return subagents or default_subagents()
 
     def _agent_llm_overrides(self, base_overrides: dict, agent_key: str) -> dict:
+        from app.domain.services.model_route import merge_model_route_overrides
         overrides = dict(base_overrides or {})
         if agent_key == "planner":
             planner_config = self.agent_profile_config.get("planner_config") if isinstance(self.agent_profile_config, dict) else None
             if isinstance(planner_config, dict):
-                overrides.update({key: value for key, value in planner_config.items() if value is not None})
+                overrides = merge_model_route_overrides(get_settings(), overrides, planner_config)
             return overrides
 
         subagent = self.enabled_subagents.get(agent_key)
         if not subagent:
             return overrides
-        overrides.update({key: value for key, value in subagent.model_settings.items() if value is not None})
+        overrides = merge_model_route_overrides(get_settings(), overrides, subagent.model_settings)
         if subagent.system_prompt:
             overrides["system_prompt"] = subagent.system_prompt
         return overrides
@@ -2209,10 +2392,18 @@ class PlanActFlow(BaseFlow):
 
     def _render_session_context(
         self,
-        events: list[BaseEvent],
+        events: list[BaseEvent] | ExecutionHistory,
         *,
         current_user_message: str | None = None,
+        dataset_ids: set[str] | None = None,
+        input_file_ids: set[str] | None = None,
     ) -> str:
+        scoped_results = (analysis_history_steps(events, dataset_ids=dataset_ids,
+                                                input_file_ids=input_file_ids)
+                          if dataset_ids is not None and input_file_ids is not None else None)
+        projection = events if isinstance(events, ExecutionHistory) else None
+        if projection is not None:
+            events = []
         current_event_index: int | None = None
         if current_user_message:
             # The current user event is persisted before the flow starts. Exclude
@@ -2231,6 +2422,7 @@ class PlanActFlow(BaseFlow):
         conversation: list[tuple[str, str]] = []
         vision_results: list[str] = []
         analysis_results: list[tuple[str, tuple[str, ...]]] = []
+        analysis_assessments: dict[tuple[str, tuple[str, ...]], dict[str, str]] = {}
         seen_analysis_results: set[tuple[str, tuple[str, ...]]] = set()
         spill_references: list[dict[str, Any]] = []
         seen_spill_locators: set[str] = set()
@@ -2269,11 +2461,32 @@ class PlanActFlow(BaseFlow):
                     path for path in step.attachments[:8] if isinstance(path, str) and path
                 )
                 key = (result, attachments)
+                if has_user_evaluated_result(step):
+                    analysis_assessments[key] = {"mode": "user_evaluated", "scientific_review": "not_performed"}
                 if key in seen_analysis_results:
                     continue
                 seen_analysis_results.add(key)
                 analysis_results.append(key)
 
+        if projection is not None:
+            conversation = projection.context_conversation(current_user_message)
+            vision_results = projection.vision_results
+            analysis_results = projection.analysis_results
+            spill_references = projection.spill_references
+            for steps in projection.contextual_steps_by_plan.values():
+                for step in steps:
+                    if has_user_evaluated_result(step):
+                        analysis_assessments[(step.result, tuple(step.attachments[:8]))] = {
+                            "mode": "user_evaluated", "scientific_review": "not_performed"}
+        if scoped_results is not None:
+            # Follow-ups can explain prior executed results without model
+            # self-approval. Exact scope and non-certification remain explicit.
+            analysis_results = [(step.result, tuple(step.attachments[:8]))
+                                for step in reversed(scoped_results)]
+            for step in scoped_results:
+                if has_user_evaluated_result(step):
+                    analysis_assessments[(step.result, tuple(step.attachments[:8]))] = {
+                        "mode": "user_evaluated", "scientific_review": "not_performed"}
         conversation = conversation[-self.MAX_SESSION_CONTEXT_MESSAGES:]
         rendered_messages_reversed: list[dict[str, str]] = []
         remaining_bytes = self.MAX_SESSION_CONTEXT_BYTES
@@ -2310,6 +2523,7 @@ class PlanActFlow(BaseFlow):
                     self.MAX_SESSION_CONTEXT_MESSAGE_BYTES,
                 ),
                 attachments,
+                analysis_assessments.get((result, attachments)),
             )
             for result, attachments in analysis_results[-3:]
         ]
@@ -2326,14 +2540,17 @@ class PlanActFlow(BaseFlow):
         # a SystemMessage or concatenate it with trusted instructions.
         payload = {
             "schema": "session_history/v1",
+            "evidence_scope": "historical_context_only",
+            "current_execution_evidence": False,
             "messages": rendered_messages,
             "prior_vision_results": rendered_vision_results,
             "prior_analysis_results": [
                 {
                     "result": result,
                     "attachments": list(attachments),
+                    **({"assessment": assessment} if assessment is not None else {}),
                 }
-                for result, attachments in rendered_analysis_results
+                for result, attachments, assessment in rendered_analysis_results
             ],
             # Only opaque, session-authorized references are replayed. Raw
             # output and even its bounded preview stay out of future prompts.

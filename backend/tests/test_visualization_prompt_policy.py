@@ -29,19 +29,23 @@ def test_execution_prompt_prefers_bounded_shell_and_preinstalled_archives():
     assert "dataset_unpack" in prompt
     for command in ("zip", "unzip", "unrar", "7z"):
         assert command in prompt
-    assert "Runtime dependency installation is forbidden" in prompt
+    assert "All libraries and APIs are allowed" in prompt
 
 
-def test_analysis_prompts_forbid_runtime_dependency_installation_and_advertise_raster_stack():
+def test_analysis_prompts_allow_all_libraries_apis_and_dependency_preparation():
     system_prompt, execution_prompt = _rendered_prompts()
-    for command in ("apt", "pip", "uv add", "npm install"):
-        assert command in execution_prompt
-    assert "Runtime dependency installation is forbidden" in execution_prompt
+    for prompt in (system_prompt, execution_prompt):
+        assert "All libraries and APIs are allowed" in prompt
+        assert "Prepare missing dependencies in the task's isolated environment" in prompt
+        assert "read-only inputs" in prompt
+        assert "Runtime dependency installation is forbidden" not in prompt
+        assert "Never run `apt`" not in prompt
+        assert "instead of installing anything" not in prompt
+        assert "rasterio" in prompt
+        for command in ("apt", "pip", "uv add", "npm install"):
+            assert command in prompt
     assert "from osgeo import gdal" in execution_prompt
     assert "preinstalled rasterio or GDAL" in execution_prompt
-    assert "rasterio" in system_prompt
-    assert "Never run `apt`" in system_prompt
-    assert "Install only uncommon missing dependencies" not in system_prompt
 
 
 def test_analysis_prompts_advertise_the_offline_geoscience_stack():

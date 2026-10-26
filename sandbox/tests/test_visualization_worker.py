@@ -159,6 +159,41 @@ def test_netcdf_series_keeps_coordinate_precision(tmp_path):
     assert len(set(result["x"])) == 3
 
 
+def test_netcdf_preserves_float64_values_and_explicit_time_semantics(tmp_path):
+    values = [1.00000000001, 1.00000000002, 10000000001.0]
+    def build(dataset):
+        dataset.createDimension("time", 3)
+        time = dataset.createVariable("time", "f8", ("time",)); time[:] = [0, 1, 2]
+        time.units = "days since 2000-01-01"; time.calendar = "360_day"
+        signal = dataset.createVariable("signal", "f8", ("time",)); signal[:] = values; signal.units = "K"
+    result = worker.preview_bytes(netcdf_bytes(tmp_path, build), "netcdf", "series")
+    assert result["y"] == values
+    assert result["metadata"]["value_semantics"] == "physical"
+    assert result["metadata"]["units"] == "K" and result["metadata"]["calendar"] == "360_day"
+    assert result["metadata"]["coordinate_units"] == "days since 2000-01-01"
+    assert result["x"] == [0, 1, 2]  # Never silently reinterpret a non-Gregorian calendar.
+
+
+def test_fits_sampled_image_preserves_source_pixel_coordinates_and_value_precision():
+    image = np.arange(129 * 1025, dtype=np.float64).reshape(129, 1025)
+    image[0, 0] = 1.00000000001
+    data = fits_bytes(fits.PrimaryHDU(image))
+    result = worker.preview_bytes(data, "fits", "image")
+    assert result["x"] == list(range(0, 1025, 9))
+    assert result["y"] == list(range(0, 129, 2))
+    assert result["metadata"]["source_shape"] == [129, 1025]
+    assert result["metadata"]["strides"] == [2, 9]
+    assert result["values"] == image[::2, ::9].ravel().tolist()
+    assert result["metadata"]["axis_coordinates"] == "source pixel indices"
+    assert result["sampled"] is True
+
+
+@pytest.mark.parametrize("value", [2**53, -(2**53), 2**63 - 1])
+def test_scientific_integer_values_do_not_silently_lose_precision(value):
+    with pytest.raises(worker.PreviewError, match="精确"):
+        worker.numbers(np.array([value], dtype=np.int64))
+
+
 @pytest.mark.parametrize("reference_attribute", ["bounds", "climatology", "ancillary_variables"])
 def test_netcdf_default_prefers_actual_data_over_cf_auxiliary(tmp_path, reference_attribute):
     def build(dataset):
@@ -337,6 +372,11 @@ def test_fastq_quality_is_position_weighted_and_explicit_encoding():
     assert result["metadata"]["gc_percent"] == 66.667
     assert result["metadata"]["reads_sampled"] == 2
     assert "Phred+33" in result["metadata"]["quality_encoding"]
+    assert result["metadata"]["value_semantics"] == "derived"
+    assert result["metadata"]["units"] == "Phred+33"
+    assert result["metadata"]["calendar"] == ""
+    assert result["metadata"]["coordinate_semantics"] == "one-based read positions"
+    assert result["metadata"]["missing_value_policy"] == "positions without contributing reads are omitted; counts vary by position"
     assert result["sampled"] is False
 
 

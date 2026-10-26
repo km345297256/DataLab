@@ -25,6 +25,7 @@ REPAIR_REASONS = frozenset({
     "execution_not_confirmed", "invalid_validation_evidence", "protected_artifact_changed",
     "validation_not_locally_repairable", "artifact_repair_no_progress",
     "delivery_failed",
+    "semantic_artifact_unresolved",
 })
 
 
@@ -71,14 +72,20 @@ def _receipt(value: object) -> dict:
     valid = item.get("valid") is True
     suffix = PurePosixPath(path).suffix.lower().lstrip(".") if path else ""
     format_matches = kind in KINDS and (suffix in KINDS[kind] or (kind == "table" and suffix == "json"))
-    if valid and path is not None and digest is not None and size and format_matches:
-        reason = "validated"
+    metadata = item.get("metadata")
+    delivery_only = (isinstance(metadata, dict) and metadata.get("validation_scope") == "file_integrity"
+                     and metadata.get("content_validation") == "not_performed")
+    if (valid and path is not None and digest is not None and size is not None
+            and (size > 0 or delivery_only) and kind in KINDS and (format_matches or delivery_only)):
+        reason = "delivery_ready" if delivery_only else "validated"
     elif item.get("valid") is False and isinstance(reason, str) and reason in ARTIFACT_ISSUE_REASONS:
         valid = False
     else:
         valid, reason = False, "validation_receipt_invalid"
     return {"path": path, "valid": valid, "kind": kind, "reason": reason,
-            "sha256": digest, "size": size, "diagnostics": safe_diagnostics(item.get("diagnostics"))}
+            "sha256": digest, "size": size, "diagnostics": safe_diagnostics(item.get("diagnostics")),
+            **({"validation_scope": "file_integrity", "content_assessment": "user_evaluated"}
+               if valid and delivery_only else {})}
 
 
 def _requirements(values) -> list[dict]:
@@ -115,7 +122,7 @@ class AnalysisDeliveryAuditStore:
 
     async def record(self, *, user_id, session_id, input_seq, step_id,
                      records, requirements, outcome, repair_reason) -> None:
-        """Persist one check. The caller owns its cancellation/3-second timeout.
+        """Persist one check. The caller owns cancellation, without an elapsed cutoff.
 
         No receipt list is embedded in a Mongo document, and only one bounded
         batch is retained locally. Invalid raw fields are discarded, not logged.

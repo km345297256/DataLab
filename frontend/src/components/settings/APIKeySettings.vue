@@ -21,7 +21,7 @@
         <div class="flex flex-col gap-2">
           <label class="text-xs text-[var(--text-secondary)]">{{ t('Name') }}</label>
           <div
-            class="group rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-9 flex items-center gap-[10px] bg-[var(--fill-tsp-white-main)] px-3 focus-within:ring-[1.5px] focus-within:ring-[var(--border-dark)] w-full sm:w-[300px]">
+            class="control-shell group rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-9 flex items-center gap-[10px] bg-[var(--fill-tsp-white-main)] px-3 w-full sm:w-[300px]">
             <input
               v-model="newKeyName"
               class="h-full flex-1 bg-transparent placeholder:text-[var(--text-disable)]"

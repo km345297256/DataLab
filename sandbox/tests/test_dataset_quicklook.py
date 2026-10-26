@@ -5,16 +5,262 @@ from pathlib import Path
 import subprocess
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
 from scripts.dataset_quicklook import (
     Limits,
+    PlotCollector,
     QuicklookError,
     _quicklook_evidence,
+    _read_delimited,
     generate_quicklook,
 )
+
+
+@pytest.mark.parametrize("extension", ["csv", "xlsx"])
+@pytest.mark.parametrize("chart_formats", [None, ["svg"], ["png", "svg", "svg"]])
+def test_native_chart_exports_preserve_tabular_values_and_source(tmp_path, extension, chart_formats):
+    headers = ["Energy (GeV)", "Flux [cm^-2]", "Flux [cm^-2]", "", "E label"]
+    rows = [
+        ["1.0e-3", "4.2E+2", "-3e-2", "10", "1e"],
+        ["2.0e-3", "8.4E+2", "-6e-2", "20", "E2"],
+        ["3.0e-3", "1.26E+3", "-9e-2", "30", "E3"],
+    ]
+    source = tmp_path / f"observations.{extension}"
+    if extension == "csv":
+        import csv
+        with source.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerows([headers, *rows])
+    else:
+        from openpyxl import Workbook
+        workbook = Workbook()
+        for row in [headers, *rows]:
+            workbook.active.append(row)
+        workbook.save(source)
+        workbook.close()
+    original = source.read_bytes()
+    output = tmp_path / "output"
+    manifest = generate_quicklook(source, output, Limits(max_plots=1), chart_formats=chart_formats)
+
+    expected_formats = list(dict.fromkeys(chart_formats or ["png"]))
+    assert manifest["chart_formats"] == expected_formats
+    assert manifest["summary"]["plot_count"] == 1
+    assert manifest["summary"]["plot_file_count"] == len(expected_formats)
+    assert source.read_bytes() == original
+    dataset = manifest["datasets"][0]
+    table = dataset["sheets"][0]["table"] if extension == "xlsx" else dataset["table"]
+    assert table["rows_sampled"] == 3
+    assert [column["name"] for column in table["columns"]] == [
+        "Energy (GeV)", "Flux [cm^-2]", "Flux [cm^-2]_2", "column_4", "E label",
+    ]
+    assert [column["statistics"]["mean"] for column in table["columns"][:4]] == pytest.approx(
+        [0.002, 840.0, -0.06, 20.0]
+    )
+    assert table["columns"][4]["dtype"] == "text"
+    assert {item["value"] for item in table["columns"][4]["top_values"]} == {"1e", "E2", "E3"}
+    charts = [item for item in manifest["artifacts"] if item.get("role") == "visualization"]
+    assert len(charts) == len(expected_formats)
+    markdown = (output / "quicklook_summary.md").read_text(encoding="utf-8")
+    for chart in charts:
+        path = output / chart["path"]
+        assert chart["path"] in markdown
+        assert path.stat().st_size == chart["size"] > 0
+        if path.suffix == ".svg":
+            assert chart["media_type"] == "image/svg+xml"
+            root = ET.parse(path).getroot()
+            assert root.tag == "{http://www.w3.org/2000/svg}svg"
+            assert len(root.findall(".//{http://www.w3.org/2000/svg}path")) > 20
+            # Histograms and text are real vector paths, not an embedded PNG.
+            assert not root.findall(".//{http://www.w3.org/2000/svg}image")
+        else:
+            from PIL import Image
+            assert chart["media_type"] == "image/png"
+            with Image.open(path) as rendered:
+                rendered.verify()
+
+
+def test_native_format_count_does_not_reduce_number_of_distinct_charts(tmp_path):
+    source = tmp_path / "values.csv"
+    source.write_text("x,y\n1,2\n2,4\n3,6\n", encoding="utf-8")
+    manifest = generate_quicklook(
+        source, tmp_path / "output", Limits(max_plots=2), chart_formats=["png", "svg"],
+    )
+    charts = [item for item in manifest["artifacts"] if item.get("role") == "visualization"]
+    assert manifest["summary"]["plot_count"] == 2
+    assert manifest["summary"]["plot_file_count"] == 4
+    assert len(charts) == 4
+    assert len({Path(item["path"]).stem for item in charts}) == 2
+    # Exercise the same explicit content inspector as custom scripts. Both
+    # the vector histogram and heatmap (which legitimately contains an image
+    # layer) must remain safe, readable output files.
+    from app.services.artifact_validation import validate_artifacts
+    output = tmp_path / "output"
+    receipts = validate_artifacts(
+        [{"path": str(output / item["path"]), "kind": "image"} for item in charts], root=output, purpose="content",
+    )["files"]
+    assert all(item["valid"] for item in receipts), receipts
+    assert {item["metadata"]["format"] for item in receipts} == {"PNG", "SVG"}
+
+
+@pytest.mark.parametrize("formats", [[], ["pdf"], ["png", "html"], ["svg;touch nope"], "svg", [["svg"]]])
+def test_invalid_chart_formats_fail_before_creating_output(tmp_path, formats):
+    source = tmp_path / "values.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+    with pytest.raises(QuicklookError, match="chart_formats"):
+        generate_quicklook(source, tmp_path / "output", chart_formats=formats)
+    assert not (tmp_path / "output").exists()
+    assert not list(tmp_path.glob(".output.tmp-*"))
+
+
+def test_export_failure_does_not_publish_a_partial_format_set(tmp_path):
+    class Figure:
+        def savefig(self, target, *, format, **kwargs):
+            Path(target).write_bytes(b"partial")
+            if format == "svg":
+                raise OSError("export failed")
+
+    from unittest.mock import patch
+    collector = PlotCollector(tmp_path, 2, ["png", "svg"])
+    with patch("scripts.dataset_quicklook.plt.close") as close:
+        with pytest.raises(OSError, match="export failed"):
+            collector.save(Figure(), stem="chart", title="chart", source="values.csv")
+    close.assert_called_once()
+    assert collector.remaining == 2
+    assert collector.artifacts == []
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "utf-16-be", "utf-32", "gb18030"])
+def test_delimited_preserves_chinese_headers_and_values(tmp_path, encoding):
+    source = tmp_path / "observations.csv"
+    data = "站点,温度\n北京,12\n上海,18\n".encode(encoding)
+    if encoding == "utf-16-be":
+        data = b"\xfe\xff" + data
+    source.write_bytes(data)
+    frame, _ = _read_delimited(source, "csv", Limits())
+    assert list(frame.columns) == ["站点", "温度"]
+    assert frame["站点"].tolist() == ["北京", "上海"]
+    assert frame["温度"].tolist() == [12, 18]
+
+
+def test_delimited_duplicate_headers_do_not_collide_with_explicit_suffixes(tmp_path):
+    source = tmp_path / "duplicate.csv"
+    source.write_text("a,a,a_2,a_2_2\n1,2,3,4\n", encoding="utf-8")
+    manifest = generate_quicklook(source, tmp_path / "output", Limits(max_plots=0))
+    columns = manifest["datasets"][0]["table"]["columns"]
+    assert len({column["name"] for column in columns}) == 4
+    assert [column["statistics"]["mean"] for column in columns] == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-32", "gb18030"])
+def test_delimited_byte_budget_never_profiles_a_partial_quoted_record(tmp_path, encoding):
+    source = tmp_path / "multiline.csv"
+    prefix = '站点,温度\n北京,12\n"第一行\n第二'
+    source.write_bytes((prefix + '行",99\n上海,18\n').encode(encoding))
+    frame, metadata = _read_delimited(
+        source, "csv", Limits(max_text_bytes=len(prefix.encode(encoding)) - 1)
+    )
+    assert frame["站点"].tolist() == ["北京"]
+    assert frame["温度"].tolist() == [12]
+    assert metadata["byte_truncated"] is True
+
+
+def test_delimited_wide_table_declares_column_truncation(tmp_path):
+    source = tmp_path / "wide.csv"
+    source.write_text("x,y,z\n1,2,3\n", encoding="utf-8")
+    manifest = generate_quicklook(source, tmp_path / "output", Limits(max_columns=2, max_plots=0))
+    dataset = manifest["datasets"][0]
+    assert dataset["table"]["columns_profiled"] == 2
+    assert dataset["table"]["truncated"] is True
+    assert dataset["read"]["column_truncated"] is True
+
+
+def test_delimited_blank_lines_do_not_create_phantom_missing_records(tmp_path):
+    source = tmp_path / "blank-lines.csv"
+    source.write_text("\n\nx,y\n1,2\n\n3,4\n\n", encoding="utf-8")
+    frame, _ = _read_delimited(source, "csv", Limits())
+    assert frame.shape == (2, 2)
+    assert frame["x"].tolist() == [1, 3]
+
+
+def test_delimited_rejects_unterminated_quoted_record_in_complete_input(tmp_path):
+    source = tmp_path / "broken.csv"
+    source.write_text('x,y\n1,"unfinished\n', encoding="utf-8")
+    with pytest.raises(QuicklookError, match="record"):
+        _read_delimited(source, "csv", Limits())
+
+
+def test_delimited_complete_multiline_record_preserves_quotes_and_final_row(tmp_path):
+    source = tmp_path / "quoted.csv"
+    source.write_text('station,value\r\n"first\nsecond ""quoted""",12\r\nlast,18', encoding="utf-8")
+    frame, metadata = _read_delimited(source, "csv", Limits())
+    assert frame["station"].tolist() == ['first\nsecond "quoted"', "last"]
+    assert frame["value"].tolist() == [12, 18]
+    assert metadata["byte_truncated"] is False
+
+
+@pytest.mark.parametrize("tail", ['3,"unfinished\n', '3,' + 'x' * 150_000 + '\n'])
+def test_delimited_row_budget_does_not_parse_unsampled_records(tmp_path, tail):
+    source = tmp_path / "bounded.csv"
+    source.write_text("x,y\n1,2\n" + tail, encoding="utf-8")
+    frame, metadata = _read_delimited(source, "csv", Limits(max_rows_per_table=1))
+    assert frame.to_numpy().tolist() == [[1, 2]]
+    assert metadata["row_truncated"] is True
+
+
+def test_delimited_trailing_blank_lines_do_not_claim_truncated_rows(tmp_path):
+    source = tmp_path / "bounded.csv"
+    source.write_text("x,y\n1,2\n\n\n", encoding="utf-8")
+    frame, metadata = _read_delimited(source, "csv", Limits(max_rows_per_table=1))
+    assert len(frame) == 1
+    assert metadata["row_truncated"] is False
+
+
+def test_delimited_rejects_extra_fields_instead_of_discarding_measurements(tmp_path):
+    source = tmp_path / "extra.csv"
+    source.write_text("x,y\n1,2,3\n", encoding="utf-8")
+    with pytest.raises(QuicklookError, match="more columns"):
+        _read_delimited(source, "csv", Limits())
+
+
+@pytest.mark.parametrize("data", [b"", b"\xff\xfe\x41", b"x,y\n1,\x00\n"])
+def test_delimited_empty_or_invalid_unicode_fails_without_publishing_output(tmp_path, data):
+    source = tmp_path / "invalid.csv"
+    source.write_bytes(data)
+    output = tmp_path / "output"
+    with pytest.raises(QuicklookError):
+        generate_quicklook(source, output, Limits(max_plots=0))
+    assert not output.exists()
+    assert not list(tmp_path.glob(".output.tmp-*"))
+
+
+@pytest.mark.parametrize("shape", [(1, 100_000), (100_000, 1), (2, 100_000)])
+def test_narrow_raster_sample_respects_pixel_budget(tmp_path, shape):
+    import rasterio
+    from rasterio.transform import from_origin
+    source = tmp_path / "narrow.tif"
+    height, width = shape
+    with rasterio.open(source, "w", driver="GTiff", width=width, height=height,
+                       count=1, dtype="float32", transform=from_origin(100, 40, .01, .01)) as raster:
+        raster.write(np.ones(shape, dtype="float32"), 1)
+    manifest = generate_quicklook(source, tmp_path / "output", Limits(max_raster_pixels=100, max_plots=0))
+    assert manifest["datasets"][0]["sampling"]["pixels_per_band"] <= 100
+
+
+@pytest.mark.parametrize("format", ["NETCDF3_CLASSIC", "NETCDF3_64BIT_OFFSET", "NETCDF3_64BIT_DATA"])
+def test_netcdf_classic_quicklook_uses_a_compatible_reader(tmp_path, format):
+    xr = pytest.importorskip("xarray")
+    source = tmp_path / "classic.nc"
+    xr.Dataset({"temperature": ("station", [10., 15., 20.])}).to_netcdf(
+        source, engine="netcdf4", format=format,
+    )
+    manifest = generate_quicklook(source, tmp_path / "output", Limits(max_plots=0))
+    assert manifest["datasets"][0]["sampled_variable"] == "temperature"
+    assert manifest["datasets"][0]["sampled_values"] == 3
 
 
 def _artifact_paths(output: Path, manifest: dict) -> list[Path]:
@@ -683,7 +929,8 @@ def test_cli_returns_nonzero_and_json_error_for_unsupported_input(tmp_path):
     assert "unsupported input" in payload["error"]
 
 
-def test_cli_returns_compact_evidence_for_one_turn_model_answer(tmp_path):
+@pytest.mark.parametrize("formats", [None, ["svg"]])
+def test_cli_returns_compact_evidence_for_one_turn_model_answer(tmp_path, formats):
     source = tmp_path / "values.csv"
     source.write_text(
         "年份,区域,降水量\n2019,北,10\n2020,北,20\n2021,南,30\n",
@@ -700,6 +947,7 @@ def test_cli_returns_compact_evidence_for_one_turn_model_answer(tmp_path):
             str(tmp_path / "out"),
             "--max-plots",
             "2",
+            *(["--chart-formats", *formats] if formats else []),
         ],
         check=False,
         capture_output=True,
@@ -713,7 +961,7 @@ def test_cli_returns_compact_evidence_for_one_turn_model_answer(tmp_path):
     assert payload["artifacts"]
     assert payload["artifacts"][0]["path"] in payload["files"]
     assert payload["artifacts"][0]["title"]
-    assert payload["artifacts"][0]["media_type"] == "image/png"
+    assert payload["artifacts"][0]["media_type"] == ("image/svg+xml" if formats else "image/png")
     assert payload["evidence"]["datasets"][0]["table"]["columns"][2][
         "statistics"
     ]["mean"] == 20.0

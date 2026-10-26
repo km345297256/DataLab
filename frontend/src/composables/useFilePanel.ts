@@ -2,7 +2,7 @@ import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { Router } from 'vue-router'
 import type { FileInfo } from '../api/file'
 import { eventBus } from '../utils/eventBus.ts'
-import { EVENT_SHOW_FILE_PANEL } from '../constants/event.ts'
+import { EVENT_SHOW_FILE_PANEL, EVENT_HIDE_FILE_PANEL } from '../constants/event.ts'
 
 const isShow = ref(false)
 const visible = ref(true)
@@ -16,7 +16,9 @@ const resetFilePanel = () => {
   fileInfo.value = undefined
   relatedFiles.value = []
   visible.value = true
+  eventBus.emit(EVENT_HIDE_FILE_PANEL)
 }
+eventBus.on('auth:cleared', resetFilePanel)
 
 // Layout components may be replaced entirely during navigation. Their watchers
 // cannot own the lifetime of this shared state.

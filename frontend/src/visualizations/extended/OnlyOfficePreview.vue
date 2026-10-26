@@ -17,6 +17,7 @@
 import { onMounted, onScopeDispose, ref } from 'vue';
 import type { FileInfo } from '../../api/file';
 import { BASE_URL } from '../../api/client';
+import { authenticatedApiFetch } from '../../utils/authenticatedFetch';
 import type { VisualizationPlugin } from '../contract';
 import { requestVisualization } from '../runtime';
 import { usePreviewLoad } from '../../composables/usePreviewLoad';
@@ -28,7 +29,7 @@ const busy = ref(false), error = ref(''), expanded = ref(false);
 const loads = usePreviewLoad();
 async function revoke(lease: string) {
   try {
-    await fetch(`${BASE_URL}/office-viewer/leases/${encodeURIComponent(lease)}/revoke`, {
+    await authenticatedApiFetch(BASE_URL, `${BASE_URL}/office-viewer/leases/${encodeURIComponent(lease)}/revoke`, {
       method: 'POST', credentials: 'same-origin', keepalive: true,
       headers: { 'X-Visualization-Action': 'revoke' },
     });

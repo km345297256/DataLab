@@ -104,7 +104,7 @@ def test_visualization_protocol_rejects_unsafe_or_inconsistent_descriptors(updat
 def test_all_shipped_manifests_match_python_and_file_selection():
     directory = Path(__file__).resolve().parents[2] / "plugin-host" / "visualizations"
     plugins = [VisualizationPlugin.model_validate_json(path.read_text()) for path in directory.glob("*.json")]
-    assert len(plugins) == 83
+    assert len(plugins) == 84
     assert all(plugin.contract_version == 2 for plugin in plugins)
     assert all(plugin.capabilities.operations for plugin in plugins)
     assert all(not plugin.adapter.startswith("v2-") for plugin in plugins)
@@ -117,6 +117,10 @@ def test_all_shipped_manifests_match_python_and_file_selection():
     assert next(plugin for plugin in plugins if plugin.id == "molecular").matches_filename("POSCAR")
     assert next(plugin for plugin in plugins if plugin.id == "text").limits.max_input_bytes == 65536
     assert next(plugin for plugin in plugins if plugin.id == "csv").limits.max_input_bytes == 131072
+    svg = next(plugin for plugin in plugins if plugin.id == "viz-svg")
+    assert svg.matches_filename("plot.SVG")
+    assert svg.reader == "svg" and svg.capabilities.operations == ["preview"]
+    assert not next(plugin for plugin in plugins if plugin.id == "image").matches_filename("plot.svg")
 
 
 def test_contract_supports_explicit_compound_suffix_without_enabling_unsupported_readers():

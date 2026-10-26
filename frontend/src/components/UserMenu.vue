@@ -12,9 +12,9 @@
                     </div>
                     <div class="flex overflow-hidden flex-col justify-center">
                         <div class="flex gap-1 items-center w-full"><span
-                                class="text-[var(--text-primary)] text-base font-semibold leading-[22px] truncate">DataLab</span></div><span
+                                class="text-[var(--text-primary)] text-base font-semibold leading-[22px] truncate">{{ currentUser?.fullname || 'DataLab' }}</span></div><span
                             class="text-[var(--text-tertiary)] text-[13px] font-normal leading-[18px] truncate">{{
-                                t('Settings') }}</span>
+                                currentUser?.email }}</span>
                     </div>
                 </div>
                 <div class="flex flex-col gap-3 px-3 pb-3">
@@ -30,6 +30,9 @@
                                 class="overflow-hidden flex-1 text-sm font-medium leading-5 whitespace-nowrap text-ellipsis">{{
                                 t('Settings') }}</span>
                         </div>
+                        <button type="button" class="flex gap-3 items-center p-2 rounded-lg text-left text-sm text-[var(--function-error)] hover:bg-[var(--fill-tsp-white-main)]" @click="logout()">
+                            <LogOut :size="20" />退出登录
+                        </button>
                     </div>
                 </div>
             </div>
@@ -40,11 +43,14 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import { useSettingsDialog } from '../composables/useSettingsDialog';
-import { Settings2 } from 'lucide-vue-next';
+import { Settings2, LogOut } from 'lucide-vue-next';
+import { computed } from 'vue';
+import { useAuth } from '../composables/useAuth';
 
 const { t } = useI18n();
 const { openSettingsDialog } = useSettingsDialog();
-const avatarLetter = 'A';
+const { currentUser, logout } = useAuth();
+const avatarLetter = computed(() => currentUser.value?.fullname?.charAt(0)?.toUpperCase() || 'D');
 
 // Handle Settings click - open settings dialog with settings tab
 const handleSettingsClick = () => {

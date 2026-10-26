@@ -1,6 +1,6 @@
 """Private host-observed execution receipts; completion is not replay permission.
 
-Only trusted shell adapters register operations or observe protocol responses.
+Only trusted adapters and host dispatch control flow register execution facts.
 Neither model messages nor arbitrary plugin result dictionaries enter this
 ledger. Public summaries contain counts and state only, never operation tokens.
 """
@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import hashlib
+import inspect
 import json
 import math
 import posixpath
@@ -67,6 +68,7 @@ class ShellExecutionAttempt:
     observation_block_reason: str | None = None
     query_in_flight: bool = field(default=False, repr=False)
     last_query_at: float = field(default=0, repr=False)
+    program_execution: dict[str, Any] | None = field(default=None, repr=False)
 
     def belongs_to_call(self, tool_call_id: str) -> bool:
         return self.tool_call_id == tool_call_id or tool_call_id in self.observer_call_ids
@@ -123,6 +125,22 @@ class ToolExecutionLedger:
         self._attempts: dict[str, ShellExecutionAttempt] = {}
         self._unknown_calls: set[str] = set()
         self._nonreplayable_calls: set[str] = set()
+        self._confirmed_no_effect_calls: dict[str, Literal["not_started", "confirmed_terminal"]] = {}
+
+    def record_no_effect(self, tool_call_id: str, *, state: Literal["not_started", "confirmed_terminal"]) -> bool:
+        """Host-only proof for this invocation, never returned tool metadata.
+
+        A pre-dispatch rejection and a completed no-op are distinct business
+        failures, but neither leaves an unobserved mutation. They must never
+        erase an earlier unknown or other operation sharing a reused call ID.
+        This proof does not ask the Agent to retry the failed invocation.
+        """
+        if (state not in {"not_started", "confirmed_terminal"}
+                or self.has_attempts(tool_call_id) or tool_call_id in self._unknown_calls
+                or tool_call_id in self._nonreplayable_calls):
+            return False
+        self._confirmed_no_effect_calls[tool_call_id] = state
+        return True
 
     def register(self, attempt: ShellExecutionAttempt) -> None:
         if (sum(not previous.confirmed for previous in self._attempts.values()) >= self.MAX_PENDING_OPERATIONS
@@ -181,18 +199,19 @@ class ToolExecutionLedger:
 
     def failure_state(self, tool_call_id: str, fallback: str = "unknown") -> str:
         if not self.has_attempts(tool_call_id):
-            return "unknown" if tool_call_id in self._unknown_calls else fallback
+            return ("unknown" if tool_call_id in self._unknown_calls else
+                    self._confirmed_no_effect_calls.get(tool_call_id, fallback))
         summary = self.call_summary(tool_call_id)
         if summary["pending_execution"]:
             return "unknown"
         return "not_started" if summary["replay_safe"] else "confirmed_terminal"
 
-    async def reconcile_pending(self, *, max_operations: int = 4, timeout_seconds: float = 3,
+    async def reconcile_pending(self, *, max_operations: int = 4, timeout_seconds: float | None = None,
                                 phase: Literal["intermediate", "final"] = "intermediate") -> dict[str, Any]:
-        # Hard local ceilings apply even when a caller supplies a larger value.
+        # Bound fan-out, not the lifetime of a production status observation.
         limit = max(0, min(max_operations, 8)) if type(max_operations) is int else 0
         duration = (max(0.05, min(timeout_seconds, 5))
-                    if type(timeout_seconds) in {int, float} and math.isfinite(timeout_seconds) else 3)
+                    if type(timeout_seconds) in {int, float} and math.isfinite(timeout_seconds) else None)
         now = time.monotonic()
         selected = [attempt for attempt in sorted(self._attempts.values(), key=lambda item: item.last_query_at)
                     if _can_observe(attempt) and not attempt.query_in_flight
@@ -214,7 +233,7 @@ def _observation_failure_reason(attempt: ShellExecutionAttempt) -> str:
 
 
 async def _bounded_observation_batch(
-    attempts: list[ShellExecutionAttempt], duration: float,
+    attempts: list[ShellExecutionAttempt], duration: float | None,
 ) -> tuple[int, int]:
     """Observe only original operations, with a shared deadline and no replay.
 
@@ -223,7 +242,7 @@ async def _bounded_observation_batch(
     """
     attempted = changed = 0
     tasks: dict[asyncio.Task, ShellExecutionAttempt] = {}
-    deadline = asyncio.get_running_loop().time() + duration
+    deadline = asyncio.get_running_loop().time() + duration if duration is not None else None
 
     async def fetch(attempt: ShellExecutionAttempt):
         nonlocal attempted
@@ -245,7 +264,8 @@ async def _bounded_observation_batch(
         if not tasks:
             return 0, 0
         # Keep a small part of the same hard deadline for cancellation cleanup.
-        done, pending = await asyncio.wait(tasks, timeout=max(0, duration - min(0.05, duration / 5)))
+        done, pending = await asyncio.wait(tasks, timeout=(
+            max(0, duration - min(0.05, duration / 5)) if duration is not None else None))
         for task in done:
             attempt = tasks[task]
             previous = attempt.receipt
@@ -263,7 +283,8 @@ async def _bounded_observation_batch(
             tasks[task].consecutive_query_failures += 1
             task.cancel()
         if pending:
-            await asyncio.wait(pending, timeout=max(0, deadline - asyncio.get_running_loop().time()))
+            await asyncio.wait(pending, timeout=(max(0, deadline - asyncio.get_running_loop().time())
+                                                if deadline is not None else None))
             for task in pending:
                 if not task.done():
                     tasks[task].observation_block_reason = "execution_status_query_unresponsive"
@@ -285,11 +306,58 @@ _SCOPE: ContextVar[tuple[ToolExecutionLedger, str] | None] = ContextVar("trusted
 
 @contextmanager
 def tool_execution_scope(ledger: ToolExecutionLedger, tool_call_id: str):
+    # Reusing a model call ID cannot borrow a prior invocation's no-op proof.
+    # Unknown/completed mutations remain sticky and are deliberately not reset.
+    ledger._confirmed_no_effect_calls.pop(tool_call_id, None)
     token = _SCOPE.set((ledger, tool_call_id))
     try:
         yield
     finally:
         _SCOPE.reset(token)
+
+
+def record_tool_not_dispatched(tool_call_id: str) -> None:
+    """Called by the host pipeline's private dispatch phase, not tool results."""
+    scope = _SCOPE.get()
+    if scope is not None and scope[1] == tool_call_id:
+        scope[0].record_no_effect(tool_call_id, state="not_started")
+
+
+def confirm_file_replace_no_change(sandbox: Any, file: str, result: ToolResult) -> None:
+    """Consume a zero-match response only at the exact core adapter boundary.
+
+    The sandbox file service returns zero before opening the destination for
+    writing. Plugin names, contracts and arbitrary result dictionaries cannot
+    establish this fact. The HTTP adapter also requires a successful transport
+    response before calling this function.
+    """
+    from app.domain.services.tools.base import Tool, _ACTIVE_TOOL_EXECUTION
+    from app.domain.services.tools.file import FileToolkit
+    from app.infrastructure.external.sandbox.docker_sandbox import DockerSandbox
+    from app.infrastructure.external.sandbox.runtime import NodeBoundSandbox, WorkerAgentSandbox
+
+    scope, active = _SCOPE.get(), _ACTIVE_TOOL_EXECUTION.get()
+    if scope is None or active is None:
+        return
+    toolkit, context = active
+    tool = context.tool
+    if (type(toolkit) is not FileToolkit or type(tool) is not Tool
+            or tool.toolkit is not toolkit or tool._tool is not FileToolkit.file_str_replace
+            or not any(registered is tool for registered in toolkit.tools)
+            or context.tool_call_id != scope[1] or context.arguments.get("file") != file
+            # The privileged read path invokes a shell; it is not the plain
+            # read-before-write operation this no-op proof covers.
+            or context.arguments.get("sudo") is not False):
+        return
+    bound = toolkit.sandbox
+    if type(bound) is NodeBoundSandbox:
+        bound = inspect.getattr_static(bound, "sandbox", None)
+    data = result.data if isinstance(result.data, dict) else {}
+    if (bound is not sandbox or type(sandbox) not in {DockerSandbox, WorkerAgentSandbox}
+            or result.success is not False or data.get("file") != file
+            or type(data.get("replaced_count")) is not int or data["replaced_count"] != 0):
+        return
+    scope[0].record_no_effect(scope[1], state="confirmed_terminal")
 
 
 def register_shell_attempt(sandbox: Any, shell_id: str, exec_dir: str, command: str) -> ShellExecutionAttempt | None:

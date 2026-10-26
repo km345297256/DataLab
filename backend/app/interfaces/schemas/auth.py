@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 from app.domain.models.user import UserRole, RegistrationStatus
 
@@ -164,6 +164,22 @@ class UserResponse(BaseModel):
             updated_at=user.updated_at,
             last_login_at=user.last_login_at
         )
+
+
+class UserListResponse(BaseModel):
+    users: list[UserResponse] = Field(default_factory=list)
+    total: int = 0
+
+
+class UserUpdateRequest(BaseModel):
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if self.role is None and self.is_active is None:
+            raise ValueError("A role or account status is required")
+        return self
 
 
 class LoginResponse(BaseModel):

@@ -6,7 +6,7 @@
       <ChevronDown :size="17" :class="expanded ? 'rotate-180' : ''" />
     </button>
     <div v-if="expanded" class="results-body">
-      <p class="text-xs text-[var(--text-secondary)] mb-3">勾选要用于本次实验的数据，再导入沙盒。检索命中不代表已验证研究相关性。</p>
+      <p class="text-xs text-[var(--text-secondary)] mb-3">勾选要用于本次实验的数据，再获取实际文件。检索命中不代表已验证研究相关性。</p>
       <p v-if="!result.resources.length" class="py-3">没有匹配结果，请调整关键词后重试。</p>
       <label v-for="row in result.resources" :key="row.external_id" class="result-row">
         <input v-model="selected" type="checkbox" :value="row.external_id" :disabled="busy || isShare" :aria-label="`选择 ${row.external_id}`" />
@@ -20,10 +20,10 @@
           <label class="flex items-center gap-2"><input type="checkbox" :checked="selected.length === result.resources.length" :disabled="busy" @change="toggleAll" />全选</label>
           <span>已选 {{ selected.length }} / {{ result.resources.length }}</span>
         </div>
-        <p class="text-xs text-[var(--text-secondary)] mb-3">{{ isStudy ? '先查看实际文件，再选择下载。GEO 原始包与处理后数据分开标注；SRA 从 ENA 镜像获取原始 FASTQ。单文件最多 64 MiB。' : '下载 genomic FASTA ZIP 到沙盒，每包最多 32 MiB，每次最多选 3 个。' }}</p>
+        <p class="text-xs text-[var(--text-secondary)] mb-3">{{ isStudy ? '先查看实际文件，再选择下载。GEO 原始包与处理后数据分开标注；SRA 从 ENA 镜像获取原始 FASTQ。单文件最多 64 MiB。' : '下载 genomic FASTA ZIP 到本次分析，每包最多 32 MiB，每次最多选 3 个。' }}</p>
         <div class="flex flex-wrap gap-2">
           <button v-if="isStudy" class="action primary" :disabled="!selected.length || selected.length > 3 || busy || !sessionId" @click="loadOptions">{{ busy ? progress || '正在读取文件列表…' : '查看可下载文件' }}</button>
-          <button v-else class="action primary" :disabled="!selected.length || selected.length > 3 || busy || !sessionId" @click="importSelected('download')"><Download :size="14" />{{ busy ? '正在下载并导入…' : '下载到沙盒' }}</button>
+          <button v-else class="action primary" :disabled="!selected.length || selected.length > 3 || busy || !sessionId" @click="importSelected('download')"><Download :size="14" />{{ busy ? '正在下载并导入…' : '下载到本次分析' }}</button>
           <button class="action" :disabled="!selected.length || busy || !sessionId" @click="importSelected('catalog')">导入检索清单</button>
         </div>
         <div v-if="options.length" class="mt-3 rounded-lg border border-[var(--border-main)] p-3">
@@ -40,21 +40,25 @@
             </span>
           </label>
           </div>
-          <button class="action primary mt-3" :disabled="busy || !selectedFiles.length" @click="downloadFiles">{{ busy ? progress : `下载所选 ${selectedFiles.length} 个文件到沙盒` }}</button>
+          <button class="action primary mt-3" :disabled="busy || !selectedFiles.length" @click="downloadFiles">{{ busy ? progress : `下载所选 ${selectedFiles.length} 个文件到本次分析` }}</button>
         </div>
         <p v-if="error" role="alert" class="text-sm text-red-600 mt-3">{{ error }}</p>
         <div v-if="imported.length" class="mt-3 rounded-lg bg-[var(--background-gray-main)] p-3 text-sm">
-          <p class="font-medium">已导入沙盒 · {{ imported.length }} 个文件</p>
+          <p class="font-medium">{{ importKind === 'catalog' ? '已获取检索清单（仅含元数据）' : '已获取实际文件' }} · {{ imported.length }} 个文件</p>
           <p v-for="file in imported" :key="file.file_id" class="break-all mt-1">{{ file.filename }}</p>
           <button class="action mt-3" @click="prepareAnalysis">用这些文件分析 →</button>
           <p v-if="prepared" class="mt-2 text-xs">文件已放入输入框，请补充分析要求后发送。</p>
+          <button class="action mt-3 ml-2" @click="saveLibraryOpen = true">保存到我的数据</button>
+          <p v-if="savedToLibrary" class="mt-2 text-xs" role="status">已保存到我的数据，可在新的对话中继续使用。</p>
         </div>
       </template>
     </div>
+    <SaveToLibraryDialog v-if="!isShare" :visible="saveLibraryOpen" :files="imported" :session-id="sessionId" :source-type="importKind === 'download' ? 'open_data' : undefined" @close="saveLibraryOpen = false" @saved="onSaved" />
   </section>
 </template>
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import SaveToLibraryDialog from './SaveToLibraryDialog.vue';
 import { ChevronDown, Database, Download } from 'lucide-vue-next';
 import { apiClient, type ApiResponse } from '../api/client';
 import type { FileInfo } from '../api/file';
@@ -64,6 +68,9 @@ export interface ConnectorResultPanel {
   resources: Array<{ external_id: string; title: string; source_url: string }>;
 }
 const props = defineProps<{ result: ConnectorResultPanel; toolCallId: string; sessionId?: string; isShare?: boolean }>();
+const importKind = ref<'download' | 'catalog'>('download');
+const saveLibraryOpen = ref(false), savedToLibrary = ref(false);
+function onSaved() { saveLibraryOpen.value = false; savedToLibrary.value = true; }
 const expanded = ref(true), busy = ref(false), prepared = ref(false);
 const selected = ref<string[]>([]), imported = ref<FileInfo[]>([]), error = ref('');
 interface DownloadOption { id: string; accession: string; filename: string; size: number | null; kind: string; md5?: string; available: boolean; unavailable_reason: string; }
@@ -84,6 +91,9 @@ async function loadOptions() {
   finally { busy.value = false; }
 }
 async function downloadFiles() {
+  if (importKind.value !== 'download') imported.value = [];
+  importKind.value = 'download';
+  savedToLibrary.value = false;
   busy.value = true; error.value = ''; prepared.value = false;
   const chosen = options.value.filter(file => selectedFiles.value.includes(file.id) && file.available);
   for (const [index, file] of chosen.entries()) {
@@ -96,7 +106,7 @@ async function downloadFiles() {
       const data = response.data.data!;
       if (data.failures.length || !data.files.length) throw new Error(data.failures.map(item => item.message).join('；') || '导入未确认完成');
       imported.value = [...imported.value.filter(old => !data.files.some(f => f.file_id === old.file_id)), ...data.files];
-      fileStates.value[file.id] = '已导入沙盒';
+      fileStates.value[file.id] = '已获取';
     } catch(e: any) {
       fileStates.value[file.id] = e.response ? errorText(e) : e.message || '下载失败，可重试';
     }
@@ -105,6 +115,7 @@ async function downloadFiles() {
 }
 function toggleAll() { selected.value = selected.value.length === props.result.resources.length ? [] : props.result.resources.map(row => row.external_id); }
 async function importSelected(mode: 'download' | 'catalog') {
+  savedToLibrary.value = false;
   if (busy.value || !props.sessionId || props.isShare) return;
   busy.value = true; error.value = ''; prepared.value = false;
   try {
@@ -113,6 +124,7 @@ async function importSelected(mode: 'download' | 'catalog') {
     }, { timeout: 240000 });
     const data = response.data.data!;
     imported.value = data.files;
+    importKind.value = mode;
     error.value = data.failures.map(f => `${f.id}：${f.message}`).join('；');
   } catch (e: any) {
     error.value = e.response?.data?.detail || e.response?.data?.message || '导入未确认完成，请检查任务文件后重试。';

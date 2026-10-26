@@ -16,8 +16,8 @@
                   </label>
                 </div>
                 <input v-model="formData.email"
-                  class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-1.5 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] w-full"
-                  :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.email }" id="reset-email"
+                  class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-1.5 pb-1 pl-3 w-full"
+                  :aria-invalid="Boolean(validationErrors.email)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.email }" id="reset-email"
                   placeholder="mail@domain.com" type="email" :disabled="isLoading" @input="validateField('email')"
                   @blur="validateField('email')">
                 <div
@@ -157,10 +157,8 @@ const handleSendCode = async () => {
     currentStep.value = 'verification'
     showSuccessToast(t('Verification code sent to your email'))
     
-    console.log('Verification code sent to:', formData.value.email)
   } catch (error: any) {
-    console.error('Send verification code failed:', error)
-    showErrorToast(t('Failed to send verification code. Please try again.'))
+    showErrorToast(error instanceof Error ? error.message : t('Failed to send verification code. Please try again.'))
   } finally {
     isLoading.value = false
   }

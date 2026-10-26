@@ -1,0 +1,1180 @@
+{
+  "project": "DataLab",
+  "date": "2026-10-22",
+  "branch": "datalab",
+  "status": "implemented_container_verified_pending_release",
+  "new_enabled_sources": 9,
+  "newly_implemented_sources": 8,
+  "previously_implemented_now_enabled": [
+    "huggingface-datasets"
+  ],
+  "previous_automatic_sources": 59,
+  "automatic_sources_total": 68,
+  "connector_picker_total": 69,
+  "sources": [
+    {
+      "source_id": "bis",
+      "status": "passed",
+      "query": "WS_CBPOL",
+      "external_id": "WS_CBPOL",
+      "title": "BIS 国际清算银行统计",
+      "catalog_count": 27,
+      "verified_files": 1,
+      "resolved_files": 1,
+      "filename": "WS_CBPOL_csv_flat.zip",
+      "content_type": "application/zip",
+      "bytes": 4139244,
+      "sha256": "a90d76d1777c7e1317cff1611e5a8e26ad0bb52fec38b06ccb1edb04fec83e3d",
+      "source_url": "https://data.bis.org/bulkdownload",
+      "download_url": "https://data.bis.org/static/bulk/WS_CBPOL_csv_flat.zip",
+      "source_version": "Thu Oct 22 2026",
+      "license": "https://data.bis.org/help/legal",
+      "entity_records": 733906,
+      "entity_header": [
+        "STRUCTURE",
+        "STRUCTURE_ID",
+        "ACTION",
+        "FREQ:Frequency",
+        "REF_AREA:Reference area",
+        "TIME_PERIOD:Time period or range",
+        "OBS_VALUE:Observation Value",
+        "UNIT_MEASURE:Unit of measure",
+        "UNIT_MULT:Unit Multiplier",
+        "TIME_FORMAT:Time Format",
+        "COMPILATION:Compilation",
+        "DECIMALS:Decimals",
+        "SOURCE_REF:Publication Source",
+        "SUPP_INFO_BREAKS:Supplemental information and breaks",
+        "TITLE:Title",
+        "OBS_STATUS:Observation Status",
+        "OBS_CONF:Observation confidentiality",
+        "OBS_PRE_BREAK:Pre-Break Observation"
+      ],
+      "archive_entries": [
+        "WS_CBPOL_csv_flat.csv"
+      ],
+      "archive_crc_verified": true,
+      "coverage": {
+        "scope": "完整主题数据包；所有源站可用地区和时期"
+      },
+      "elapsed": 18.45,
+      "checked_at": "2026-10-22T03:22:31.169470+00:00",
+      "homepage": "https://data.bis.org/",
+      "country": "国际",
+      "documentation": "https://data.bis.org/bulkdownload",
+      "description": "检索国际清算银行公开批量下载目录，获取银行、债务、汇率、房价、政策利率和支付等主题的完整 CSV 压缩包。",
+      "scope": "仅接入官方批量目录提供的完整扁平 CSV ZIP；覆盖所选主题所有公开序列与时期，关键词不筛选国家或年份。源站更新日期保留为发布信息，未将数据结构版本视作观测版本。",
+      "logo_url": "https://data.bis.org/favicon.ico"
+    },
+    {
+      "source_id": "cenc-earthquake",
+      "title": "中国地震台网当前地震目录",
+      "homepage": "https://www.ceic.ac.cn/",
+      "country": "中国大陆",
+      "documentation": "https://www.ceic.ac.cn/",
+      "entity_url": "https://www.ceic.ac.cn/data/data.json",
+      "scope": "仅覆盖官网当前 JSON 目录公布的时间范围，不是历史地震全库。结果明确标注实际起止时间和事件数；关键词用于发现目录，下载保留整个当前目录，不按关键词截断事件。源站会更新目录，不提供固定历史版本。",
+      "container_validation": {
+        "source_id": "cenc-earthquake",
+        "query": "地震",
+        "external_id": "current-catalog",
+        "source_url": "https://www.ceic.ac.cn/",
+        "filename": "cenc_current_catalog.json",
+        "bytes": 225243,
+        "sha256": "2e63178010e473ee6ed6dca2ed3997c65d0698246b8eed095b496c82d1f94a95",
+        "entity_records": 942,
+        "scope": {
+          "start": "2026-01-01 14:46:55",
+          "end": "2026-10-22 09:07:12",
+          "timezone": "Asia/Shanghai",
+          "records": 942
+        },
+        "license": null,
+        "result": "passed",
+        "facade_search_verify_all_download": "passed",
+        "receipt": {
+          "source": "data_connector",
+          "connector_id": "cenc-earthquake",
+          "external_id": "current-catalog",
+          "discovery_source_id": "cenc-earthquake",
+          "source_url": "https://www.ceic.ac.cn/",
+          "sha256": "2e63178010e473ee6ed6dca2ed3997c65d0698246b8eed095b496c82d1f94a95",
+          "checksum_origin": "computed_locally",
+          "provider_checksum": null,
+          "license": null,
+          "source_version": null,
+          "provider_checksum_verified": false,
+          "acquired_at": "2026-10-22T03:26:14.143080+00:00"
+        }
+      },
+      "logo_note": "Current catalog page has no publisher logo. Its favicon is a 58-byte placeholder; do not claim that placeholder or a generated symbol is an official logo.",
+      "description": "检索中国地震台网官网当前公布的地震目录，获取包含事件时间、震级、经纬度和深度的完整原生 JSON。"
+    },
+    {
+      "source_id": "ebi-biostudies",
+      "query": "\"S-BSST7\"",
+      "external_id": "S-BSST7",
+      "resolved_files": 27,
+      "filename": "3_MSKCC_BRCA_FDG.txt",
+      "bytes": 582536,
+      "entity_validation": "complete source table: 19460 rows / 3 columns",
+      "receipt": {
+        "source": "data_connector",
+        "connector_id": "ebi-biostudies",
+        "external_id": "S-BSST7",
+        "discovery_source_id": "ebi-biostudies",
+        "source_url": "https://www.ebi.ac.uk/biostudies/studies/S-BSST7",
+        "sha256": "6d0511b987f506f5ed5c3b2ca6e48f96aa577b3c6f3eac2f721e5eb3a13b2280",
+        "checksum_origin": "computed_locally",
+        "provider_checksum": null,
+        "license": null,
+        "source_version": "1488321383000",
+        "provider_checksum_verified": false,
+        "acquired_at": "2026-10-22T03:25:24.118599+00:00"
+      },
+      "result": "passed",
+      "title": "EMBL-EBI BioStudies 生命科学研究数据",
+      "description": "按主题检索 BioStudies 生命科学研究，获取官方托管的公开实验数据、表达矩阵与影像数据文件。",
+      "scope": "仅接入明确公开且由 BioStudies 官方文件服务托管的实体数据；外部数据库链接、论文、代码和说明文件不展示。保留研究更新时间；仅记录源站明示许可，不推定所有记录使用同一许可。",
+      "homepage": "https://www.ebi.ac.uk/biostudies/",
+      "country": "欧洲 / 国际",
+      "documentation": "https://www.ebi.ac.uk/biostudies/help",
+      "logo_url": "https://www.ebi.ac.uk/biostudies/images/logo.png"
+    },
+    {
+      "source_id": "faostat",
+      "status": "passed",
+      "query": "AF",
+      "external_id": "AF",
+      "title": "FAOSTAT 联合国粮农统计",
+      "catalog_count": 69,
+      "verified_files": 1,
+      "resolved_files": 1,
+      "filename": "ASTI_Researchers_E_All_Data__Normalized_.zip",
+      "content_type": "application/zip",
+      "bytes": 33190,
+      "sha256": "03214dbf97e1094222c816d22050ad835a44328a90d39e3dd026943108a3af51",
+      "source_url": "https://www.fao.org/faostat/en/#data/AF",
+      "download_url": "https://bulks-faostat.fao.org/production/ASTI_Researchers_E_All_Data_(Normalized).zip",
+      "source_version": "2026-04-30T00:00:00",
+      "license": "https://www.fao.org/contact-us/terms/en/",
+      "entity_records": 3800,
+      "entity_header": [
+        "Area Code",
+        "Area Code (M49)",
+        "Area",
+        "Indicator Code",
+        "Indicator",
+        "Degree Code",
+        "Degree",
+        "Sex Code",
+        "Sex Code (SDG)",
+        "Sex",
+        "Institution Code",
+        "Institution",
+        "Year Code",
+        "Year",
+        "Unit",
+        "Value",
+        "Flag",
+        "Note"
+      ],
+      "archive_entries": [
+        "ASTI_Researchers_E_All_Data_(Normalized).csv",
+        "ASTI_Researchers_E_AreaCodes.csv",
+        "ASTI_Researchers_E_Degrees.csv",
+        "ASTI_Researchers_E_Flags.csv",
+        "ASTI_Researchers_E_Indicators.csv",
+        "ASTI_Researchers_E_Institutions.csv",
+        "ASTI_Researchers_E_Sexes.csv"
+      ],
+      "archive_crc_verified": true,
+      "coverage": {
+        "scope": "完整主题数据包；所有源站可用地区和时期"
+      },
+      "elapsed": 3.65,
+      "checked_at": "2026-10-22T03:22:12.724304+00:00",
+      "homepage": "https://www.fao.org/faostat/en/#home",
+      "country": "联合国 / 全球",
+      "documentation": "https://bulks-faostat.fao.org/production/datasets_E.json",
+      "description": "检索联合国粮农组织完整批量数据目录，获取农业、粮食、土地利用、贸易和排放等主题的原始 CSV 压缩包。",
+      "scope": "每条结果对应一个主题领域的完整英文标准化数据包，包含源站全部可用地区和年份及随附代码字典；关键词只定位主题，不过滤观测值。保留原始 ZIP、来源更新日期与许可条款。",
+      "logo_url": "https://www.fao.org/faostat/en/src/images/logo/FAO-logo.svg"
+    },
+    {
+      "container_validation": {
+        "source_id": "france-data-gouv",
+        "query": "population",
+        "external_id": "55c9b9ed88ee383153a46ec4",
+        "title": "15021 - Population, population étrangère (millions, %)",
+        "filename": "15021_Population-population-etrangere-millions-pcent.xls",
+        "version": "2015-08-11T11:01:52.951000+00:00",
+        "size": 32768,
+        "sha256": "aad6a6228fb7407132755b167842c1dbccb9fd6796e173564984ac7985fcf220",
+        "provider_checksum_verified": true,
+        "entity_validation": "complete XLS OLE header and official SHA1 verified",
+        "status": "passed"
+      },
+      "source_id": "france-data-gouv",
+      "title": "data.gouv.fr 法国国家开放数据",
+      "description": "检索法国国家开放数据目录中的人口、经济、环境、交通及公共服务数据，获取平台托管的原始文件。",
+      "scope": "仅接入平台自身托管、无需认证的实体文件；目录中的第三方外链、接口介绍、数据字典和文档不展示。保留源文件格式、更新时间、许可及可用校验码。",
+      "homepage": "https://www.data.gouv.fr/",
+      "country": "法国",
+      "documentation": "https://guides.data.gouv.fr/api-de-data.gouv.fr/reference",
+      "logo_url": "https://www.data.gouv.fr/nuxt_images/favicon.svg"
+    },
+    {
+      "container_validation": [
+        {
+          "source_id": "huggingface-datasets",
+          "query": "scikit-learn/iris",
+          "tested_at": "2026-10-22T03:21:37.777730+00:00",
+          "passed": true,
+          "external_id": "scikit-learn/iris@0bda0ce801be0fa2f464ff845a9d5ceae99aad7d",
+          "title": "scikit-learn/iris",
+          "record_url": "https://huggingface.co/datasets/scikit-learn/iris",
+          "verified_files": 2,
+          "filename": "Iris.csv",
+          "bytes": 5107,
+          "sha256": "600ac44f23c2e6e0ae37daac8ceb2baba4df963efa580eb31b3b576b28e34c55",
+          "provider_checksum_verified": false,
+          "version": "0bda0ce801be0fa2f464ff845a9d5ceae99aad7d",
+          "seconds": 10.07
+        },
+        {
+          "source_id": "huggingface-datasets",
+          "query": "ylecun/mnist",
+          "tested_at": "2026-10-22T03:21:47.850096+00:00",
+          "passed": true,
+          "external_id": "ylecun/mnist@77f3279092a1c1579b2250db8eafed0ad422088c",
+          "title": "ylecun/mnist",
+          "record_url": "https://huggingface.co/datasets/ylecun/mnist",
+          "verified_files": 2,
+          "filename": "mnist_test-00000-of-00001.parquet",
+          "bytes": 2595890,
+          "sha256": "d49fcf556ce25b002b302e318ce4a11098bbfe5d4499c3f35d7c72297c52374b",
+          "provider_checksum_verified": true,
+          "version": "77f3279092a1c1579b2250db8eafed0ad422088c",
+          "seconds": 11.65
+        }
+      ],
+      "network_validation": "Official Hugging Face API and CDN successfully accessed through the existing operator proxy from the backend network; TLS and host allowlists retained.",
+      "source_id": "huggingface-datasets",
+      "title": "Hugging Face Datasets",
+      "description": "检索公开且无需授权的 Hugging Face 数据集，按固定提交版本获取原始表格、多媒体及压缩数据文件。",
+      "scope": "按仓库短名称或完整仓库名检索，如 Tibetan、common_voice、scikit-learn/iris；不作为数据内容全文搜索。仅支持已公开且不需同意条款的数据集。每个关键词最多检索前 1000 条；解析清单中的全部实体文件，按提交哈希固定版本，保留分片及原格式。脚本、说明和模型权重不作为数据文件。",
+      "homepage": "https://huggingface.co/datasets",
+      "country": "国际",
+      "documentation": "https://huggingface.co/docs/hub/datasets-downloading"
+    },
+    {
+      "source_id": "nasa-osdr",
+      "query": "\"OSD-1\"",
+      "external_id": "OSD-1",
+      "resolved_files": 61,
+      "filename": "GLDS-1_array_normalized_expression_probeset.csv",
+      "bytes": 10891773,
+      "entity_validation": "complete source table: 18952 rows / 27 columns",
+      "receipt": {
+        "source": "data_connector",
+        "connector_id": "nasa-osdr",
+        "external_id": "OSD-1",
+        "discovery_source_id": "nasa-osdr",
+        "source_url": "https://osdr.nasa.gov/bio/repo/data/studies/OSD-1",
+        "sha256": "8514fc60d0a50d9f810d0e151edfac42092cd75f2d414f377895c6326fd67558",
+        "checksum_origin": "computed_locally",
+        "provider_checksum": null,
+        "license": null,
+        "source_version": "1682567913.289",
+        "provider_checksum_verified": false,
+        "acquired_at": "2026-10-22T03:25:37.007916+00:00"
+      },
+      "result": "passed",
+      "title": "NASA OSDR 空间生命科学数据",
+      "description": "检索 NASA 开放科学数据仓库中的空间生物学及地面模拟研究，获取公开原始与处理后实验数据。",
+      "scope": "仅检索 OSDR 自身研究，获取清单中公开且可见的实验数据文件；排除研究元数据包、分析脚本、报告、校验清单和受控访问文件。不将关联的 GEO/PRIDE 记录视为 OSDR 文件。保留源格式和文件更新时间。",
+      "homepage": "https://osdr.nasa.gov/bio/repo/",
+      "country": "美国",
+      "documentation": "https://api.nasa.gov/",
+      "logo_url": "https://www.nasa.gov/wp-content/themes/nasa/assets/images/nasa-logo.svg"
+    },
+    {
+      "source_id": "nmc-weather",
+      "title": "中央气象台城市最新实况",
+      "homepage": "https://www.nmc.cn/",
+      "country": "中国大陆",
+      "documentation": "https://www.nmc.cn/publish/forecast/ABJ/beijing.html",
+      "license_url": "https://www.nmc.cn/publish/cms/view/722665831f0a4e98800c41e691444963.html",
+      "scope": "必须提供中文城市/省份名称或官方站点代码，不默认选择城市。每条结果是一个城市最近一次实况快照，不是历史气候序列，也不是预报；9999 为源站缺测标记，原样保留。商业使用须事先取得中央气象台书面授权，遵守记录中的官方网站声明。",
+      "container_validation": {
+        "source_id": "nmc-weather",
+        "query": "北京天气",
+        "external_id": "Wqsps",
+        "source_url": "https://www.nmc.cn/publish/forecast/ABJ/beijing.html",
+        "filename": "nmc_Wqsps_latest_observation.json",
+        "bytes": 652,
+        "sha256": "7dfe37bb7a3c0f8ce510d61259d67319e0b6b75a0fc1677a238562f2085a4a67",
+        "entity_records": 1,
+        "scope": {
+          "observation_time": "2026-10-22 10:55",
+          "station": {
+            "code": "Wqsps",
+            "province": "北京市",
+            "city": "北京",
+            "url": "/publish/forecast/ABJ/beijing.html"
+          },
+          "weather": {
+            "temperature": 13.8,
+            "temperatureDiff": 9999.0,
+            "airpressure": 9999.0,
+            "humidity": 43.0,
+            "rain": 0.0,
+            "rcomfort": 51,
+            "icomfort": -1,
+            "info": "晴",
+            "img": "0",
+            "feelst": 11.6
+          },
+          "wind": {
+            "direct": "西南风",
+            "degree": 219.0,
+            "power": "微风",
+            "speed": 2.8
+          }
+        },
+        "license": "https://www.nmc.cn/publish/cms/view/722665831f0a4e98800c41e691444963.html",
+        "result": "passed",
+        "facade_search_verify_all_download": "passed",
+        "receipt": {
+          "source": "data_connector",
+          "connector_id": "nmc-weather",
+          "external_id": "Wqsps",
+          "discovery_source_id": "nmc-weather",
+          "source_url": "https://www.nmc.cn/publish/forecast/ABJ/beijing.html",
+          "sha256": "7dfe37bb7a3c0f8ce510d61259d67319e0b6b75a0fc1677a238562f2085a4a67",
+          "checksum_origin": "computed_locally",
+          "provider_checksum": null,
+          "license": "https://www.nmc.cn/publish/cms/view/722665831f0a4e98800c41e691444963.html",
+          "source_version": null,
+          "provider_checksum_verified": false,
+          "acquired_at": "2026-10-22T03:26:28.884263+00:00"
+        }
+      },
+      "description": "按明确的中文城市或省份名称，从官方站点目录查找最新气温、湿度、降水和风的实际观测，获取原生 JSON。"
+    },
+    {
+      "source_id": "rodare",
+      "query": "GeSn photodetectors",
+      "external_id": "2886",
+      "resolved_files": 55,
+      "filename": "FDG03-CAL-data.xlsx",
+      "bytes": 9536,
+      "entity_validation": "complete XLSX workbook; archive CRC and source MD5 verified",
+      "receipt": {
+        "source": "data_connector",
+        "connector_id": "rodare",
+        "external_id": "2886",
+        "discovery_source_id": "rodare",
+        "source_url": "https://rodare.hzdr.de/record/2886",
+        "sha256": "39bcd20445d0aff01a7381a2e8c1cd7f0b99c204536b9b87faed4df19b0d34e2",
+        "checksum_origin": "computed_locally",
+        "provider_checksum": "md5:656836bc8f115abce644b21c51aa05ec",
+        "license": "CC-BY-4.0",
+        "source_version": "2024-05-23T13:27:14.416585+00:00",
+        "provider_checksum_verified": true,
+        "acquired_at": "2026-10-22T03:25:04.846449+00:00"
+      },
+      "result": "passed",
+      "title": "RODARE 赫尔姆霍茨科研数据",
+      "description": "检索 Helmholtz-Zentrum Dresden-Rossendorf 研究仓库中的物理、材料、能源和工程数据，获取公开原始文件。",
+      "scope": "仅返回公开 Dataset 记录中的实体数据文件；保留版本记录、许可、文件长度及官方 MD5 校验码。受限、封闭及仅有论文或软件的记录不展示。",
+      "homepage": "https://rodare.hzdr.de/",
+      "country": "德国",
+      "documentation": "https://rodare.hzdr.de/",
+      "logo_url": "https://rodare.hzdr.de/static/favicon.ico"
+    }
+  ],
+  "not_enabled": [
+    {
+      "source": "pku-open-data",
+      "homepage": "https://opendata.pku.edu.cn/",
+      "reason": "公开目录及记录可读，但多个新旧公开NetCDF文件经实际后端容器官方下载API均HTTP500；不作为可获取来源启用。"
+    },
+    {
+      "source": "hku-datahub",
+      "homepage": "https://datahub.hku.hk/",
+      "reason": "主机官方Figshare机构目录可读，但实际后端容器API返回403；停止请求，不启用。"
+    },
+    {
+      "source": "beijing-data",
+      "homepage": "https://data.beijing.gov.cn/",
+      "reason": "官方帮助明确下载和API需注册；首页实际访问403，未尝试绕过。"
+    },
+    {
+      "source": "shanghai-data",
+      "homepage": "https://data.sh.gov.cn/",
+      "reason": "入口返回412，未继续请求或绕过。"
+    },
+    {
+      "source": "WHO GHO",
+      "reason": "Current OData full indicator JSON proved reachable, but not enabled this batch: streaming pagination/completeness handling still needs implementation; Athena CSV redirects to legacy page."
+    },
+    {
+      "source": "UNICEF",
+      "reason": "Official SDMX endpoint DNS connection failed in host probe."
+    },
+    {
+      "source": "OECD",
+      "reason": "All-dataflow metadata catalog is 8.9 MB, beyond existing metadata-reader ceiling; partitioned discovery design needed before enablement."
+    },
+    {
+      "source": "Texas Data Repository",
+      "reason": "Official public search API returned HTTP 403; stopped requests."
+    }
+  ],
+  "download_policy": "保留源格式，使用共享流式下载与可验证续传；不新增实体文件大小限制，不截断文件清单。共享元数据响应仍有大小上限，超限明确报错；不宣称任意规模仓库都可完整解析。",
+  "huggingface_network": {
+    "configuration": "OPEN_DATA_HUGGINGFACE_PROXY",
+    "scope": "Exact official HTTPS API and CDN hosts only; other sources stay direct; no global proxy inheritance.",
+    "deployment_value": "Private environment only; no credentials or addresses in browser APIs.",
+    "operator_dependency": "Current local network requires the already configured host proxy to be running."
+  },
+  "regression_checks": {
+    "source_integration_tests_passed": 305,
+    "frontend_type_check": "passed",
+    "frontend_build": "passed",
+    "frontend_tests_passed": 3106,
+    "backend": {
+      "passed": 10986,
+      "skipped": 57,
+      "subtests_passed": 190,
+      "note": "最终共享工作区全量回归通过；102.07秒。"
+    },
+    "sandbox": {
+      "passed": 6175,
+      "skipped": 84,
+      "subtests_passed": 563
+    },
+    "compose_config": "passed",
+    "connector_picker": {
+      "output": "/var/folders/n2/wz3bk3pj2ps8y5qk2zx257v40000gn/T/datalab-connector-picker-EWL5Yy",
+      "passed": true,
+      "errors": [],
+      "externalAttempts": [],
+      "checks": {
+        "compactSources": {
+          "choices": 79,
+          "loadedLogos": 78,
+          "unknownSource": "neutral fallback icon"
+        },
+        "franceLogo": {
+          "width": 180,
+          "height": 180
+        },
+        "lightFocus": {
+          "color": "rgb(43, 118, 89)",
+          "width": "2px",
+          "style": "solid",
+          "accent": "rgb(43, 118, 89)",
+          "shadow": "none"
+        },
+        "selection": "keyboard and pointer selection, search preserves selection, disabled controls, clear restores automatic matching",
+        "darkFocus": {
+          "color": "rgb(169, 203, 187)",
+          "width": "2px",
+          "style": "solid",
+          "accent": "rgb(169, 203, 187)",
+          "shadow": "none"
+        },
+        "mobile390": {
+          "width": 366,
+          "scroll": 364,
+          "client": 364,
+          "viewport": 390,
+          "columns": "316px"
+        },
+        "mobile320": {
+          "width": 296,
+          "scroll": 294,
+          "client": 294,
+          "viewport": 320,
+          "columns": "246px"
+        },
+        "globalControls": "native checkbox/radio/link retain green keyboard outlines; compound text has one inset focus edge",
+        "management": "details link navigates to unchanged management descriptions and capabilities"
+      }
+    },
+    "browser_gate": {
+      "passed": 16,
+      "total": 16,
+      "engines": [
+        "chromium",
+        "webkit"
+      ],
+      "note": "WebKit keyboard-navigation test uses its existing macOS Option-Tab convention; product behavior and assertions unchanged."
+    }
+  },
+  "deployment": null,
+  "complete_enabled_catalog": [
+    {
+      "id": "zenodo",
+      "title": "Zenodo 跨学科研究数据",
+      "domains": [
+        "zenodo.org"
+      ],
+      "scope": "仅返回当前已核验可读取实际数据的记录；可在聊天中的数据查找结果中选择获取。"
+    },
+    {
+      "id": "datacite",
+      "title": "DataCite 数据 DOI 索引",
+      "domains": [
+        "api.datacite.org",
+        "doi.org",
+        "zenodo.org"
+      ],
+      "scope": "DOI 索引本身不提供数据文件；仅返回受支持仓库中已解析并核验实际文件的记录。"
+    },
+    {
+      "id": "worldbank",
+      "title": "World Bank 世界发展指标",
+      "domains": [
+        "api.worldbank.org",
+        "data.worldbank.org"
+      ],
+      "scope": "返回前核验接口包含实际观测值；获取后保存为 CSV。关键词命中不代表时间或地区已过滤。"
+    },
+    {
+      "id": "ncbi-geo",
+      "title": "NCBI GEO 研究数据",
+      "domains": [
+        "eutils.ncbi.nlm.nih.gov",
+        "www.ncbi.nlm.nih.gov",
+        "ftp.ncbi.nlm.nih.gov"
+      ],
+      "scope": "检索研究主题而非一般卫生统计；仅展示已核验的公开数据文件。"
+    },
+    {
+      "id": "ncbi-sra",
+      "title": "NCBI SRA 测序数据",
+      "domains": [
+        "eutils.ncbi.nlm.nih.gov",
+        "www.ncbi.nlm.nih.gov",
+        "www.ebi.ac.uk",
+        "ftp.sra.ebi.ac.uk"
+      ],
+      "scope": "仅展示具有可读取公开 FASTQ 的实验；双端文件需成组获取，不包含受控访问数据。"
+    },
+    {
+      "id": "harvard-dataverse",
+      "title": "Harvard Dataverse 研究数据",
+      "domains": [
+        "dataverse.harvard.edu",
+        "dvn-cloud-iqss.s3.amazonaws.com"
+      ],
+      "scope": "仅接入此已登记实例的公开文件；受限文件或需要填写访客信息的文件不展示。"
+    },
+    {
+      "id": "openml",
+      "title": "OpenML 机器学习数据",
+      "domains": [
+        "www.openml.org",
+        "openml.org"
+      ],
+      "scope": "仅展示有可读取数据文件的数据集；任务、模型和评估结果不作为原始数据集返回。"
+    },
+    {
+      "id": "borealis",
+      "title": "Borealis 加拿大研究数据",
+      "domains": [
+        "borealisdata.ca",
+        "olrc2.scholarsportal.info"
+      ],
+      "scope": "仅展示本仓库已核验可读取的公开原始文件；受限、禁运及需要访客登记的文件不展示。"
+    },
+    {
+      "id": "dataverse-nl",
+      "title": "DataverseNL 荷兰研究数据",
+      "domains": [
+        "dataverse.nl",
+        "objectstore.surf.nl"
+      ],
+      "scope": "仅接入本仓库可匿名获取的原始文件；保留源许可并核验发布的文件摘要。"
+    },
+    {
+      "id": "recherche-data-gouv",
+      "title": "Recherche Data Gouv 法国研究数据",
+      "domains": [
+        "entrepot.recherche.data.gouv.fr",
+        "prod-datainra.opens3r-tls.stockage.inrae.fr"
+      ],
+      "scope": "仅展示本仓库已核验的公开文件；不将外部收录记录或受限数据计入可获取结果。"
+    },
+    {
+      "id": "pangaea",
+      "title": "PANGAEA 地球与环境数据",
+      "domains": [
+        "api.datacite.org",
+        "doi.pangaea.de",
+        "www.pangaea.de"
+      ],
+      "scope": "仅展示已开放且提供可读取原生数据表的记录；需要授权或仅有外部文件链接的记录不展示。"
+    },
+    {
+      "id": "sciencedb",
+      "title": "ScienceDB 科学数据银行",
+      "domains": [
+        "www.scidb.cn",
+        "scidb.cn",
+        "china.scidb.cn",
+        "download.scidb.cn",
+        "api.datacite.org",
+        "doi.org"
+      ],
+      "scope": "仅接入明确公开且无需登录的已发布文件；访问受限、禁运和申请授权数据不展示。"
+    },
+    {
+      "id": "gbif",
+      "title": "GBIF 全球生物多样性数据",
+      "domains": [
+        "api.gbif.org",
+        "www.gbif.org",
+        "hosted-datasets.gbif.org",
+        "ipt.gbif.org",
+        "ipt.gbif.fr",
+        "ipt.gbif.no",
+        "ipt.gbif.es",
+        "ipt.gbif.pt"
+      ],
+      "scope": "仅展示受支持官方托管节点上可读取的原始数据归档；不将元数据或需要账户提交的下载任务视为已可获取文件。"
+    },
+    {
+      "id": "dataverse-no",
+      "title": "DataverseNO",
+      "domains": [
+        "dataverse.no",
+        "uit-dataverseno-prod01.s3-oslo.educloud.no"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "dans-ssh",
+      "title": "DANS 社会科学与人文学科",
+      "domains": [
+        "ssh.datastations.nl",
+        "objectstore.surf.nl"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "dans-lifesciences",
+      "title": "DANS 生命科学",
+      "domains": [
+        "lifesciences.datastations.nl",
+        "objectstore.surf.nl"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "dans-physical",
+      "title": "DANS 物理与技术科学",
+      "domains": [
+        "phys-techsciences.datastations.nl",
+        "objectstore.surf.nl"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "dans-archaeology",
+      "title": "DANS 考古学",
+      "domains": [
+        "archaeology.datastations.nl",
+        "objectstore.surf.nl"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "aussda",
+      "title": "AUSSDA 奥地利社会科学数据档案",
+      "domains": [
+        "data.aussda.at"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "gro-data",
+      "title": "GRO.data 哥廷根研究数据",
+      "domains": [
+        "data.goettingen-research-online.de"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "darus",
+      "title": "DaRUS 斯图加特研究数据",
+      "domains": [
+        "darus.uni-stuttgart.de",
+        "s3.tik.uni-stuttgart.de"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "cifor-icraf",
+      "title": "CIFOR-ICRAF 林业与农林研究数据",
+      "domains": [
+        "data.cifor-icraf.org"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "ucla-dataverse",
+      "title": "UCLA Dataverse",
+      "domains": [
+        "dataverse.ucla.edu"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "unimi-dataverse",
+      "title": "米兰大学 Dataverse",
+      "domains": [
+        "dataverse.unimi.it"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "polen-datahub",
+      "title": "POLEN DataHub",
+      "domains": [
+        "datahub.polen.fccn.pt",
+        "stor-004.a.acnca.pt"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "uminho-datarepositorium",
+      "title": "米尼奥大学 DataRepositóriUM",
+      "domains": [
+        "datarepositorium.uminho.pt"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "bsc-dataverse",
+      "title": "BSC 巴塞罗那超算中心数据",
+      "domains": [
+        "dataverse.bsc.es"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "ird-datasuds",
+      "title": "IRD DataSuds",
+      "domains": [
+        "dataverse.ird.fr"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "kuleuven-rdr",
+      "title": "KU Leuven RDR 鲁汶大学研究数据",
+      "domains": [
+        "rdr.kuleuven.be",
+        "rdmo.icts.kuleuven.be"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "cuhk-data",
+      "title": "香港中文大学研究数据",
+      "domains": [
+        "researchdata.cuhk.edu.hk"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "hkust-dataspace",
+      "title": "香港科技大学 DataSpace",
+      "domains": [
+        "dataspace.hkust.edu.hk"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "heidata",
+      "title": "heiDATA 海德堡大学研究数据",
+      "domains": [
+        "heidata.uni-heidelberg.de"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "edmond",
+      "title": "Edmond 马克斯普朗克学会",
+      "domains": [
+        "edmond.mpg.de",
+        "edmond-objstor-prod.s3.gwdg.de"
+      ],
+      "scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。"
+    },
+    {
+      "id": "hongkong-data",
+      "title": "DATA.GOV.HK 香港开放数据",
+      "domains": [
+        "data.gov.hk",
+        "data.weather.gov.hk",
+        "static.data.gov.hk",
+        "data.gov.hk",
+        "www.statistics.gov.hk"
+      ],
+      "scope": "官方目录查询匹配英文数据集标识；仅展示受支持官方文件主机上已核验的实体文件，未覆盖需认证接口。"
+    },
+    {
+      "id": "ngdc-gwh",
+      "title": "NGDC GWH 国家基因组仓库",
+      "domains": [
+        "ngdc.cncb.ac.cn",
+        "download.cncb.ac.cn"
+      ],
+      "scope": "仅接入 GWH 自有公开组装；注释表与序列文件保留原格式及组装版本，不包含受控数据。"
+    },
+    {
+      "id": "chembl",
+      "title": "ChEMBL 化合物结构",
+      "domains": [
+        "www.ebi.ac.uk"
+      ],
+      "scope": "每条结果对应一个分子结构；本入口不将文献或靶点说明当作实验活性数据。"
+    },
+    {
+      "id": "pubchem",
+      "title": "PubChem 化学数据",
+      "domains": [
+        "pubchem.ncbi.nlm.nih.gov"
+      ],
+      "scope": "按化合物名称或 CID 精确查找；每条结果为完整化合物结构，不代表所有生物测定数据。遵循来源使用政策，不假定所有贡献数据采用统一许可。"
+    },
+    {
+      "id": "nasa-exoplanet",
+      "title": "NASA Exoplanet 系外行星",
+      "domains": [
+        "exoplanetarchive.ipac.caltech.edu"
+      ],
+      "scope": "支持行星或恒星名称，以及系外行星复合参数全表；明确区分单行星记录和全表。全表是源站动态快照，无固定版本；下载后记录实际文件哈希。"
+    },
+    {
+      "id": "canada-open-data",
+      "title": "加拿大联邦开放数据",
+      "domains": [
+        "open.canada.ca",
+        "www150.statcan.gc.ca"
+      ],
+      "scope": "当前接入加拿大统计局的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "uk-data-gov",
+      "title": "英国政府开放数据",
+      "domains": [
+        "ckan.publishing.service.gov.uk",
+        "www.data.gov.uk",
+        "dataworks.calderdale.gov.uk"
+      ],
+      "scope": "当前接入Calderdale 地方政府的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "switzerland-open-data",
+      "title": "瑞士国家开放数据",
+      "domains": [
+        "opendata.swiss",
+        "ckan.opendata.swiss",
+        "dam-api.bfs.admin.ch"
+      ],
+      "scope": "当前接入瑞士联邦统计局的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "germany-govdata",
+      "title": "德国政府开放数据",
+      "domains": [
+        "www.govdata.de",
+        "opendata.ruhr",
+        "www.berlin.de"
+      ],
+      "scope": "当前接入柏林州和鲁尔地区官方数据节点的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "ireland-data-gov",
+      "title": "爱尔兰政府开放数据",
+      "domains": [
+        "data.gov.ie",
+        "ws.cso.ie"
+      ],
+      "scope": "当前接入爱尔兰中央统计局的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "japan-e-gov",
+      "title": "日本 e-Gov 开放数据",
+      "domains": [
+        "data.e-gov.go.jp",
+        "www.soumu.go.jp"
+      ],
+      "scope": "当前接入日本总务省信息通信统计的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "canada-bc",
+      "title": "加拿大不列颠哥伦比亚省开放数据",
+      "domains": [
+        "catalogue.data.gov.bc.ca"
+      ],
+      "scope": "当前接入BC 省门户直接托管资源的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "canada-quebec",
+      "title": "加拿大魁北克省开放数据",
+      "domains": [
+        "www.donneesquebec.ca"
+      ],
+      "scope": "当前接入魁北克省门户直接托管资源的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "australia-vic",
+      "title": "澳大利亚维多利亚州开放数据",
+      "domains": [
+        "discover.data.vic.gov.au",
+        "www.health.vic.gov.au"
+      ],
+      "scope": "当前接入维多利亚州卫生部门的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "berlin-open-data",
+      "title": "德国柏林州开放数据",
+      "domains": [
+        "datenregister.berlin.de",
+        "daten.berlin.de",
+        "www.berlin.de"
+      ],
+      "scope": "当前接入柏林州妇女与性别平等部门的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "id": "uci-ml",
+      "title": "UCI Machine Learning Repository",
+      "domains": [
+        "archive.ics.uci.edu"
+      ],
+      "scope": "检索官方完整名称目录；仅接入官方 API 提供直接 CSV 的数据集，其他仅有网页或外链的条目不展示。源站可能更新文件，获取时记录内容哈希。"
+    },
+    {
+      "id": "huggingface-datasets",
+      "title": "Hugging Face Datasets",
+      "domains": [
+        "huggingface.co",
+        "cas-bridge.xethub.hf.co",
+        "cdn-lfs.huggingface.co",
+        "cdn-lfs-us-1.hf.co",
+        "cdn-lfs-eu-1.hf.co",
+        "us.aws.cdn.hf.co",
+        "us.gcp.cdn.hf.co"
+      ],
+      "scope": "按仓库短名称或完整仓库名检索，如 Tibetan、common_voice、scikit-learn/iris；不作为数据内容全文搜索。仅支持已公开且不需同意条款的数据集。每个关键词最多检索前 1000 条；解析清单中的全部实体文件，按提交哈希固定版本，保留分片及原格式。脚本、说明和模型权重不作为数据文件。"
+    },
+    {
+      "id": "usgs-earthquake",
+      "title": "USGS 全球地震观测",
+      "domains": [
+        "earthquake.usgs.gov"
+      ],
+      "scope": "使用 start=2024-01-01 end=2024-02-01 minmagnitude=5；可加 minlatitude/maxlatitude/minlongitude/maxlongitude，或 eventid=事件编号。仅输入 earthquake/地震时默认最近30天全球M≥4.5，结果会注明范围。不支持任意主题全文搜索。USGS单次最多20,000事件，超出须缩小时间或区域，不截断下载。"
+    },
+    {
+      "id": "nasa-power",
+      "title": "NASA POWER 气象与太阳能数据",
+      "domains": [
+        "power.larc.nasa.gov"
+      ],
+      "scope": "必须提供 latitude/longitude/start/end，例如 latitude=39.9 longitude=116.4 start=20240101 end=20240107 parameters=T2M,PRECTOTCORR。日期从1981年起，使用UTC。支持T2M/T2M_MIN/T2M_MAX/PRECTOTCORR/RH2M/WS10M/PS/ALLSKY_SFC_SW_DWN，未指定参数默认T2M；不自动猜地点或把主题词当坐标。参数可用期以源站为准。"
+    },
+    {
+      "id": "noaa-gml",
+      "title": "NOAA GML 温室气体观测",
+      "domains": [
+        "gml.noaa.gov"
+      ],
+      "scope": "本入口为明确的四种温室气体月均指标目录匹配，支持气体名称或化学式；CO2为Mauna Loa，CH4/N2O/SF6为全球海洋地表平均。不是任意地点或主题全文检索。原文件保留缺失值、质量说明及NOAA引用政策；近期值会修订。"
+    },
+    {
+      "id": "cern-open-data",
+      "title": "CERN Open Data 粒子物理",
+      "domains": [
+        "opendata.cern.ch"
+      ],
+      "scope": "仅解析Dataset记录中的在线实体文件，不把软件、教程、文档或文件索引当数据。保留源文件格式、文件版本及Adler32等校验码；派生/教学数据的适用范围见原记录，不能视作完整原始实验数据。"
+    },
+    {
+      "id": "eurostat",
+      "title": "Eurostat 欧洲统计局",
+      "domains": [
+        "ec.europa.eu"
+      ],
+      "scope": "主题检索定位数据集，下载覆盖所选表全部地区与时期；关键词不会自动过滤观测值。保留源更新时间，数据为最新快照，源站不提供历史数据版本。大型表可能需要更长生成时间。"
+    },
+    {
+      "id": "ecb",
+      "title": "ECB 欧洲中央银行统计",
+      "domains": [
+        "data-api.ecb.europa.eu",
+        "data.ecb.europa.eu"
+      ],
+      "scope": "主题检索下载完整数据流；输入 FLOW/SERIES_KEY（如 EXR/M.USD.EUR.SP00.A）可选择明确的单一序列及其全部时期。数据为源站动态快照；结构版本不冒充数据版本。"
+    },
+    {
+      "id": "ilostat",
+      "title": "ILOSTAT 国际劳工统计",
+      "domains": [
+        "rplumber.ilo.org",
+        "ilostat.ilo.org"
+      ],
+      "scope": "每条结果对应一个指标与频率，下载包含该文件全部地区和时期；保留来源更新日期，目录与代码字典不作为观测数据下载。"
+    },
+    {
+      "id": "unesco-uis",
+      "title": "UNESCO UIS 教育与社会统计",
+      "domains": [
+        "api.uis.unesco.org",
+        "databrowser.uis.unesco.org"
+      ],
+      "scope": "每条结果对应一个指标，下载含该发布版本的所有地区和年份；原始 ZIP 内含观测 CSV 及说明。源 API 单次查询最多 100000 条，超出时不会静默截断或冒充完整数据。"
+    },
+    {
+      "id": "macau-open-data",
+      "title": "澳门政府开放数据",
+      "domains": [
+        "data.gov.mo",
+        "api.data.gov.mo"
+      ],
+      "scope": "仅接入官方标记为完全开放且提供实体文件的数据；登记开放及仅有接口说明的记录不展示。使用数据须按源站条款注明来源与获取日期。"
+    },
+    {
+      "id": "un-sdg",
+      "title": "联合国可持续发展目标数据",
+      "domains": [
+        "unstats.un.org"
+      ],
+      "scope": "按指标英文名称、指标编号或序列代码检索；未指定地区时仅返回明确标注的 World 全球汇总。其他地区用 geo=M49编码检索，例如 EG_ACS_ELEC geo=156 获取中国。每条结果和文件只对应该地区完整时间序列，保留官方 JSON 与维度。未标注许可时不推定开放授权。"
+    },
+    {
+      "id": "nasa-osdr",
+      "title": "NASA OSDR 空间生命科学数据",
+      "domains": [
+        "osdr.nasa.gov",
+        "genelab-repo-prod.s3.amazonaws.com"
+      ],
+      "scope": "仅检索 OSDR 自身研究，获取清单中公开且可见的实验数据文件；排除研究元数据包、分析脚本、报告、校验清单和受控访问文件。不将关联的 GEO/PRIDE 记录视为 OSDR 文件。保留源格式和文件更新时间。"
+    },
+    {
+      "id": "ebi-biostudies",
+      "title": "EMBL-EBI BioStudies 生命科学研究数据",
+      "domains": [
+        "www.ebi.ac.uk",
+        "ftp.ebi.ac.uk"
+      ],
+      "scope": "仅接入明确公开且由 BioStudies 官方文件服务托管的实体数据；外部数据库链接、论文、代码和说明文件不展示。保留研究更新时间；仅记录源站明示许可，不推定所有记录使用同一许可。"
+    },
+    {
+      "id": "rodare",
+      "title": "RODARE 赫尔姆霍茨科研数据",
+      "domains": [
+        "rodare.hzdr.de"
+      ],
+      "scope": "仅返回公开 Dataset 记录中的实体数据文件；保留版本记录、许可、文件长度及官方 MD5 校验码。受限、封闭及仅有论文或软件的记录不展示。"
+    },
+    {
+      "id": "faostat",
+      "title": "FAOSTAT 联合国粮农统计",
+      "domains": [
+        "bulks-faostat.fao.org",
+        "www.fao.org",
+        "faostat.fao.org"
+      ],
+      "scope": "每条结果对应一个主题领域的完整英文标准化数据包，包含源站全部可用地区和年份及随附代码字典；关键词只定位主题，不过滤观测值。保留原始 ZIP、来源更新日期与许可条款。"
+    },
+    {
+      "id": "bis",
+      "title": "BIS 国际清算银行统计",
+      "domains": [
+        "data.bis.org",
+        "www.bis.org"
+      ],
+      "scope": "仅接入官方批量目录提供的完整扁平 CSV ZIP；覆盖所选主题所有公开序列与时期，关键词不筛选国家或年份。源站更新日期保留为发布信息，未将数据结构版本视作观测版本。"
+    },
+    {
+      "id": "france-data-gouv",
+      "title": "data.gouv.fr 法国国家开放数据",
+      "domains": [
+        "www.data.gouv.fr",
+        "static.data.gouv.fr"
+      ],
+      "scope": "仅接入平台自身托管、无需认证的实体文件；目录中的第三方外链、接口介绍、数据字典和文档不展示。保留源文件格式、更新时间、许可及可用校验码。"
+    },
+    {
+      "id": "cenc-earthquake",
+      "title": "中国地震台网当前地震目录",
+      "domains": [
+        "www.ceic.ac.cn"
+      ],
+      "scope": "仅覆盖官网当前 JSON 目录公布的时间范围，不是历史地震全库。结果明确标注实际起止时间和事件数；关键词用于发现目录，下载保留整个当前目录，不按关键词截断事件。源站会更新目录，不提供固定历史版本。"
+    },
+    {
+      "id": "nmc-weather",
+      "title": "中央气象台城市最新实况",
+      "domains": [
+        "www.nmc.cn"
+      ],
+      "scope": "必须提供中文城市/省份名称或官方站点代码，不默认选择城市。每条结果是一个城市最近一次实况快照，不是历史气候序列，也不是预报；9999 为源站缺测标记，原样保留。商业使用须事先取得中央气象台书面授权，遵守记录中的官方网站声明。"
+    }
+  ],
+  "verification_scope": "每个新增启用来源均从实际容器网络完整获取过实体文件；验收的是接入链路，不代表该站每条数据永远可用或适用于所有研究。",
+  "huggingface_language_search": [
+    {
+      "query": "Tibetan",
+      "candidate_titles": [
+        "spsither/tibetan_monolingual_A_meta",
+        "openpecha/tibetan-metadata-extracted",
+        "BDRC/tibetan-quotation-detection",
+        "spsither/tibetan_monolingual_A_merged_123_lines",
+        "spsither/tibetan_monolingual_A_merged_135_lines",
+        "BDRC/tibetan-ocr-benchmark",
+        "BDRC/tibetan-page-orientation-classifier-dataset",
+        "laolida-w/tibetan-lyrics-align",
+        "openpecha/tibetan_voice",
+        "HNO333333/Tibetan-0310"
+      ],
+      "has_more": true
+    },
+    {
+      "repository": "spsither/tibetan_monolingual_A_meta",
+      "verified_files": 6,
+      "formats": [
+        "data/test-00000-of-00006.parquet",
+        "data/test-00001-of-00006.parquet",
+        "data/test-00002-of-00006.parquet",
+        "data/test-00003-of-00006.parquet",
+        "data/test-00004-of-00006.parquet",
+        "data/test-00005-of-00006.parquet"
+      ],
+      "sizes": [
+        128308719,
+        131886269,
+        134152143,
+        129304830,
+        118361979,
+        129977380
+      ],
+      "verification_method": "实体文件头部可读性核验；未完整下载此处6个百MB分片。完整文件下载证据另见Iris CSV与MNIST Parquet样本。"
+    }
+  ],
+  "release_gate": {
+    "status": "waiting_for_other_task_approval",
+    "reason": "按用户要求保持独立并等其他任务完成后再发布。开放数据检索改版仍在等待历史研究问题及候选说明外发给现有DeepSeek服务的授权；直接从共享工作区发布会带上该待确认处理。",
+    "action_taken": "未切换本批发布版本；未修改运行环境的Hugging Face专用代理配置。",
+    "next_step": "检索任务待确认项完成后，重新核对共享代码、配置HF专用网络、发布受影响服务并执行真实API获取验收。"
+  }
+}

@@ -154,11 +154,12 @@ def topic_registration(client, database):
         '衰老展开为 aging OR senescence；SRA 按实验返回，同一研究可能包含多个实验。']), operations)
 
 
-def build_data_connector_service(ncbi_service, topic_client=None):
+def build_data_connector_service(ncbi_service, topic_client=None, open_data_sources=None):
     from app.infrastructure.external.data_sources.entrez import EntrezTopicConnector
+    from app.application.services.open_data_connector_registration import open_data_registrations
     client = topic_client or EntrezTopicConnector()
     return DataConnectorService([ncbi_registration(ncbi_service),
-        topic_registration(client, 'gds'), topic_registration(client, 'sra')])
+        topic_registration(client, 'gds'), topic_registration(client, 'sra'), *open_data_registrations(open_data_sources)])
 
 
 def get_data_connector_service():

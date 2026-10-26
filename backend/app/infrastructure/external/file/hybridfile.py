@@ -6,6 +6,7 @@ from bson import ObjectId
 
 from app.domain.external.file import FileStorage
 from app.domain.models.file import FileInfo
+from app.domain.models.object_file import ObjectFileMountError, ObjectFileReference, UNSUPPORTED_OBJECT_MOUNT
 from app.infrastructure.external.file.gridfsfile import GridFSFileStorage
 from app.infrastructure.external.file.miniofile import MinIOFileStorage
 
@@ -88,6 +89,16 @@ class HybridFileStorage(FileStorage):
     async def get_file_info(self, file_id: str, user_id: Optional[str] = None) -> Optional[FileInfo]:
         storage = self._select_storage(file_id)
         return await storage.get_file_info(self._normalize_file_id(file_id), user_id)
+
+    async def get_object_reference(self, file_id: str, user_id: str) -> ObjectFileReference:
+        if not file_id.startswith("minio:"):
+            raise ObjectFileMountError(UNSUPPORTED_OBJECT_MOUNT)
+        return await self.minio_storage.get_object_reference(file_id, user_id)
+
+    async def read_object_range(self, reference, user_id, *, offset, length):
+        if not reference.file_id.startswith("minio:"):
+            raise ObjectFileMountError(UNSUPPORTED_OBJECT_MOUNT)
+        return await self.minio_storage.read_object_range(reference, user_id, offset=offset, length=length)
 
     async def create_presigned_url(self, file_id: str, user_id: Optional[str] = None, expire_seconds: Optional[int] = None) -> str:
         if not file_id.startswith("minio:"):

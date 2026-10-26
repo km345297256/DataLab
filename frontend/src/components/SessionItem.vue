@@ -7,7 +7,7 @@
     <!-- 状态图标 -->
     <div class="shrink-0 size-[18px] flex items-center justify-center relative">
       <template v-if="session.status === SessionStatus.RUNNING || session.status === SessionStatus.PENDING">
-        <div class="border rounded-full animate-spin" style="width: 18px; height: 18px; border-width: 2px; border-color: var(--fill-blue); border-top-color: var(--icon-brand);"></div>
+        <div class="border rounded-full animate-spin" style="width: 18px; height: 18px; border-width: 2px; border-color: var(--control-selected-fill); border-top-color: var(--control-focus-color);"></div>
       </template>
       <template v-else-if="session.status === SessionStatus.WAITING">
         <svg height="18" width="18" fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">

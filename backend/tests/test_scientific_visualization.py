@@ -213,6 +213,29 @@ def test_map_shape_coordinate_bounds_and_order():
         module.ScientificVisualizationResult.model_validate(payload)
 
 
+def test_fits_image_binds_original_pixel_coordinates_to_shape_and_sampling():
+    payload = series("fits", "image")["data"]
+    payload.update(x=list(range(0, 257, 3)), y=list(range(0, 129, 2)), width=86, height=65, values=[1.0] * (86 * 65),
+        selected_variable="HDU 0", variables=[{"name": "HDU 0", "shape": [129, 257], "units": "counts",
+            "dimensions": [{"name": "axis0", "size": 129}, {"name": "axis1", "size": 257}]}],
+        metadata={"source_shape": [129, 257], "strides": [2, 3], "axis_coordinates": "source pixel indices"})
+    assert module.ScientificVisualizationResult.model_validate(payload).x[-1] == 255
+    import copy
+    for mutate in [lambda p: p.update(x=list(range(86))), lambda p: p["metadata"].update(strides=[1, 1]),
+                   lambda p: p["metadata"].update(source_shape=[128, 257]), lambda p: p.update(y=[]),
+                   lambda p: p["metadata"].update(axis_coordinates="display pixels")]:
+        changed = copy.deepcopy(payload); mutate(changed)
+        with pytest.raises(ValidationError):
+            module.ScientificVisualizationResult.model_validate(changed)
+
+
+def test_raw_scientific_payload_rejects_unsafe_integer_before_float_coercion():
+    payload = series()["data"]
+    payload["y"][0] = 2**53 + 1
+    with pytest.raises(ValueError, match="precision"):
+        module._safe_result_payload(payload)
+
+
 @pytest.mark.asyncio
 async def test_lower_plugin_output_budget_is_enforced(environment):
     catalog, _ = environment

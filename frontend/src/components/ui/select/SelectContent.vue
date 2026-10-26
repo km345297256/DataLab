@@ -35,7 +35,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       data-slot="select-content"
       v-bind="{ ...forwarded, ...$attrs }"
       :class="cn(
-        'bg-[var(--background-menu-white)] text-[var(--text-primary)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-[1100] max-h-60 min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-xl border border-[var(--border-dark)] dark:border-[var(--border-light)] shadow-[0_4px_11px_0px_var(--shadow-S)]',
+        'outline-none bg-[var(--background-menu-white)] text-[var(--text-primary)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-[1100] max-h-60 min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-xl border border-[var(--border-main)] shadow-[0_4px_11px_0px_var(--shadow-S)]',
         position === 'popper'
           && 'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
         props.class,

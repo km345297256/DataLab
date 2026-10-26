@@ -1,3 +1,6 @@
+import json
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 
@@ -5,11 +8,12 @@ from app.infrastructure.external.sandbox.docker_sandbox import DockerSandbox
 
 
 @pytest.mark.asyncio
-async def test_artifact_validation_adapter_uses_batch_read_only_api():
-    items = [{"path": "/home/ubuntu/output/chart.png", "kind": "image"}]
+@pytest.mark.parametrize("suffix,image_format", [("png", "PNG"), ("svg", "SVG")])
+async def test_artifact_validation_adapter_uses_batch_read_only_api(suffix, image_format):
+    items = [{"path": f"/home/ubuntu/output/chart.{suffix}", "kind": "image"}]
     receipt = {"path": items[0]["path"], "expected_kind": "image", "kind": "image", "valid": True,
                "reason": "validated", "sha256": "a" * 64, "size": 100,
-               "metadata": {"format": "PNG", "width": 10, "height": 10, "frames": 1}}
+               "metadata": {"format": image_format, "width": 10, "height": 10, "frames": 1}}
     requests = []
     def respond(request):
         requests.append(request)
@@ -18,7 +22,7 @@ async def test_artifact_validation_adapter_uses_batch_read_only_api():
     sandbox.base_url = "http://sandbox.test"
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         sandbox.client = client
-        result = await sandbox.validate_artifacts(items)
+        result = await sandbox.validate_artifacts(items, purpose="content")
     assert result.success is True
     assert result.data["files"] == [receipt]
     assert len(requests) == 1
@@ -28,7 +32,8 @@ async def test_artifact_validation_adapter_uses_batch_read_only_api():
 
 @pytest.mark.parametrize("failure", ["404", "500", "timeout", "not_json", "bad_version", "missing_files"])
 @pytest.mark.asyncio
-async def test_missing_validation_never_falls_back_to_existence(failure):
+async def test_missing_validation_never_falls_back_to_existence(failure, monkeypatch):
+    monkeypatch.setattr("app.infrastructure.external.sandbox.docker_sandbox.asyncio.sleep", AsyncMock())
     calls = []
     def respond(request):
         calls.append(request.url.path)
@@ -44,11 +49,11 @@ async def test_missing_validation_never_falls_back_to_existence(failure):
     sandbox.base_url = "http://sandbox.test"
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         sandbox.client = client
-        result = await sandbox.validate_artifacts([{"path": "/home/ubuntu/output/chart.png", "kind": "image"}])
+        result = await sandbox.validate_artifacts([{"path": "/home/ubuntu/output/chart.png", "kind": "image"}], purpose="content")
     assert result.success is False
-    assert result.data == {"version": 1, "code": "validation_unavailable", "files": []}
+    assert result.data == {"version": 1, "purpose": "content", "code": "validation_unavailable", "files": []}
     assert "private" not in result.model_dump_json()
-    assert calls == ["/api/v1/file/validate-artifacts"]
+    assert calls == ["/api/v1/file/validate-artifacts"] * (3 if failure in {"500", "timeout"} else 1)
 
 
 @pytest.mark.parametrize("mode", ["valid", "partial", "404", "timeout", "malformed"])
@@ -79,3 +84,21 @@ async def test_analysis_fingerprints_have_no_legacy_fallback(mode):
     elif mode not in {"valid"}:
         assert result.data["code"] == "snapshot_unavailable"
     assert calls == ["/api/v1/file/analysis-fingerprints"]
+
+
+@pytest.mark.asyncio
+async def test_upload_fingerprint_adapter_preserves_the_exact_controller_allowlist():
+    path = "/home/ubuntu/inputs/" + "a" * 24 + "/measurements.csv"
+    payloads = []
+    def respond(request):
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"success": True, "data": {
+            "version": 1, "files": [{"path": path, "size": 4, "sha256": "b" * 64}], "errors": [],
+        }})
+    sandbox = DockerSandbox.__new__(DockerSandbox)
+    sandbox.base_url = "http://sandbox.test"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        sandbox.client = client
+        result = await sandbox.analysis_fingerprints([path], approved_upload_paths=[path])
+    assert result.success is True
+    assert payloads == [{"paths": [path], "approved_upload_paths": [path]}]

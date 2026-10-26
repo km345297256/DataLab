@@ -1,0 +1,7 @@
+{
+  "scenario": "Artificial complex ahnt2z9s call30; immutable malformed oracle review. No user analysis data.",
+  "file": "138-synthetic_plan_review-response.json",
+  "sha256": "75231c427557e32bb6bbbfaf6b8489e62ae7b49f5b442475c1d163b4b2b7ea7d",
+  "request": "135-synthetic_plan_review-request.json",
+  "decision": "boundary method_coverage rejected before malformed closing suffix"
+}

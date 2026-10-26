@@ -1,0 +1,883 @@
+#!/usr/bin/env python3
+"""纵向研究多方法分析报告生成脚本。
+
+读取只读 JSON 输入，完成全部校验后执行六个独立计算函数：
+质量画像、配对符号置换、组间标签置换与效应量、相关与 OLS、
+家族多重校正、长宽转换。全部成功后才在输出目录写出
+report.json 与 wide.csv。仅使用 Python 标准库。
+
+本脚本依据方法契约重新实现，尚需由宿主在新数据或合成数据上独立运行验证。
+"""
+
+import argparse
+import csv
+import itertools
+import json
+import math
+import statistics
+from pathlib import Path
+
+ROLES = (
+    "id",
+    "group",
+    "feature",
+    "value",
+    "unit",
+    "before",
+    "after",
+    "x",
+    "y",
+    "family",
+    "p",
+)
+
+TABLES = ("observations", "pairs", "associations", "hypotheses", "long_rows")
+
+DEFAULT_UNITS = {"mg": 1.0, "ug": 0.001}
+
+MAD_CONSTANT = 0.67448975
+
+PERMUTATION_TOLERANCE = 1e-12
+
+MIN_PAIRED = 2
+MAX_PAIRED = 12
+MAX_COMBINED = 12
+MIN_ASSOCIATION = 2
+
+PIVOT_KEY = "id"
+
+
+def require_number(value, label, nullable=False):
+    """校验有限非布尔数值；nullable 为真时允许 None。"""
+    if value is None:
+        if nullable:
+            return None
+        raise ValueError(f"{label} 不能为 null")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} 必须是有限数值（非布尔、非字符串）")
+    if not math.isfinite(value):
+        raise ValueError(f"{label} 必须是有限数值（拒绝 NaN/Infinity）")
+    return value
+
+
+def require_text(value, label):
+    """校验非空字符串标识。"""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} 必须是非空字符串")
+    return value
+
+
+def require_positive(value, label):
+    """校验正有限非布尔数值。"""
+    number = require_number(value, label)
+    if number <= 0:
+        raise ValueError(f"{label} 必须为正数")
+    return number
+
+
+def quantile(values, probability):
+    """线性插值分位数，位置为 (n-1)p。"""
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
+def describe(values):
+    """描述统计；n=0 时 sum=0，其余位置统计量为 null。"""
+    count = len(values)
+    if count == 0:
+        return {
+            "n": 0,
+            "sum": 0,
+            "mean": None,
+            "median": None,
+            "q1": None,
+            "q3": None,
+            "minimum": None,
+            "maximum": None,
+            "sample_sd": None,
+            "standard_error": None,
+        }
+
+    mean = statistics.mean(values)
+    total = sum(values)
+    if count > 1:
+        variance = sum((value - mean) ** 2 for value in values) / (count - 1)
+        sample_sd = math.sqrt(variance)
+        standard_error = math.sqrt(variance / count)
+    else:
+        sample_sd = None
+        standard_error = None
+
+    return {
+        "n": count,
+        "sum": total,
+        "mean": mean,
+        "median": quantile(values, 0.5),
+        "q1": quantile(values, 0.25),
+        "q3": quantile(values, 0.75),
+        "minimum": min(values),
+        "maximum": max(values),
+        "sample_sd": sample_sd,
+        "standard_error": standard_error,
+    }
+
+
+def average_ranks(values):
+    """对并列值赋平均秩。"""
+    order = sorted(range(len(values)), key=lambda index: values[index])
+    ranks = [0.0] * len(values)
+    cursor = 0
+    while cursor < len(order):
+        end = cursor + 1
+        while end < len(order) and values[order[end]] == values[order[cursor]]:
+            end += 1
+        average = (cursor + 1 + end) / 2.0
+        for position in range(cursor, end):
+            ranks[order[position]] = average
+        cursor = end
+    return ranks
+
+
+def pearson(x, y):
+    """基于中心化平方和的 Pearson 相关；任一变量零方差返回 None。"""
+    if len(x) < 2:
+        return None
+    mx = statistics.mean(x)
+    my = statistics.mean(y)
+    xx = sum((value - mx) ** 2 for value in x)
+    yy = sum((value - my) ** 2 for value in y)
+    xy = sum((left - mx) * (right - my) for left, right in zip(x, y))
+    if xx <= 0 or yy <= 0:
+        return None
+    return xy / math.sqrt(xx * yy)
+
+
+def parse_json_object_text(text, label):
+    """解析 CLI 传入的 JSON 对象文本。"""
+    if text is None:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} 不是有效 JSON: {exc.msg}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{label} 必须是 JSON 对象")
+    return parsed
+
+
+def validate_fields(raw_fields, label):
+    """校验 11 个字段角色映射，未给出的角色使用角色名本身。"""
+    if not isinstance(raw_fields, dict):
+        raise ValueError(f"{label} 必须是对象")
+
+    unknown = sorted(str(key) for key in raw_fields if key not in ROLES)
+    if unknown:
+        raise ValueError(f"{label} 含未知角色键: {', '.join(unknown)}")
+
+    mapping = {}
+    for role in ROLES:
+        mapping[role] = require_text(raw_fields.get(role, role), f"{label}.{role}")
+
+    if len(set(mapping.values())) != len(mapping):
+        raise ValueError(f"{label} 映射值必须互不相同")
+    return mapping
+
+
+def validate_units(raw_units, label):
+    """校验单位到正有限因子的映射。"""
+    if not isinstance(raw_units, dict) or not raw_units:
+        raise ValueError(f"{label} 必须是非空对象")
+
+    factors = {}
+    for unit, factor in raw_units.items():
+        require_text(unit, f"{label} 的键")
+        factors[unit] = require_positive(factor, f"{label}[{unit}]")
+    return factors
+
+
+def resolve_config(data, cli_overrides, cli_fields, cli_units):
+    """解析 fields、units、alpha、阈值、scale 与组名；CLI 覆盖优先。"""
+    fields_source = cli_fields if cli_fields is not None else data.get("fields", {})
+    mapping = validate_fields(
+        fields_source,
+        "--fields-json" if cli_fields is not None else "fields",
+    )
+
+    units_source = (
+        cli_units if cli_units is not None else data.get("units", DEFAULT_UNITS)
+    )
+    units = validate_units(
+        units_source,
+        "--units-json" if cli_units is not None else "units",
+    )
+
+    def pick(name, default):
+        if cli_overrides.get(name) is not None:
+            return cli_overrides[name]
+        return data.get(name, default)
+
+    alpha = require_number(pick("alpha", 0.05), "alpha")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha 必须满足 0<alpha<1")
+
+    mad_threshold = require_positive(pick("mad_threshold", 3.5), "mad_threshold")
+    iqr_multiplier = require_positive(pick("iqr_multiplier", 1.5), "iqr_multiplier")
+    scale = require_positive(pick("scale", 1), "scale")
+    group_a = require_text(pick("group_a", "A"), "group_a")
+    group_b = require_text(pick("group_b", "B"), "group_b")
+    if group_a == group_b:
+        raise ValueError("group_a 与 group_b 必须不同")
+
+    return {
+        "mapping": mapping,
+        "units": units,
+        "alpha": alpha,
+        "mad_threshold": mad_threshold,
+        "iqr_multiplier": iqr_multiplier,
+        "scale": scale,
+        "group_a": group_a,
+        "group_b": group_b,
+    }
+
+
+def make_field_reader(mapping):
+    """返回按角色读取行字段的函数；缺列时报告缺失角色名。"""
+
+    def field(row, role):
+        column = mapping[role]
+        if column not in row:
+            raise ValueError(f"缺少字段角色 {role}（列名 {column}）")
+        return row[column]
+
+    return field
+
+
+def compute_profiles(rows, field, units, mad_threshold, iqr_multiplier):
+    """质量画像：按 group、feature 分组，保留全缺失组。"""
+    buckets = {}
+    seen = set()
+
+    for row in rows:
+        identifier = require_text(field(row, "id"), "observations.id")
+        group = require_text(field(row, "group"), "observations.group")
+        feature = require_text(field(row, "feature"), "observations.feature")
+        unit = require_text(field(row, "unit"), "observations.unit")
+
+        if unit not in units:
+            raise ValueError("observations 出现未知单位")
+
+        key = (identifier, feature)
+        if key in seen:
+            raise ValueError("observations 的 (id,feature) 组合重复")
+        seen.add(key)
+
+        value = require_number(field(row, "value"), "observations.value", nullable=True)
+        entry = buckets.setdefault(
+            (group, feature),
+            {"rows": 0, "missing": 0, "values": []},
+        )
+        entry["rows"] += 1
+
+        if value is None:
+            entry["missing"] += 1
+        else:
+            converted = require_number(
+                value * units[unit],
+                "observations.value 单位转换",
+            )
+            entry["values"].append(converted)
+
+    profiles = []
+    for (group, feature), entry in sorted(buckets.items()):
+        values = entry["values"]
+        summary = describe(values)
+        median = summary["median"]
+
+        if values:
+            mad = quantile([abs(value - median) for value in values], 0.5)
+            iqr = summary["q3"] - summary["q1"]
+        else:
+            mad = None
+            iqr = None
+
+        if mad is not None and mad > 0:
+            mad_outliers = sum(
+                1
+                for value in values
+                if abs(MAD_CONSTANT * (value - median) / mad) > mad_threshold
+            )
+        else:
+            mad_outliers = 0
+
+        if values:
+            lower = summary["q1"] - iqr_multiplier * iqr
+            upper = summary["q3"] + iqr_multiplier * iqr
+            iqr_outliers = sum(
+                1 for value in values if value < lower or value > upper
+            )
+        else:
+            iqr_outliers = 0
+
+        profiles.append(
+            {
+                "group": group,
+                "feature": feature,
+                "rows": entry["rows"],
+                "missing": entry["missing"],
+                "zeros": sum(1 for value in values if value == 0),
+                **summary,
+                "mad": mad,
+                "iqr": iqr,
+                "mad_outliers": mad_outliers,
+                "iqr_outliers": iqr_outliers,
+            }
+        )
+
+    return profiles
+
+
+def compute_paired(rows, field):
+    """配对分析：剔除含 null 的整对，枚举全部符号组合。"""
+    groups = {}
+    seen = set()
+
+    for row in rows:
+        identifier = require_text(field(row, "id"), "pairs.id")
+        group = require_text(field(row, "group"), "pairs.group")
+        if identifier in seen:
+            raise ValueError("pairs.id 在表内重复")
+        seen.add(identifier)
+
+        before = require_number(field(row, "before"), "pairs.before", nullable=True)
+        after = require_number(field(row, "after"), "pairs.after", nullable=True)
+
+        entry = groups.setdefault(group, {"excluded": 0, "diffs": []})
+        if before is None or after is None:
+            entry["excluded"] += 1
+        else:
+            entry["diffs"].append(
+                require_number(after - before, "pairs 差值")
+            )
+
+    paired = []
+    for group, entry in sorted(groups.items()):
+        diffs = entry["diffs"]
+        if not MIN_PAIRED <= len(diffs) <= MAX_PAIRED:
+            raise ValueError(
+                f"pairs 组 {group} 的完整配对数不在 {MIN_PAIRED} 至 {MAX_PAIRED} 之间"
+            )
+
+        summary = describe(diffs)
+        permutations = 2 ** len(diffs)
+        original_mean = summary["mean"]
+        extreme = 0
+
+        for signs in itertools.product((1, -1), repeat=len(diffs)):
+            flipped = (
+                sum(sign * value for sign, value in zip(signs, diffs))
+                / len(diffs)
+            )
+            if abs(flipped) >= abs(original_mean) - PERMUTATION_TOLERANCE:
+                extreme += 1
+
+        paired.append(
+            {
+                "group": group,
+                "excluded": entry["excluded"],
+                **summary,
+                "permutations": permutations,
+                "p_value": extreme / permutations,
+                "direction": "after-minus-before",
+            }
+        )
+
+    return paired, groups
+
+
+def compute_comparison(pair_groups, group_a, group_b):
+    """组间比较：精确标签置换与描述性效应量。"""
+    if group_a not in pair_groups or group_b not in pair_groups:
+        raise ValueError(f"组间比较缺少组 {group_a} 或 {group_b}")
+
+    left = pair_groups[group_a]["diffs"]
+    right = pair_groups[group_b]["diffs"]
+    na = len(left)
+    nb = len(right)
+    if na < 2 or nb < 2:
+        raise ValueError("组间比较的两组完整配对数均至少为 2")
+    if na + nb > MAX_COMBINED:
+        raise ValueError(f"组间比较总配对数超过 {MAX_COMBINED}")
+
+    combined = left + right
+    mean_a = statistics.mean(left)
+    mean_b = statistics.mean(right)
+    var_a = statistics.variance(left)
+    var_b = statistics.variance(right)
+    difference = mean_b - mean_a
+
+    permutations = 0
+    extreme = 0
+    for selected in itertools.combinations(range(na + nb), na):
+        chosen = set(selected)
+        a_values = [value for index, value in enumerate(combined) if index in chosen]
+        b_values = [value for index, value in enumerate(combined) if index not in chosen]
+        statistic = statistics.mean(b_values) - statistics.mean(a_values)
+        permutations += 1
+        if abs(statistic) >= abs(difference) - PERMUTATION_TOLERANCE:
+            extreme += 1
+
+    se_squared = var_a / na + var_b / nb
+    standard_error = math.sqrt(se_squared)
+
+    welch_t = difference / standard_error if standard_error != 0 else None
+
+    df_denominator = (
+        (var_a / na) ** 2 / (na - 1)
+        + (var_b / nb) ** 2 / (nb - 1)
+    )
+    welch_df = (
+        (se_squared ** 2) / df_denominator
+        if df_denominator > 0
+        else None
+    )
+
+    pooled_variance = (
+        (na - 1) * var_a + (nb - 1) * var_b
+    ) / (na + nb - 2)
+    pooled_sd = math.sqrt(pooled_variance)
+
+    cohen_d = difference / pooled_sd if pooled_sd != 0 else None
+    hedges_correction = 1 - 3 / (4 * (na + nb - 2) - 1)
+    hedges_g = hedges_correction * cohen_d if cohen_d is not None else None
+
+    return {
+        "group_a": group_a,
+        "group_b": group_b,
+        "n_a": na,
+        "n_b": nb,
+        "mean_a": mean_a,
+        "mean_b": mean_b,
+        "difference_b_minus_a": difference,
+        "permutations": permutations,
+        "p_value": extreme / permutations,
+        "standard_error": standard_error,
+        "welch_t": welch_t,
+        "welch_df": welch_df,
+        "pooled_sd": pooled_sd,
+        "cohen_d": cohen_d,
+        "hedges_correction": hedges_correction,
+        "hedges_g": hedges_g,
+    }
+
+
+def compute_association(rows, field):
+    """相关与含截距 OLS：完整案例删除缺失。"""
+    seen = set()
+    xs = []
+    ys = []
+    excluded = 0
+
+    for row in rows:
+        identifier = require_text(field(row, "id"), "associations.id")
+        if identifier in seen:
+            raise ValueError("associations.id 在表内重复")
+        seen.add(identifier)
+
+        x = require_number(field(row, "x"), "associations.x", nullable=True)
+        y = require_number(field(row, "y"), "associations.y", nullable=True)
+
+        if x is None or y is None:
+            excluded += 1
+        else:
+            xs.append(x)
+            ys.append(y)
+
+    n = len(xs)
+    if n < MIN_ASSOCIATION:
+        raise ValueError(f"associations 完整案例数少于 {MIN_ASSOCIATION}")
+
+    mx = statistics.mean(xs)
+    my = statistics.mean(ys)
+    sxx = sum((value - mx) ** 2 for value in xs)
+    syy = sum((value - my) ** 2 for value in ys)
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+
+    covariance = sxy / (n - 1)
+    pearson_r = pearson(xs, ys)
+    spearman_r = pearson(average_ranks(xs), average_ranks(ys))
+
+    if sxx > 0:
+        slope = sxy / sxx
+        intercept = my - slope * mx
+        sse = sum(
+            (y - (intercept + slope * x)) ** 2
+            for x, y in zip(xs, ys)
+        )
+        r_squared = 1 - sse / syy if syy > 0 else None
+        slope_se = (
+            math.sqrt(sse / (n - 2) / sxx)
+            if n > 2
+            else None
+        )
+    else:
+        slope = None
+        intercept = None
+        sse = None
+        r_squared = None
+        slope_se = None
+
+    return {
+        "n": n,
+        "excluded": excluded,
+        "mean_x": mx,
+        "mean_y": my,
+        "covariance": covariance,
+        "pearson": pearson_r,
+        "spearman": spearman_r,
+        "slope": slope,
+        "intercept": intercept,
+        "residual_df": n - 2,
+        "sse": sse,
+        "r_squared": r_squared,
+        "slope_se": slope_se,
+    }
+
+
+def compute_adjustments(rows, field, alpha):
+    """按 family 独立执行 BH、BY、Holm 与 Bonferroni 校正。"""
+    families = {}
+    seen = set()
+
+    for row in rows:
+        identifier = require_text(field(row, "id"), "hypotheses.id")
+        family = require_text(field(row, "family"), "hypotheses.family")
+        p_value = require_number(field(row, "p"), "hypotheses.p", nullable=True)
+
+        if identifier in seen:
+            raise ValueError("hypotheses.id 在全表内重复")
+        seen.add(identifier)
+
+        if p_value is not None and not 0 <= p_value <= 1:
+            raise ValueError("hypotheses.p 必须在 [0,1] 内或为 null")
+
+        families.setdefault(family, []).append((identifier, p_value))
+
+    adjustments = []
+    for family, entries in sorted(families.items()):
+        ordered = sorted(
+            ((identifier, p) for identifier, p in entries if p is not None),
+            key=lambda item: (item[1], item[0]),
+        )
+        m = len(ordered)
+        harmonic = sum(1 / index for index in range(1, m + 1))
+
+        bh = {}
+        by = {}
+        holm = {}
+
+        last_bh = 1.0
+        last_by = 1.0
+        for index in range(m - 1, -1, -1):
+            identifier, p = ordered[index]
+            rank = index + 1
+            last_bh = min(last_bh, p * m / rank)
+            last_by = min(last_by, p * m * harmonic / rank)
+            bh[identifier] = last_bh
+            by[identifier] = last_by
+
+        last_holm = 0.0
+        for index, (identifier, p) in enumerate(ordered):
+            adjusted_holm = min(1.0, p * (m - index))
+            last_holm = max(last_holm, adjusted_holm)
+            holm[identifier] = last_holm
+
+        for identifier, p in sorted(entries, key=lambda item: item[0]):
+            if p is None:
+                bh_value = None
+                by_value = None
+                holm_value = None
+                bonferroni = None
+            else:
+                bh_value = bh[identifier]
+                by_value = by[identifier]
+                holm_value = holm[identifier]
+                bonferroni = min(1.0, m * p)
+
+            adjustments.append(
+                {
+                    "family": family,
+                    "id": identifier,
+                    "p": p,
+                    "family_size": m,
+                    "bh": bh_value,
+                    "by": by_value,
+                    "holm": holm_value,
+                    "bonferroni": bonferroni,
+                    "reject_bh": bh_value <= alpha if bh_value is not None else None,
+                    "reject_by": by_value <= alpha if by_value is not None else None,
+                    "reject_holm": holm_value <= alpha if holm_value is not None else None,
+                    "reject_bonferroni": (
+                        bonferroni <= alpha if bonferroni is not None else None
+                    ),
+                }
+            )
+
+    return adjustments
+
+
+def compute_pivot(rows, field, scale):
+    """长宽转换：返回 pivot 结构、宽表行与测量列名。"""
+    wide = {}
+    features = set()
+    cells = set()
+    explicit_missing = 0
+
+    for row in rows:
+        identifier = require_text(field(row, "id"), "long_rows.id")
+        feature = require_text(field(row, "feature"), "long_rows.feature")
+        value = require_number(field(row, "value"), "long_rows.value", nullable=True)
+
+        if feature == PIVOT_KEY:
+            raise ValueError(f"long_rows.feature 不得等于固定主键列名 {PIVOT_KEY}")
+
+        key = (identifier, feature)
+        if key in cells:
+            raise ValueError("long_rows 的 (id,feature) 组合重复")
+        cells.add(key)
+        features.add(feature)
+
+        if value is None:
+            explicit_missing += 1
+            wide.setdefault(identifier, {})[feature] = None
+        else:
+            scaled = require_number(
+                value * scale,
+                "long_rows.value 缩放",
+            )
+            wide.setdefault(identifier, {})[feature] = scaled
+
+    feature_list = sorted(features)
+    wide_rows = []
+    for identifier in sorted(wide):
+        row = {PIVOT_KEY: identifier}
+        for feature in feature_list:
+            row[feature] = wide[identifier].get(feature)
+        wide_rows.append(row)
+
+    pivot = {
+        "columns": [PIVOT_KEY, *feature_list],
+        "rows": wide_rows,
+        "quality": {
+            "source_rows": len(rows),
+            "output_rows": len(wide_rows),
+            "observed_missing": explicit_missing,
+            "absent_cells": len(wide_rows) * len(feature_list) - len(cells),
+        },
+    }
+
+    return pivot, wide_rows, feature_list
+
+
+def build_parser():
+    """构造统一 CLI。"""
+    parser = argparse.ArgumentParser(
+        description=(
+            "读取只读 JSON，执行质量画像、配对符号置换、组间标签置换、"
+            "相关与 OLS、家族多重校正、长宽转换，全部成功后写出 "
+            "report.json 与 wide.csv。"
+        ),
+        epilog=(
+            "输入 JSON 顶层必须包含 observations、pairs、associations、"
+            "hypotheses、long_rows 五个对象数组。"
+        ),
+    )
+    parser.add_argument("--input", required=True, help="只读 JSON 输入文件路径")
+    parser.add_argument("--output", required=True, help="独立输出目录路径")
+    parser.add_argument("--report-name", default="report.json", help="报告文件名")
+    parser.add_argument("--wide-name", default="wide.csv", help="宽表 CSV 文件名")
+    parser.add_argument(
+        "--fields-json",
+        default=None,
+        help="覆盖 JSON 内 fields 的 JSON 对象文本",
+    )
+    parser.add_argument(
+        "--units-json",
+        default=None,
+        help="覆盖 JSON 内 units 的 JSON 对象文本",
+    )
+    parser.add_argument("--alpha", type=float, default=None, help="覆盖 alpha")
+    parser.add_argument(
+        "--mad-threshold",
+        type=float,
+        default=None,
+        help="覆盖 mad_threshold",
+    )
+    parser.add_argument(
+        "--iqr-multiplier",
+        type=float,
+        default=None,
+        help="覆盖 iqr_multiplier",
+    )
+    parser.add_argument("--scale", type=float, default=None, help="覆盖 scale")
+    parser.add_argument("--group-a", default=None, help="覆盖 group_a")
+    parser.add_argument("--group-b", default=None, help="覆盖 group_b")
+    return parser
+
+
+def validate_output_name(name, label):
+    """校验输出文件名。"""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"{label} 必须是非空文件名")
+    if name in (".", ".."):
+        raise ValueError(f"{label} 不能是 . 或 ..")
+    if "/" in name or "\\" in name:
+        raise ValueError(f"{label} 不得包含路径分隔符")
+    if "\x00" in name:
+        raise ValueError(f"{label} 不得包含空字符")
+    return name
+
+
+def main(argv=None):
+    """读取参数、校验、计算并在全部成功后写出产物。"""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if not isinstance(args.input, str) or not args.input.strip():
+        raise ValueError("--input 必须是非空路径")
+    if not isinstance(args.output, str) or not args.output.strip():
+        raise ValueError("--output 必须是非空目录路径")
+
+    input_path = Path(args.input).resolve()
+    output_path = Path(args.output).resolve()
+
+    if input_path == output_path:
+        raise ValueError("--input 与 --output 解析后的实际路径必须不同")
+
+    report_name = validate_output_name(args.report_name, "--report-name")
+    wide_name = validate_output_name(args.wide_name, "--wide-name")
+    if report_name == wide_name:
+        raise ValueError("--report-name 与 --wide-name 必须不同")
+
+    report_path = output_path / report_name
+    wide_path = output_path / wide_name
+
+    if report_path.resolve() == input_path or wide_path.resolve() == input_path:
+        raise ValueError("输出文件路径不得与输入文件路径相同")
+    if report_path.resolve() == wide_path.resolve():
+        raise ValueError("报告与宽表的输出路径必须不同")
+
+    if output_path.exists() and not output_path.is_dir():
+        raise ValueError("--output 必须指向目录")
+    if not input_path.is_file():
+        raise ValueError("--input 必须指向存在的文件")
+
+    with input_path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    if not isinstance(data, dict):
+        raise ValueError("输入 JSON 顶层必须是对象")
+
+    for table in TABLES:
+        if table not in data:
+            raise ValueError(f"输入 JSON 缺少必需表: {table}")
+        value = data[table]
+        if not isinstance(value, list):
+            raise ValueError(f"表 {table} 必须是对象数组")
+        for row in value:
+            if not isinstance(row, dict):
+                raise ValueError(f"表 {table} 的每一行必须是对象")
+
+    cli_fields = parse_json_object_text(args.fields_json, "--fields-json")
+    cli_units = parse_json_object_text(args.units_json, "--units-json")
+
+    cli_overrides = {
+        "alpha": args.alpha,
+        "mad_threshold": args.mad_threshold,
+        "iqr_multiplier": args.iqr_multiplier,
+        "scale": args.scale,
+        "group_a": args.group_a,
+        "group_b": args.group_b,
+    }
+
+    config = resolve_config(data, cli_overrides, cli_fields, cli_units)
+    field = make_field_reader(config["mapping"])
+
+    profiles = compute_profiles(
+        data["observations"],
+        field,
+        config["units"],
+        config["mad_threshold"],
+        config["iqr_multiplier"],
+    )
+    paired, pair_groups = compute_paired(data["pairs"], field)
+    comparison = compute_comparison(
+        pair_groups,
+        config["group_a"],
+        config["group_b"],
+    )
+    association = compute_association(data["associations"], field)
+    adjustments = compute_adjustments(data["hypotheses"], field, config["alpha"])
+    pivot, wide_rows, feature_list = compute_pivot(
+        data["long_rows"],
+        field,
+        config["scale"],
+    )
+
+    quality = {
+        "observation_rows": len(data["observations"]),
+        "profile_count": len(profiles),
+        "complete_pairs": sum(
+            len(entry["diffs"]) for entry in pair_groups.values()
+        ),
+        "excluded_pairs": sum(
+            entry["excluded"] for entry in pair_groups.values()
+        ),
+        "association_complete": association["n"],
+        "association_excluded": association["excluded"],
+        "hypotheses": len(data["hypotheses"]),
+    }
+
+    report = {
+        "profiles": profiles,
+        "paired": paired,
+        "comparison": comparison,
+        "association": association,
+        "adjustments": adjustments,
+        "pivot": pivot,
+        "quality": quality,
+    }
+
+    report_text = json.dumps(
+        report,
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    )
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report_text + "\n", encoding="utf-8")
+
+    with wide_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow([PIVOT_KEY, *feature_list])
+        for row in wide_rows:
+            writer.writerow(
+                [row[PIVOT_KEY]]
+                + [
+                    "" if row[feature] is None else row[feature]
+                    for feature in feature_list
+                ]
+            )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -41,7 +41,8 @@
 
     <main class="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
       <div class="mx-auto max-w-[1200px]">
-        <ResourceUsageManagement v-if="activeTab === 'resources'" />
+        <RegistrationManagement v-if="activeTab === 'accounts'" />
+        <ResourceUsageManagement v-else-if="activeTab === 'resources'" />
         <ResourceConfigurationManagement v-else-if="activeTab === 'resource-config'" />
         <TaskManagement v-else-if="activeTab === 'tasks'" />
         <MCPManagement v-else-if="activeTab === 'mcp'" />
@@ -55,6 +56,7 @@
 import { ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { PanelLeft } from 'lucide-vue-next';
+import RegistrationManagement from '@/components/admin/RegistrationManagement.vue';
 import ResourceUsageManagement from '@/components/admin/ResourceUsageManagement.vue';
 import ResourceConfigurationManagement from '@/components/admin/ResourceConfigurationManagement.vue';
 import TaskManagement from '@/components/admin/TaskManagement.vue';
@@ -62,8 +64,9 @@ import MCPManagement from '@/components/admin/MCPManagement.vue';
 import SkillManagement from '@/components/admin/SkillManagement.vue';
 import { useLeftPanel } from '@/composables/useLeftPanel';
 
-type AdminTab = 'resources' | 'resource-config' | 'tasks' | 'mcp' | 'skills';
+type AdminTab = 'accounts' | 'resources' | 'resource-config' | 'tasks' | 'mcp' | 'skills';
 const tabs: Array<{ key: AdminTab; label: string }> = [
+  { key: 'accounts', label: '用户与权限' },
   { key: 'resources', label: '资源用量' },
   { key: 'resource-config', label: '资源配置' },
   { key: 'tasks', label: '任务管理' },

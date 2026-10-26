@@ -5,10 +5,10 @@
             style="background-image: linear-gradient(270deg, var(--gradual-white-0) 0%, var(--fill-input-chat) 100%);">
             <div
                 class="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border-white)] bg-[var(--background-menu-white)] overflow-hidden cursor-pointer hover:bg-[var(--fill-tsp-primary)] shadow-[0_0_1.25px_0_var(--shadow-M),0_5px_16px_0_var(--shadow-M)] backdrop-blur-[40px]">
-                <div @click="scrollLeft"
+                <button type="button" aria-label="向左查看文件" @click="scrollLeft"
                     class="flex w-full h-full items-center justify-center bg-[var(--background-menu-white)] cursor-pointer hover:bg-[var(--fill-tsp-white-main)] shadow-[0_0_1.25px_0_var(--shadow-M),0_5px_16px_0_var(--shadow-M)]">
                     <ChevronLeft :size="14" />
-                </div>
+                </button>
             </div>
         </div>
         <div ref="scrollContainer" @scroll="onScroll"
@@ -40,8 +40,9 @@
                             <div v-if="file.status === 'failed'"
                                 class="text-[var(--function-error)] text-xs flex items-center gap-1">
                                 {{ t('Upload failed') }}
-                                <RefreshCcw @click.stop="retryUpload(file)" class="clickable hover:opacity-85 cursor-pointer"
-                                    :size="14" />
+                                <button type="button" :aria-label="`重试上传 ${file.filename}`" class="hover:opacity-85" @click.stop="retryUpload(file)">
+                                    <RefreshCcw :size="14" />
+                                </button>
                             </div>
                             <div v-else-if="file.status === 'uploading'">
                                 {{ t('Uploading...') }}<span v-if="typeof file.progress === 'number'"> {{ Math.floor(file.progress) }}%</span>
@@ -57,30 +58,29 @@
             style="background-image: linear-gradient(90deg, var(--gradual-white-0) 0%, var(--fill-input-chat) 100%);">
             <div
                 class="flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border-white)] bg-[var(--background-menu-white)] overflow-hidden cursor-pointer hover:bg-[var(--fill-tsp-primary)] shadow-[0_0_1.25px_0_var(--shadow-M),0_5px_16px_0_var(--shadow-M)] backdrop-blur-[40px]">
-                <div @click="scrollRight"
+                <button type="button" aria-label="向右查看文件" @click="scrollRight"
                     class="flex w-full h-full items-center justify-center bg-[var(--background-menu-white)] cursor-pointer hover:bg-[var(--fill-tsp-white-main)] shadow-[0_0_1.25px_0_var(--shadow-M),0_5px_16px_0_var(--shadow-M)]">
                     <ChevronRight :size="14" />
-                </div>
+                </button>
             </div>
         </div>
     </div>
     <!-- Hidden file input -->
     <input ref="fileInput" type="file" multiple class="hidden" @change="handleFileSelect" />
-    <input ref="largeFileInput" type="file" multiple class="hidden" @change="handleLargeFileSelect" />
 </template>
 
 <script setup lang="ts">
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next';
 import type { FileInfo } from '../api/file';
 import {
+    abortLargeUpload,
     completeLargeUpload,
     initLargeUpload,
-    uploadFile as apiUploadFile,
     uploadLargeFilePart,
 } from '../api/file';
 import { getFileType, getFileTypeText, formatFileSize } from '../utils/fileType';
 import { useI18n } from 'vue-i18n';
-import { ref, nextTick, watch, onMounted, computed } from 'vue';
+import { ref, nextTick, watch, onMounted, onUnmounted, computed } from 'vue';
 import { X, RefreshCcw } from 'lucide-vue-next';
 import LoadingSpinnerIcon from './icons/LoadingSpinnerIcon.vue';
 const { t } = useI18n();
@@ -96,18 +96,18 @@ const { showFilePanel } = useFilePanel();
 interface ExtendedFileInfo extends FileInfo {
     status?: 'uploading' | 'success' | 'failed';
     file?: File | null; // Keep reference to original file for retry
-    uploadMode?: 'normal' | 'large';
     progress?: number;
 }
 
 const files = ref<ExtendedFileInfo[]>(props.attachments);
+let disposed = false;
+onUnmounted(() => { disposed = true; });
 const fileInput = ref<HTMLInputElement>();
-const largeFileInput = ref<HTMLInputElement>();
 const scrollContainer = ref<HTMLElement>();
 
 watch(() => props.attachments, (newVal) => {
     files.value = newVal;
-});
+}, { flush: 'sync' });
 
 // Scroll state
 const canScrollLeft = ref(false);
@@ -115,10 +115,6 @@ const canScrollRight = ref(false);
 
 const uploadFile = () => {
     fileInput.value?.click();
-};
-
-const uploadLargeFile = () => {
-    largeFileInput.value?.click();
 };
 
 const getFiles = () => {
@@ -133,74 +129,20 @@ const handleFileSelect = async (event: Event) => {
         return;
     }
 
-    // Process each selected file
+    const owner = files.value;
     for (const file of Array.from(selectedFiles)) {
-        await processFileUpload(file);
+        if (disposed || files.value !== owner) break;
+        await processLargeFileUpload(file);
     }
 
     // Clear the input value to allow selecting the same file again
     target.value = '';
 };
 
-const handleLargeFileSelect = async (event: Event) => {
-    const target = event.target as HTMLInputElement;
-    const selectedFiles = target.files;
-
-    if (!selectedFiles || selectedFiles.length === 0) {
-        return;
-    }
-
-    for (const file of Array.from(selectedFiles)) {
-        await processLargeFileUpload(file);
-    }
-
-    target.value = '';
-};
-
-const processFileUpload = async (file: File) => {
-    // Create temporary file info for UI
-    const tempFileInfo: ExtendedFileInfo = {
-        file_id: `temp-${Date.now()}-${Math.random()}`,
-        filename: file.name,
-        content_type: file.type,
-        size: file.size,
-        upload_date: new Date().toISOString(),
-        status: 'uploading',
-        file: file,
-        uploadMode: 'normal',
-        progress: 0,
-    };
-
-    // Add to files list with uploading status
-    files.value.push(tempFileInfo);
-
-    try {
-        // Upload the file
-        const uploadedFile = await apiUploadFile(file);
-
-        // Update the file info with successful upload
-        const index = files.value.findIndex(f => f.file_id === tempFileInfo.file_id);
-        if (index !== -1) {
-            files.value[index] = {
-                ...uploadedFile,
-                status: 'success',
-                file: null,
-                progress: 100,
-            };
-        }
-    } catch (error) {
-        console.error('Upload failed:', error);
-
-        // Update status to failed
-        const index = files.value.findIndex(f => f.file_id === tempFileInfo.file_id);
-        if (index !== -1) {
-            files.value[index].status = 'failed';
-        }
-    }
-};
-
-const processLargeFileUpload = async (file: File) => {
-    const tempFileInfo: ExtendedFileInfo = {
+const processLargeFileUpload = async (file: File, retryFile?: ExtendedFileInfo) => {
+    if (disposed) return;
+    const owner = files.value;
+    const tempFileInfo: ExtendedFileInfo = retryFile ?? {
         file_id: `temp-large-${Date.now()}-${Math.random()}`,
         filename: file.name,
         content_type: file.type || 'application/octet-stream',
@@ -208,26 +150,36 @@ const processLargeFileUpload = async (file: File) => {
         upload_date: new Date().toISOString(),
         status: 'uploading',
         file,
-        uploadMode: 'large',
         progress: 0,
     };
 
-    files.value.push(tempFileInfo);
+    tempFileInfo.status = 'uploading';
+    tempFileInfo.progress = 0;
+    if (!retryFile) files.value.push(tempFileInfo);
+    const isCurrent = () => !disposed && files.value === owner
+        && owner.some(item => item.file_id === tempFileInfo.file_id);
     const updateProgress = (loadedBytes: number) => {
+        if (!isCurrent()) return;
         const index = files.value.findIndex(f => f.file_id === tempFileInfo.file_id);
         if (index !== -1) {
-            files.value[index].progress = Math.min(99, (loadedBytes / file.size) * 100);
+            files.value[index].progress = file.size > 0 ? Math.min(99, (loadedBytes / file.size) * 100) : 0;
         }
     };
 
+    let uploadId: string | undefined;
+    let completed = false;
+    let uploadFailed = false;
     try {
         const upload = await initLargeUpload(file);
+        uploadId = upload.upload_id;
+        if (!isCurrent()) return;
         const partSize = upload.part_size;
         const totalParts = Math.ceil(file.size / partSize);
         const loadedByPart = new Map<number, number>();
         const completedParts: { part_number: number; etag: string; size: number }[] = [];
         const concurrency = 3;
         let nextPartNumber = 1;
+        let failed = false;
 
         const uploadOnePart = async (partNumber: number) => {
             const start = (partNumber - 1) * partSize;
@@ -250,30 +202,49 @@ const processLargeFileUpload = async (file: File) => {
         };
 
         const worker = async () => {
-            while (nextPartNumber <= totalParts) {
+            while (isCurrent() && !failed && nextPartNumber <= totalParts) {
                 const partNumber = nextPartNumber;
                 nextPartNumber += 1;
-                await uploadOnePart(partNumber);
+                try {
+                    await uploadOnePart(partNumber);
+                } catch (error) {
+                    failed = true;
+                    throw error;
+                }
             }
         };
 
-        await Promise.all(Array.from({ length: Math.min(concurrency, totalParts) }, () => worker()));
+        // Settle in-flight parts before cleanup, so retry cannot race old workers.
+        const results = await Promise.allSettled(Array.from({ length: Math.min(concurrency, totalParts) }, () => worker()));
+        const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (failure) throw failure.reason;
+        if (!isCurrent()) return;
         const uploadedFile = await completeLargeUpload(upload.upload_id, completedParts);
+        completed = true;
+        if (!isCurrent()) return;
         const index = files.value.findIndex(f => f.file_id === tempFileInfo.file_id);
         if (index !== -1) {
             files.value[index] = {
                 ...uploadedFile,
                 status: 'success',
                 file: null,
-                uploadMode: 'large',
                 progress: 100,
             };
         }
     } catch (error) {
-        console.error('Large upload failed:', error);
-        const index = files.value.findIndex(f => f.file_id === tempFileInfo.file_id);
-        if (index !== -1) {
-            files.value[index].status = 'failed';
+        if (isCurrent()) {
+            console.error('Large upload failed:', error);
+            uploadFailed = true;
+        }
+    } finally {
+        // Workers have settled before abort; a retry must never race old parts.
+        if (!completed && uploadId) {
+            try { await abortLargeUpload(uploadId); }
+            catch (cleanupError) { console.warn('Upload cleanup failed:', cleanupError); }
+        }
+        if (uploadFailed && isCurrent()) {
+            const index = files.value.findIndex(f => f.file_id === tempFileInfo.file_id);
+            if (index !== -1) files.value[index].status = 'failed';
         }
     }
 };
@@ -286,40 +257,11 @@ const removeFile = (fileId: string) => {
 };
 
 const retryUpload = async (fileInfo: ExtendedFileInfo) => {
-    if (!fileInfo.file) {
+    if (disposed || fileInfo.status !== 'failed' || !fileInfo.file) {
         return;
     }
 
-    // Reset status to uploading
-    fileInfo.status = 'uploading';
-
-    try {
-        // Retry upload
-        const uploadedFile = fileInfo.uploadMode === 'large'
-            ? await (async () => {
-                await processLargeFileUpload(fileInfo.file as File);
-                return null;
-            })()
-            : await apiUploadFile(fileInfo.file);
-
-        if (!uploadedFile) {
-            removeFile(fileInfo.file_id);
-            return;
-        }
-
-        // Update with new file info
-        const index = files.value.findIndex(f => f.file_id === fileInfo.file_id);
-        if (index !== -1) {
-            files.value[index] = {
-                ...uploadedFile,
-                status: 'success',
-                file: null
-            };
-        }
-    } catch (error) {
-        console.error('Retry upload failed:', error);
-        fileInfo.status = 'failed';
-    }
+    await processLargeFileUpload(fileInfo.file, fileInfo);
 };
 
 // Check scroll position and update button visibility
@@ -359,6 +301,14 @@ const scrollRight = () => {
 };
 
 // Watch for changes in files to update scroll buttons
+// A collapsed composer keeps uploads mounted; recalculate when it is revealed.
+watch(scrollContainer, (element, _previous, onCleanup) => {
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updateScrollButtons);
+    observer.observe(element);
+    onCleanup(() => observer.disconnect());
+}, { flush: 'post' });
+
 watch(files, async () => {
     await nextTick();
     updateScrollButtons();
@@ -372,18 +322,17 @@ onMounted(() => {
 });
 
 const isAllUploaded = computed(() => {
-    return files.value.every(file => file.status === 'success');
+    return files.value.every(file => Boolean(file.file_id) && !file.file_id.startsWith('temp-') && (!file.status || file.status === 'success'));
 });
 
 const handleFileClick = (file: ExtendedFileInfo) => {
-    if (file.status === 'success') {
-        showFilePanel(file);
+    if (file.file_id && !file.file_id.startsWith('temp-') && (!file.status || file.status === 'success')) {
+        showFilePanel(file, files.value.filter(item => item.file_id && !item.file_id.startsWith('temp-') && (!item.status || item.status === 'success')));
     }
 };
 
 defineExpose({
     uploadFile,
-    uploadLargeFile,
     getFiles,
     isAllUploaded
 });

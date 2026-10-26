@@ -15,6 +15,22 @@ function emit(options, event) {
 
 const response = () => new Response(null, { headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
 
+test('stream retries obtain current credentials instead of replaying an expired token', async () => {
+  let tokenReads = 0;
+  const headers = [];
+  const stream = startSSEConnection('/private-events', {
+    getHeaders: async () => ({ Authorization: `Bearer account-token-${++tokenReads}` }),
+  }, {}, {
+    wait: async () => {},
+    connect: async (_url, options) => {
+      headers.push(options.headers.Authorization);
+      if (headers.length === 1) throw new TypeError('Disconnected');
+    },
+  });
+  await stream.finished;
+  assert.deepEqual(headers, ['Bearer account-token-1', 'Bearer account-token-2']);
+});
+
 test('unavailable skill rejection has a safe actionable message and never retries', async () => {
   for (const code of ['skill-selection-unavailable', 'untrusted-error']) {
     const session = run([async options => options.onopen(new Response('private server detail', {

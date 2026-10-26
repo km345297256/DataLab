@@ -30,21 +30,12 @@
         <div class="flex flex-col w-full gap-[12px] pb-[80px] pt-[12px] flex-1 overflow-y-auto">
           <ChatMessage v-for="(message, index) in messages" :key="index" :message="message"
             :is-share="true"
+            :waiting-for-user="waitingForUser"
             :hideHeader="isConsecutiveAssistant(messages, index)"
             :show-assistant-actions="replayCompleted && isLatestAssistantMessage(messages, index)"
             @toolClick="handleToolClick" />
 
-          <div v-if="completionAdvice" class="rounded-xl border border-[var(--border-main)] bg-[var(--background-white-main)] p-4">
-            <div class="mb-2 text-sm font-medium text-[var(--text-primary)]">推荐追问</div>
-            <div class="flex flex-col gap-2 text-sm text-[var(--text-secondary)]">
-              <div v-for="(item, index) in completionAdvice.recommendations" :key="index" class="rounded-lg bg-[var(--background-gray-main)] px-3 py-2">
-                {{ item }}
-              </div>
-            </div>
-            <div v-if="completionAdvice.is_skill_candidate" class="mt-3 text-xs text-[var(--text-tertiary)]">
-              {{ completionAdvice.skill_reason }}
-            </div>
-          </div>
+          <CompletionAdvicePanel v-if="completionAdvice" :advice="completionAdvice" read-only />
 
           <!-- Loading indicator -->
           <LoadingIndicator v-if="isLoading" role="status" aria-live="polite" :text="analysisProgress || $t('Thinking')" />
@@ -55,7 +46,7 @@
             class="flex items-center justify-center w-[36px] h-[36px] rounded-full bg-[var(--background-white-main)] hover:bg-[var(--background-gray-main)] clickable border border-[var(--border-main)] shadow-[0px_5px_16px_0px_var(--shadow-S),0px_0px_1.25px_0px_var(--shadow-S)] absolute -top-20 left-1/2 -translate-x-1/2">
             <ArrowDown class="text-[var(--icon-primary)]" :size="20" />
           </button>
-          <PlanPanel v-if="plan && plan.steps.length > 0" :plan="plan" />
+          <PlanPanel :messages="messages" v-if="plan && plan.steps.length > 0" :plan="plan" />
           <div
             class="bg-[var(--background-white-main)] rounded-xl border border-[var(--border-main)] shadow-[0px_5px_16px_0px_var(--shadow-S),0px_0px_1.25px_0px_var(--shadow-XS)] backdrop-blur-3xl flex items-center justify-between py-[9px] pr-3 pl-4 sm:flex-row flex-col max-sm:gap-3 max-sm:p-2">
             <div class="flex items-center gap-0.5 w-full sm:flex-1">
@@ -110,6 +101,7 @@ import { computed, ref, onMounted, onUnmounted, watch, nextTick, reactive, toRef
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import ChatMessage from '../components/ChatMessage.vue';
+import CompletionAdvicePanel from '../components/CompletionAdvicePanel.vue';
 import * as agentApi from '../api/agent';
 import { getAdminTaskReplay } from '@/api/admin';
 import { Message, MessageContent, ToolContent, StepContent, AttachmentsContent, isConsecutiveAssistant } from '../types/message';
@@ -141,7 +133,7 @@ import {
   isLatestAssistantMessage,
   closeUnconfirmedSteps,
 } from '../utils/chatTimeline';
-import { isPlaceholderAssistantMessage } from '../utils/datasetResultPresentation';
+import { isPlaceholderAssistantMessage } from '../utils/analysisPresentation';
 import { isAnalysisProgressMessage } from '../utils/analysisProgress';
 import { useAnalysisProgress } from '../composables/useAnalysisProgress';
 import {
@@ -161,6 +153,7 @@ const { analysisProgress, updateAnalysisProgress, beginAnalysisProgress, clearAn
 const createInitialState = () => ({
   inputMessage: '',
   isLoading: false,
+  waitingForUser: false,
   sessionId: undefined as string | undefined,
   messages: [] as Message[],
   toolPanelSize: 0,
@@ -187,6 +180,7 @@ const state = reactive(createInitialState());
 // Destructure refs from reactive state
 const {
   isLoading,
+  waitingForUser,
   sessionId,
   messages,
   toolPanelSize,
@@ -241,13 +235,16 @@ const failActiveSteps = (currentTurnOnly = true) => {
   }
 };
 
-const startUserTurn = () => {
+const startUserTurn = (continuingClarification = false) => {
   beginAnalysisProgress();
+  waitingForUser.value = false;
   isLoading.value = true;
   toolPanel.value?.hideToolPanel();
   realTime.value = false;
-  failActiveSteps(false);
-  plan.value = undefined;
+  if (!continuingClarification) {
+    failActiveSteps(false);
+    plan.value = undefined;
+  }
   lastTool.value = undefined;
   lastNoMessageTool.value = undefined;
 };
@@ -256,7 +253,7 @@ const startUserTurn = () => {
 const handleMessageEvent = (messageData: MessageEventData) => {
   if (isAnalysisProgressMessage(messageData)) return;
   if (messageData.role === 'user') {
-    startUserTurn();
+    startUserTurn(waitingForUser.value || Boolean(messageData.metadata?.clarification_id));
   }
   if (
     messageData.role === 'assistant'
@@ -341,6 +338,7 @@ const handleStepEvent = (stepData: StepEventData) => {
 // Handle error event
 const handleErrorEvent = (errorData: ErrorEventData) => {
   isLoading.value = false;
+  waitingForUser.value = false;
   failActiveSteps();
   messages.value.push({
     type: 'assistant',
@@ -402,11 +400,13 @@ const handleEvent = (event: AgentSSEEvent) => {
     handleStepEvent(event.data as StepEventData);
   } else if (event.event === 'done') {
     isLoading.value = false;
+    waitingForUser.value = false;
     closeUnconfirmedSteps(messages.value, event.data.timestamp);
     insertTaskExecutionSummary(messages.value, event.data.timestamp);
     completionAdvice.value = (event.data as any)?.advice;
   } else if (event.event === 'wait') {
     isLoading.value = false;
+    waitingForUser.value = true;
   } else if (event.event === 'error') {
     handleErrorEvent(event.data as ErrorEventData);
   } else if (event.event === 'title') {

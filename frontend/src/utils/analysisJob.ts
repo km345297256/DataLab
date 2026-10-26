@@ -25,9 +25,15 @@ export const mergeAnalysisToolEvent = (current: ToolContent, incoming: ToolConte
   status: current.status === 'called' ? 'called' : incoming.status,
   // Lifecycle-only events must not erase the result that arrived just before them.
   content: incoming.content ?? current.content,
+  execution_status: incoming.execution_status ?? current.execution_status,
+  write_action: incoming.write_action ?? current.write_action,
+  program_attempt: incoming.program_attempt ?? current.program_attempt,
   presentation: incoming.presentation ?? current.presentation,
   spill: incoming.spill ?? current.spill,
   connector_results: incoming.connector_results ?? current.connector_results,
+  open_data_search_id: incoming.open_data_search_id ?? current.open_data_search_id,
+  skill_creation: incoming.skill_creation ?? current.skill_creation,
+  skill_creation_progress: incoming.skill_creation_progress ?? current.skill_creation_progress,
 });
 
 export const analysisJobElapsedSeconds = (job: AnalysisJobView, now = Date.now()): number => {

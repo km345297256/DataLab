@@ -10,6 +10,12 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from datalab_json import write_json as _safe_write_json
+except ModuleNotFoundError:
+    # Repository test/import entry point; installed commands use PYTHONPATH.
+    from scripts.datalab_json import write_json as _safe_write_json
+
 
 MAX_PROGRAM_BYTES = 256 * 1024
 MAX_MANIFEST_BYTES = 512 * 1024
@@ -44,23 +50,7 @@ def _install_json_compatibility() -> None:
 
 def _write_json(path: object, payload: object, output_dir: Path) -> None:
     """Persist JSON only inside the analysis output directory."""
-    if not isinstance(path, (str, os.PathLike)):
-        raise TypeError("write_json path must be a string or path-like object")
-    destination = Path(path)
-    if not destination.is_absolute() or destination.is_symlink():
-        raise ValueError("write_json path must be an absolute non-symlink path")
-    resolved = destination.resolve(strict=False)
-    try:
-        resolved.relative_to(output_dir)
-    except ValueError as exc:
-        raise ValueError("write_json path must be inside the analysis output directory") from exc
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    temporary = resolved.with_name(f".{resolved.name}.tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    os.replace(temporary, resolved)
+    _safe_write_json(path, payload, output_root=output_dir)
 
 
 def _error(message: str) -> int:

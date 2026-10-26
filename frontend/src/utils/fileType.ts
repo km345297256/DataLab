@@ -128,18 +128,20 @@ export const getFileTypeText = (filename: string): string => {
 
 /**
  * Format file size from bytes to human readable format
- * @param bytes - File size in bytes (null/undefined treated as 0)
+ * @param bytes - File size in bytes (missing values remain unknown)
  * @param decimals - Number of decimal places (default: 1)
  * @returns Formatted file size string
  */
 export function formatFileSize(bytes: number | null | undefined, decimals: number = 1): string {
-  if (!bytes || bytes === 0) return '0 B';
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '大小未知';
+  if (bytes < 1000) return `${bytes} B`;
 
-  const k = 1024;
+  // Match source file lists and acquisition progress: KB/MB/GB use SI units.
+  const k = 1000;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
 
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
 
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 } 

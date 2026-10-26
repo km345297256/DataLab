@@ -1,5 +1,6 @@
 import logging
 import io
+import tempfile
 import hashlib
 from typing import BinaryIO, Optional, Dict, Any, Tuple
 from datetime import datetime
@@ -8,6 +9,7 @@ from gridfs import AsyncGridFSBucket
 
 from app.domain.external.file import FileStorage
 from app.domain.models.file import FileInfo
+from app.domain.models.object_file import ObjectFileMountError, ObjectFileReference, UNSUPPORTED_OBJECT_MOUNT
 from app.infrastructure.storage.mongodb import MongoDB
 from app.core.config import get_settings
 from functools import lru_cache
@@ -24,6 +26,12 @@ def _opaque_file_ref(value: Any) -> str:
 
 class GridFSFileStorage(FileStorage):
     """MongoDB GridFS-based file storage implementation"""
+
+    async def get_object_reference(self, file_id: str, user_id: str) -> ObjectFileReference:
+        raise ObjectFileMountError(UNSUPPORTED_OBJECT_MOUNT)
+
+    async def read_object_range(self, reference, user_id, *, offset, length):
+        raise ObjectFileMountError(UNSUPPORTED_OBJECT_MOUNT)
     
     def __init__(self, mongodb: MongoDB, bucket_name: str = "fs"):
         """
@@ -81,10 +89,10 @@ class GridFSFileStorage(FileStorage):
             
             # Prepare metadata
             file_metadata = {
+                **(metadata or {}),
                 'filename': filename,
                 'uploadDate': datetime.utcnow(),
                 'user_id': user_id,  # Store user_id in metadata
-                **(metadata or {})
             }
             
             if content_type:
@@ -148,8 +156,12 @@ class GridFSFileStorage(FileStorage):
                 file_user_id = file_info.get('metadata', {}).get('user_id')
                 if file_user_id != user_id:
                     raise PermissionError(f"Access denied: file {file_id} does not belong to user {user_id}")
-            stream = io.BytesIO()
-            await bucket.download_to_stream(obj_id, stream)
+            stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
+            try:
+                await bucket.download_to_stream(obj_id, stream)
+            except BaseException:
+                stream.close()
+                raise
             stream.seek(0)
             return stream, self._create_file_info(file_info, file_id)
             

@@ -98,13 +98,17 @@ test('older errors do not fail or otherwise mutate the current running turn', ()
 test('page integrations use abortable five-turn history while shared views keep the legacy endpoint', async () => {
   const agent = await readFile(new URL('../src/api/agent.ts', import.meta.url), 'utf8');
   assert.match(agent, /params: \{ turns: 5, before_seq: beforeSeq \}, signal/);
-  for (const name of ['ChatPage', 'DatasetSeekPage']) {
+  for (const name of ['ChatPage']) {
     const source = await readFile(new URL(`../src/pages/${name}.vue`, import.meta.url), 'utf8');
-    assert.match(source, /getSessionHistory\(/);
-    assert.match(source, /historyRequest\?\.abort\(\)/);
-    assert.match(source, /request\.signal\.aborted/);
-    assert.match(source, /prependHistoricalMessages\(projectHistoryMessages\(page\.events/);
-    assert.match(source, /:key="messageKey\(message\)"/);
+    const controller = await readFile(new URL('../src/composables/useAnalysisSession.ts', import.meta.url), 'utf8');
+    assert.match(source, /analysis\.restore\(/);
+    assert.match(controller, /getSessionHistory\(/);
+    assert.match(controller, /historyRequest\?\.abort\(\)/);
+    assert.match(controller, /request\.signal\.aborted/);
+    assert.match(controller, /prependHistoricalMessages\(projectHistoryMessages\(page\.events/);
+    assert.match(source, /:message-key="messageKey"/);
+    const conversation = await readFile(new URL('../src/components/AnalysisConversation.vue', import.meta.url), 'utf8');
+    assert.match(conversation, /:data-message-key="messageKey\(message\)"/);
     assert.doesNotMatch(source, /watch\(messages,[\s\S]*?\{ deep: true \}/);
   }
   const shared = await readFile(new URL('../src/pages/SharePage.vue', import.meta.url), 'utf8');

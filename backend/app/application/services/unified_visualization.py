@@ -19,6 +19,7 @@ from app.application.services.extended_visualization import ExtendedPreviewReque
 from app.application.services.file_preview import CSV_PAGE_BYTES, TEXT_PAGE_BYTES, PreviewVersionChanged, preview_version
 from app.application.services.file_service import _is_private_spill
 from app.application.services.visualization_catalog import VisualizationDisabledError, VisualizationNotFoundError
+from app.application.services.visualization_result_cache import VisualizationResultCache
 from app.application.services.scientific_visualization import (
     ScientificPreviewRejected, ScientificVisualizationRequest, VisualizationWorkerError,
     scientific_visualization,
@@ -30,6 +31,7 @@ _CHUNK_BYTES = 1024 * 1024
 _READ_CHUNK_BYTES = 8 * 1024 * 1024
 _SCIENCE_READERS = {"netcdf", "fits", "fastq"}
 _PROFILE_ADAPTERS = {"tiff", "plotly", "h5web", "viv", "openlayers"}
+_REUSABLE_RESULT_KINDS = {"series", "raster", "table", "array", "tree", "features", "graph", "geometry"}
 _MOLECULAR_FORMATS = {"cif": "cif", "pdb": "pdb", "ent": "pdb", "mol": "sdf", "sdf": "sdf", "xyz": "xyz", "mol2": "mol2", "vasp": "vasp"}
 
 
@@ -311,6 +313,24 @@ async def unified_visualization(file_service, catalog, image, file_id, user_id,
         raise ScientificPreviewRejected("请先读取结构，再携带同一文件版本明确选择数据窗口。")
     if request.kind in {None, "tree"} and request.version is None and ((plugin.reader == "seismic-window" and request.options) or (plugin.reader in {"grib-window", "mass-spectrum"} and request.options.get("offset", 0) != 0)):
         raise ScientificPreviewRejected("目录分页必须携带首次目录的文件版本。")
+    result_cache = None
+    cache_key = None
+    if request.operation == "preview":
+        # Reuse only already validated derived results for the exact selection.
+        # Scope includes owner, immutable file version, full capability, catalog
+        # revision and worker image. No source bytes or multi-file grants enter it.
+        result_cache = getattr(file_service, "_visualization_results", None)
+        if result_cache is None:
+            result_cache = VisualizationResultCache()
+            file_service._visualization_results = result_cache
+        cache_key = result_cache.key(file_id, version, info.filename, revision,
+                                     plugin.model_dump(), image, request.kind, request.options)
+        cached = result_cache.get(user_id, cache_key)
+        if cached is not None:
+            result = VisualizationResult.model_validate_json(cached)
+            check_output_budget(result, plugin)
+            await _fence(file_service, catalog, file_id, user_id, plugin, revision, version)
+            return result
     if request.operation == "bytes":
         if set(request.options) - {"resource_id"} or request.kind is not None:
             raise ScientificPreviewRejected("原始数据读取不接受额外参数。")
@@ -397,4 +417,6 @@ async def unified_visualization(file_service, catalog, image, file_id, user_id,
         result = normalize_result(await extended_visualization(file_service, catalog, image, file_id, user_id, internal))
     check_output_budget(result, plugin)
     await _fence(file_service, catalog, file_id, user_id, plugin, revision, version)
+    if result_cache is not None and result.kind in _REUSABLE_RESULT_KINDS:
+        result_cache.put(user_id, cache_key, result.model_dump_json().encode())
     return result

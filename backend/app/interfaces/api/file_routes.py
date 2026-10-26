@@ -126,7 +126,9 @@ async def upload_file(
         try:
             parsed = json.loads(metadata)
             if isinstance(parsed, dict):
-                parsed_metadata = parsed
+                # User annotations must never impersonate acquisition receipts,
+                # sandbox output paths, or file ownership supplied by services.
+                parsed_metadata = {"user_metadata": parsed}
         except json.JSONDecodeError:
             logger.warning("Ignoring invalid upload metadata JSON")
     # Upload file
@@ -238,7 +240,7 @@ async def init_large_upload(
         size=request.size,
         user_id=current_user.id,
         content_type=request.content_type,
-        metadata=request.metadata,
+        metadata={"user_metadata": request.metadata} if request.metadata else None,
     )
     return APIResponse.success(
         LargeUploadInitResponse(
@@ -307,69 +309,31 @@ async def abort_large_upload(
     await file_service.abort_large_upload(upload_id, current_user.id)
     return APIResponse.success()
 
+@router.head("/{file_id}")
 @router.get("/{file_id}")
 async def download_file_with_signature(
     file_id: str,
+    request: Request,
     file_service: FileService = Depends(get_file_service),
     signature: str = Depends(verify_signature),
 ):
-    """Download file with optional access token"""
-    
-    # Download file (authentication is handled by middleware for non-token requests)
-    try:
-        file_data, file_info = await file_service.download_file(file_id)
-    except FileNotFoundError:
-        raise NotFoundError("File not found")
-    except PermissionError:
-        raise NotFoundError("File not found")  # Don't reveal if file exists but user has no access
-    
-    # Encode filename properly for Content-Disposition header
-    # Use URL encoding for non-ASCII characters to ensure latin-1 compatibility
-    import urllib.parse
-    encoded_filename = urllib.parse.quote(public_filename(file_info.filename), safe='')
-    
-    headers = {
-        'Content-Disposition': f'attachment; filename*=UTF-8\'\'{encoded_filename}'
-    }
-    
-    return StreamingResponse(
-        file_data,
-        media_type=file_info.content_type or 'application/octet-stream',
-        headers=headers,
-        background=BackgroundTask(_close_file_stream, file_data),
-    )
+    """Download a signed file with bounded reads and HTTP resume support."""
+    from app.interfaces.file_download import stored_file_response
+    return await stored_file_response(request, file_id, file_service)
 
+
+@router.head("/{file_id}/download")
 @router.get("/{file_id}/download")
 async def download_file(
     file_id: str,
+    request: Request,
     file_service: FileService = Depends(get_file_service),
-    current_user: User = Depends(get_optional_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Download file with optional access token"""
-    
-    # Download file (authentication is handled by middleware for non-token requests)
-    try:
-        file_data, file_info = await file_service.download_file(file_id, current_user.id if current_user else None)
-    except FileNotFoundError:
-        raise NotFoundError("File not found")
-    except PermissionError:
-        raise NotFoundError("File not found")  # Don't reveal if file exists but user has no access
-    
-    # Encode filename properly for Content-Disposition header
-    # Use URL encoding for non-ASCII characters to ensure latin-1 compatibility
-    import urllib.parse
-    encoded_filename = urllib.parse.quote(public_filename(file_info.filename), safe='')
-    
-    headers = {
-        'Content-Disposition': f'attachment; filename*=UTF-8\'\'{encoded_filename}'
-    }
-    
-    return StreamingResponse(
-        file_data,
-        media_type=file_info.content_type or 'application/octet-stream',
-        headers=headers,
-        background=BackgroundTask(_close_file_stream, file_data),
-    )
+    """Download an owned file without buffering the entire object."""
+    from app.interfaces.file_download import stored_file_response
+    return await stored_file_response(request, file_id, file_service, current_user.id)
+
 
 @router.delete("/{file_id}", response_model=APIResponse[None])
 async def delete_file(

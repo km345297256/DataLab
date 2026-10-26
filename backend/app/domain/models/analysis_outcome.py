@@ -1,10 +1,14 @@
 """Typed deliverables and outcomes; file paths never belong in the public outcome."""
+from pathlib import PurePosixPath
 from typing import Literal, get_args
 
 import re
 import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
+from pydantic_core import PydanticCustomError
+from typing_extensions import TypedDict
+from app.domain.models.execution_record import ExecutionRecord
 
 DELIVERABLE_LABELS = {"image": "图表", "table": "数据表", "report": "报告", "code": "代码", "data": "数据文件", "any": "结果文件"}
 
@@ -69,6 +73,50 @@ class DeliverableRequirement(BaseModel):
     min_count: int = Field(default=1, strict=True, ge=1, le=16)
     formats: list[str] = Field(default_factory=list, max_length=8)
     label: str = Field(default="", max_length=200)
+    # Private execution contract, established before execution. Never derive
+    # these obligations from the executor's final attachment/prose claims.
+    output_paths: list[str] = Field(default_factory=list, max_length=16, exclude_if=lambda value: not value)
+    objective: str = Field(default="", max_length=500, exclude_if=lambda value: not value)
+
+    @field_validator("output_paths")
+    @classmethod
+    def safe_output_paths(cls, values: list[str]) -> list[str]:
+        normalized = []
+        for value in values:
+            if (len(value) > 4096 or not value.startswith("/home/ubuntu/output/")
+                    or str(PurePosixPath(value)) != value
+                    or ".." in PurePosixPath(value).parts or "\\" in value
+                    or any(unicodedata.category(char).startswith("C") for char in value)):
+                raise ValueError("Deliverable paths must be canonical sandbox output file paths")
+            if value not in normalized:
+                normalized.append(value)
+        return normalized
+
+    @field_validator("objective")
+    @classmethod
+    def safe_objective(cls, value: str) -> str:
+        if any(unicodedata.category(char).startswith("C") for char in value):
+            raise PydanticCustomError("objective_non_plain_text", "Deliverable objectives must be plain text")
+        # Objectives are semantic descriptions also visible in plan events.
+        # Put exact file identities in the root-restricted output_paths field,
+        # never in a free-text field that could disclose a real host path.
+        semantic = re.sub(r"\bhttps?://[^\s]+", "", value)
+        # A single slash between semantic terms is not a filesystem path:
+        # SASA/Rg, B-factor/occupancy, 均值/标准差 and mg/L are valid objectives.
+        # Keep absolute roots, traversal, directory chains and file components
+        # out of this public field; output_paths remains the only path contract.
+        if (re.search(r"(?:^|[\s\"'`=:：;；,，(（\[【])~?/(?!\s)", semantic)
+                or re.search(r"(?:^|[\s\"'`=:：;；,，(（\[【])\.\.?[/\\]", semantic)
+                or re.search(r"/[^\s/]+/", semantic)
+                # CJK prose can touch an absolute ASCII basename without a
+                # separating space (分析/secret). Retain that privacy boundary;
+                # same-script ratios and Latin scientific terms remain valid.
+                or re.search(r"[\u3400-\u9fff]/[A-Za-z0-9_.-]", semantic)
+                or re.search(r"/(?:Users|home|root|private|tmp|var|etc|mnt|srv|opt|data|app)(?:/|\b)", semantic)
+                or re.search(r"/[^\s/]+\.[A-Za-z][A-Za-z0-9]{0,15}(?:\b|$)", semantic)
+                or re.search(r"[A-Za-z]:[\\/]|\\\\", semantic)):
+            raise PydanticCustomError("objective_filesystem_path", "Deliverable objectives must not contain filesystem paths")
+        return value.strip()
 
     @field_validator("formats")
     @classmethod
@@ -86,6 +134,9 @@ class DeliverableRequirement(BaseModel):
     def public_label(self):
         # Labels are display decoration, never model-provided filenames/paths.
         self.label = DELIVERABLE_LABELS[self.kind]
+        # Every explicit identity is required, not a pool from which one image
+        # may be chosen. Additional anonymous slots preserve the count floor.
+        self.min_count = max(self.min_count, len(self.output_paths))
         return self
 
     @field_serializer("label")
@@ -97,6 +148,13 @@ class DeliverableRequirement(BaseModel):
         return self.safe_formats(values)
 
 
+class _PublicDeliverableRequirement(TypedDict):
+    kind: Literal["image", "table", "report", "code", "data", "any"]
+    min_count: int
+    formats: list[str]
+    label: str
+
+
 class AnalysisOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # This contract is evaluated at a step boundary. It cannot certify a plan
@@ -106,8 +164,31 @@ class AnalysisOutcome(BaseModel):
     reason_code: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     missing: list[DeliverableRequirement] = Field(default_factory=list, max_length=16)
     issues: list[ArtifactIssue] = Field(default_factory=list, max_length=64)
+    execution_records: list[ExecutionRecord] = Field(default_factory=list, max_length=64,
+                                                     exclude_if=lambda value: not value)
     can_resume: bool = Field(default=False, strict=True)
     resume_from: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+
+    @field_serializer("execution_records")
+    def serialize_execution_records(self, values):
+        from app.domain.services.execution_report import checked_execution_records
+        return [item.model_dump(exclude_none=True) for item in
+                checked_execution_records({"execution_records": values})]
+
+    @field_serializer("missing")
+    def serialize_public_missing(self, values) -> list[_PublicDeliverableRequirement]:
+        # A requirement is persisted in private plans/checkpoints, but the
+        # public outcome contains only types/counts. Project explicitly even
+        # when an internal model_copy bypassed nested model validation.
+        public = []
+        for value in values[:16] if isinstance(values, list) else []:
+            try:
+                item = DeliverableRequirement.model_validate(value)
+            except (ValueError, TypeError):
+                continue
+            public.append({"kind": item.kind, "min_count": item.min_count,
+                           "formats": item.formats, "label": DELIVERABLE_LABELS[item.kind]})
+        return public
 
     @field_serializer("issues")
     def serialize_public_issues(self, values):

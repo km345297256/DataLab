@@ -1,0 +1,457 @@
+{
+  "project": "DataLab",
+  "date": "2026-10-21T13:20:58.599989+00:00",
+  "branch": "datalab",
+  "status": "implemented_deployed_and_verified",
+  "new_enabled_sources": 11,
+  "previous_automatic_sources": 48,
+  "automatic_sources_total": 59,
+  "connector_picker_total": 60,
+  "legacy_manual_connector": "ncbi-datasets-v2",
+  "default_discovery": "未选择连接器时，通常按研究问题规划并检索相关已启用来源；规划不可用、没有有效子集或完全引号字面查询时，回退检索全部允许来源。明确选择连接器后，仅检索所选范围。",
+  "download_policy": "共享流式下载、续传及原格式保存；不新增固定文件大小限制。官方API返回数量或查询范围约束在各来源scope明确，不截断后冒充完整数据。",
+  "sources": [
+    {
+      "source_id": "macau-open-data",
+      "title": "澳门政府开放数据",
+      "homepage": "https://data.gov.mo/",
+      "country": "中国澳门",
+      "documentation": "https://api.data.gov.mo/datadir/search",
+      "description": "检索澳门官方社会、经济、教育、环境及公共服务数据，获取无需登记的原始文件。",
+      "scope": "仅接入官方标记为完全开放且提供实体文件的数据；登记开放及仅有接口说明的记录不展示。使用数据须按源站条款注明来源与获取日期。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "人口",
+          "external_id": "283a0991-8a41-4c5d-97b3-f3acc1c585a2",
+          "bytes": 13305,
+          "sha256": "4e956676cb7499f4d007e4495b823458e8fa9977c522476de62dca1e7f12c387",
+          "entity_validation": "valid XLSX workbook, all zip entries CRC checked",
+          "verified_files": 1,
+          "filename": "macau-open-data_283a0991-8a41-4c5d-97b3-f3acc1c585a2_2529_I.1.xlsx",
+          "source_version": "2025-10-28 17:40:18",
+          "source_url": "https://data.gov.mo/Detail?id=283a0991-8a41-4c5d-97b3-f3acc1c585a2",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "un-sdg",
+      "title": "联合国可持续发展目标数据",
+      "homepage": "https://unstats.un.org/sdgs/",
+      "country": "联合国 / 全球",
+      "documentation": "https://unstats.un.org/sdgapi/swagger/",
+      "description": "检索联合国可持续发展目标指标，按国家或地区获取包含全部可用观测的官方 JSON 时间序列。",
+      "scope": "按指标英文名称、指标编号或序列代码检索；未指定地区时仅返回明确标注的 World 全球汇总。其他地区用 geo=M49编码检索，例如 EG_ACS_ELEC geo=156 获取中国。每条结果和文件只对应该地区完整时间序列，保留官方 JSON 与维度。未标注许可时不推定开放授权。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "population electricity",
+          "external_id": "EG_ACS_ELEC:1",
+          "bytes": 6277,
+          "sha256": "ca45f16a1f57b4b65ea6d0500229cd64b95badeab44cf61e55c2817a75a5bc0e",
+          "entity_validation": "complete unpaginated DataSlice with all returned observations",
+          "verified_files": 1,
+          "filename": "un-sdg_EG_ACS_ELEC_1_World.json",
+          "source_version": "2026.Q3.G.01",
+          "source_url": "https://unstats.un.org/sdgs/dataportal/database",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        },
+        {
+          "query": "EG_ACS_ELEC geo=156",
+          "external_id": "EG_ACS_ELEC:156",
+          "bytes": 6321,
+          "sha256": "cc4c8fc6d6701d21b0d4cf5c11ce789e9b7326bb08c15dfd581c01c1302bda14",
+          "entity_validation": "complete unpaginated DataSlice with all returned observations",
+          "verified_files": 1,
+          "filename": "un-sdg_EG_ACS_ELEC_156_China.json",
+          "source_version": "2026.Q3.G.01",
+          "source_url": "https://unstats.un.org/sdgs/dataportal/database",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "unesco-uis",
+      "title": "UNESCO UIS 教育与社会统计",
+      "homepage": "https://databrowser.uis.unesco.org/",
+      "logo_url": "https://databrowser.uis.unesco.org/logo-unesco-uis-extended.png",
+      "country": "国际",
+      "documentation": "https://api.uis.unesco.org/api/public/documentation/",
+      "description": "按 UNESCO 统计研究所完整指标目录检索教育、科研投入、文化及社会统计，获取指定发布版本的观测 CSV。",
+      "scope": "每条结果对应一个指标，下载含该发布版本的所有地区和年份；原始 ZIP 内含观测 CSV 及说明。源 API 单次查询最多 100000 条，超出时不会静默截断或冒充完整数据。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "CR.1",
+          "external_id": "CR.1",
+          "bytes": 21447,
+          "sha256": "686139b030b82a8481e0aade366ba836f523ae17ee2d36aa545b5bcdb168e113",
+          "entity_records": 2568,
+          "verified_files": 1,
+          "filename": "CR.1_20260507-91260335.zip",
+          "source_version": "20260507-91260335",
+          "source_url": "https://api.uis.unesco.org/api/public/data/indicators?indicator=CR.1",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "ilostat",
+      "title": "ILOSTAT 国际劳工统计",
+      "homepage": "https://ilostat.ilo.org/",
+      "logo_url": "https://www.ilo.org/favicon-96.ico",
+      "country": "国际",
+      "documentation": "https://ilostat.ilo.org/data/bulk/",
+      "description": "检索国际劳工组织完整指标目录，获取就业、工资、劳动保障等统计的原生 CSV 压缩文件。",
+      "scope": "每条结果对应一个指标与频率，下载包含该文件全部地区和时期；保留来源更新日期，目录与代码字典不作为观测数据下载。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "SDG_0552_NOC_RT_A",
+          "external_id": "SDG_0552_NOC_RT_A",
+          "bytes": 13818,
+          "sha256": "0857c374bacb96081b8b50dd78e7ca075abb31adf9bc913556e28cabbc22ac8f",
+          "entity_records": 1835,
+          "verified_files": 1,
+          "filename": "SDG_0552_NOC_RT_A.csv.gz",
+          "source_version": "11/10/2026 07:40:04",
+          "source_url": "https://rplumber.ilo.org/files/website/bulk/indicator.html",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "eurostat",
+      "title": "Eurostat 欧洲统计局",
+      "homepage": "https://ec.europa.eu/eurostat/",
+      "logo_url": "https://ec.europa.eu/eurostat/o/estat-theme-ecl/images/favicon.ico",
+      "country": "欧盟",
+      "documentation": "https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-detailed-guidelines/catalogue-api/toc",
+      "description": "按官方完整目录中的名称或代码检索欧洲经济、人口、教育和社会统计，获取原生 TSV 数据表。",
+      "scope": "主题检索定位数据集，下载覆盖所选表全部地区与时期；关键词不会自动过滤观测值。保留源更新时间，数据为最新快照，源站不提供历史数据版本。大型表可能需要更长生成时间。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "tps00001",
+          "external_id": "tps00001",
+          "bytes": 2941,
+          "sha256": "f13eb4d422b9dec0172d44e8d9a8e91606e2db99f3676d8b2c6e69910a1b8476",
+          "entity_records": 51,
+          "verified_files": 1,
+          "filename": "tps00001.tsv.gz",
+          "source_version": "30.09.2026:30.09.2026",
+          "source_url": "https://ec.europa.eu/eurostat/databrowser/view/tps00001/default/table?lang=en",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "ecb",
+      "title": "ECB 欧洲中央银行统计",
+      "homepage": "https://data.ecb.europa.eu/",
+      "logo_url": "https://data.ecb.europa.eu/themes/custom/edp/favicon.ico",
+      "country": "欧盟",
+      "documentation": "https://data.ecb.europa.eu/help/api/data-examples",
+      "description": "检索欧洲中央银行官方数据流目录，获取经济、金融、汇率和支付统计的原始 CSV。",
+      "scope": "主题检索下载完整数据流；输入 FLOW/SERIES_KEY（如 EXR/M.USD.EUR.SP00.A）可选择明确的单一序列及其全部时期。数据为源站动态快照；结构版本不冒充数据版本。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "EXR/M.USD.EUR.SP00.A",
+          "external_id": "EXR/M.USD.EUR.SP00.A",
+          "bytes": 70949,
+          "sha256": "ed68895c12b7c08098c25b14c27473345832c2efd40d7fe815b66f7e6ad84f1a",
+          "entity_records": 333,
+          "verified_files": 1,
+          "filename": "EXR_M.USD.EUR.SP00.A.csv",
+          "source_version": null,
+          "source_url": "https://data.ecb.europa.eu/data/datasets/EXR/EXR.M.USD.EUR.SP00.A",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "usgs-earthquake",
+      "title": "USGS 全球地震观测",
+      "homepage": "https://earthquake.usgs.gov/",
+      "country": "美国",
+      "documentation": "https://earthquake.usgs.gov/fdsnws/event/1/",
+      "description": "按时间、震级和经纬度范围查找 USGS 地震事件观测，获取所选范围完整原生 CSV。",
+      "scope": "使用 start=2024-01-01 end=2024-02-01 minmagnitude=5；可加 minlatitude/maxlatitude/minlongitude/maxlongitude，或 eventid=事件编号。仅输入 earthquake/地震时默认最近30天全球M≥4.5，结果会注明范围。不支持任意主题全文搜索。USGS单次最多20,000事件，超出须缩小时间或区域，不截断下载。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "\"start=2024-01-01 end=2024-01-02 minmagnitude=6\"",
+          "external_id": "endtime=2024-01-02&minmagnitude=6&starttime=2024-01-01",
+          "bytes": 538,
+          "sha256": "e8cf9858a98890c6e798deb9d6f377c8f5fae9abd9c7309405b2c3360a6f2297",
+          "verified_files": 1,
+          "filename": "events_2024-01-01_2024-01-02.csv",
+          "source_version": null,
+          "source_url": "https://earthquake.usgs.gov/earthquakes/search/",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "nasa-power",
+      "title": "NASA POWER 气象与太阳能数据",
+      "homepage": "https://power.larc.nasa.gov/",
+      "country": "美国",
+      "documentation": "https://power.larc.nasa.gov/docs/services/api/temporal/daily/",
+      "description": "按明确经纬度、日期和气象参数获取 NASA POWER 原分辨率逐日时间序列 CSV。",
+      "scope": "必须提供 latitude/longitude/start/end，例如 latitude=39.9 longitude=116.4 start=20240101 end=20240107 parameters=T2M,PRECTOTCORR。日期从1981年起，使用UTC。支持T2M/T2M_MIN/T2M_MAX/PRECTOTCORR/RH2M/WS10M/PS/ALLSKY_SFC_SW_DWN，未指定参数默认T2M；不自动猜地点或把主题词当坐标。参数可用期以源站为准。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "\"latitude=39.9 longitude=116.4 start=20240101 end=20240107 parameters=T2M,PRECTOTCORR\"",
+          "external_id": "end=20240107&latitude=39.9&longitude=116.4&parameters=T2M%2CPRECTOTCORR&start=20240101",
+          "bytes": 684,
+          "sha256": "33276dc91b78a41084e4356215a672cb0c025f9d878aa6db95bf2ea5d72d7daf",
+          "verified_files": 1,
+          "filename": "daily_39.9_116.4_20240101_20240107.csv",
+          "source_version": null,
+          "source_url": "https://power.larc.nasa.gov/",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "noaa-gml",
+      "title": "NOAA GML 温室气体观测",
+      "homepage": "https://gml.noaa.gov/",
+      "country": "美国",
+      "documentation": "https://gml.noaa.gov/ccgg/trends/data.html",
+      "description": "查找 NOAA GML 的 CO2、CH4、N2O、SF6 月平均观测序列，获取完整原生 CSV。",
+      "scope": "本入口为明确的四种温室气体月均指标目录匹配，支持气体名称或化学式；CO2为Mauna Loa，CH4/N2O/SF6为全球海洋地表平均。不是任意地点或主题全文检索。原文件保留缺失值、质量说明及NOAA引用政策；近期值会修订。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "\"greenhouse gases\"",
+          "external_id": "co2-mlo-monthly",
+          "bytes": 38776,
+          "sha256": "d895fb5b4a59fb5e4cd98e69b7667fe5bef595c6581f630852b12cb41c07f675",
+          "verified_files": 1,
+          "filename": "co2_mm_mlo.csv",
+          "source_version": "Fri Oct  9 13:08:07 2026",
+          "source_url": "https://gml.noaa.gov/ccgg/trends/data.html",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "cern-open-data",
+      "title": "CERN Open Data 粒子物理",
+      "homepage": "https://opendata.cern.ch/",
+      "country": "国际",
+      "documentation": "https://cernopendata-client.readthedocs.io/en/latest/usage.html",
+      "description": "检索 CERN 公开实验与派生数据，获取真实事件表、ROOT及其他实体数据文件。",
+      "scope": "仅解析Dataset记录中的在线实体文件，不把软件、教程、文档或文件索引当数据。保留源文件格式、文件版本及Adler32等校验码；派生/教学数据的适用范围见原记录，不能视作完整原始实验数据。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "csv",
+          "external_id": "5200",
+          "bytes": 2271,
+          "sha256": "53bcf1e51582bf6a49e52167bc5b594b280c623df66258ddc51ec9ea05f6c8c3",
+          "verified_files": 6,
+          "filename": "4e_2011.csv",
+          "source_version": "0d3086e9-0a15-49dc-9d6d-94a1a34ea38f",
+          "source_url": "https://opendata.cern.ch/record/5200",
+          "provider_checksum_verified": true,
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "source_id": "uci-ml",
+      "title": "UCI Machine Learning Repository",
+      "homepage": "https://archive.ics.uci.edu/",
+      "country": "美国 / 国际",
+      "documentation": "https://github.com/uci-ml-repo/ucimlrepo",
+      "description": "按名称或数据集编号查找 UCI 官方机器学习数据，获取源站完整 CSV。",
+      "scope": "检索官方完整名称目录；仅接入官方 API 提供直接 CSV 的数据集，其他仅有网页或外链的条目不展示。源站可能更新文件，获取时记录内容哈希。",
+      "verification": "passed",
+      "container_validation": [
+        {
+          "query": "\"Iris\"",
+          "external_id": "53",
+          "bytes": 4615,
+          "sha256": "daaeb5e3e889d07fbdd44544f5a39fe2372a07172e25899d577be0ad74df9e65",
+          "verified_files": 1,
+          "filename": "uci_53_data.csv",
+          "source_version": "Tue Sep 12 2023",
+          "source_url": "https://archive.ics.uci.edu/dataset/53",
+          "provider_checksum_verified": false,
+          "result": "passed"
+        }
+      ]
+    }
+  ],
+  "not_enabled": [
+    {
+      "source": "taiwan-data",
+      "homepage": "https://data.gov.tw/",
+      "status": "kept_disabled",
+      "reason": "官方目录可访问；当前部署容器抽查金门县人口、台北人口、新竹人口及教育署CSV/XLSX节点均ConnectTimeout；桃园下载节点DNS无地址。不扩大白名单，不绕过访问限制。"
+    },
+    {
+      "source": "杭州公共数据开放平台",
+      "homepage": "https://data.hangzhou.gov.cn/",
+      "status": "not_added",
+      "reason": "首页可读，但访问首页引用header.js/footer.js返回HTTP403，明确“疑似攻击已被网站管理员设置为拦截”；停止进一步请求，不绕WAF。"
+    },
+    {
+      "source": "山东公共数据开放网",
+      "homepage": "https://data.sd.gov.cn/",
+      "status": "not_added",
+      "reason": "实际部署容器连接失败；未证明任何可匿名获取实体文件。"
+    },
+    {
+      "source": "青岛公共数据开放网",
+      "homepage": "https://data.qingdao.gov.cn/",
+      "status": "not_added",
+      "reason": "实际部署容器连接超时；未证明任何可匿名获取实体文件。"
+    },
+    {
+      "source": "huggingface-datasets",
+      "homepage": "https://huggingface.co/datasets",
+      "status": "implemented_not_enabled",
+      "reason": "官方接口契约及版本固定下载已实现，离线回归通过；主机可访问，但实际运行容器两次连接超时，未通过实体获取验收。"
+    }
+  ],
+  "regression_checks": {
+    "frontend": {
+      "type_check": "passed",
+      "production_build": "passed",
+      "tests_passed": 3081,
+      "browser_gate_passed": 16
+    },
+    "backend": {
+      "passed": 10410,
+      "skipped": 55,
+      "subtests_passed": 190
+    },
+    "sandbox": {
+      "passed": 6164,
+      "skipped": 84,
+      "subtests_passed": 563
+    },
+    "production_tool_tests_passed": 59,
+    "compose_config": "passed",
+    "diff_check": "passed",
+    "independent_review": "3 regional issues reproduced, fixed and independently rechecked; 40 regional tests passed",
+    "download_verification": "all 11 newly enabled sources completed real downloads from the backend container network",
+    "connector_picker": {
+      "passed": true,
+      "loaded_official_logos": 70,
+      "checks": [
+        "green keyboard focus",
+        "light and dark themes",
+        "320px and 390px layouts",
+        "name plus official mark",
+        "detailed source management"
+      ],
+      "new_source_logos": 11,
+      "backfilled_existing_source_logos": 10,
+      "logo_test_catalog": "70 logos in the extended browser-test fixture; production exposes 60 enabled connectors"
+    },
+    "final_registry_audit": "passed: 11 enabled additions and scopes match definitions; 59 automatic sources / 60 manual connectors; Hugging Face and Taiwan remain disabled; default routing and fallback verified from code"
+  },
+  "deployment": {
+    "status": "passed",
+    "release": "source-expansion-20261021",
+    "build_id": "912cdf0138f8de155ee607c88bdd44a95b55bab0e9090be9fa2a15338bb5cacb",
+    "frontend_image": "sha256:8565790eee4f3dd059acf0c17ca830ef61d8b43bf01c77878a9e441b1b2de308",
+    "backend_image": "sha256:a571eada963c8489c9202fe961c8edb03d829e103e7ef8552406bb85fb8b83bd",
+    "source_files_matched": 610,
+    "unaffected_containers_verified": 28,
+    "data_volume_mounts_preserved": true,
+    "frontend_release_cache_and_asset_checks": "passed",
+    "backend_startup": "passed",
+    "frontend_asset_digest_recomputed": true,
+    "frontend_host_container_build_difference": "NMRium esbuild CommonJS interop flags only; all other asset files match",
+    "url": "http://localhost:10030",
+    "affected_services": [
+      "backend",
+      "frontend"
+    ],
+    "application_workflow_validation": {
+      "passed": true,
+      "cases": [
+        {
+          "source_id": "uci-ml",
+          "query": "\"Iris\"",
+          "search_results": 1,
+          "external_id": "53",
+          "bytes": 4615,
+          "sha256": "daaeb5e3e889d07fbdd44544f5a39fe2372a07172e25899d577be0ad74df9e65",
+          "status": "passed"
+        },
+        {
+          "source_id": "macau-open-data",
+          "query": "\"人口\"",
+          "search_results": 5,
+          "external_id": "283a0991-8a41-4c5d-97b3-f3acc1c585a2",
+          "bytes": 13305,
+          "sha256": "4e956676cb7499f4d007e4495b823458e8fa9977c522476de62dca1e7f12c387",
+          "status": "passed"
+        },
+        {
+          "source_id": "un-sdg",
+          "query": "\"EG_ACS_ELEC geo=156\"",
+          "search_results": 1,
+          "external_id": "EG_ACS_ELEC:156",
+          "bytes": 6321,
+          "sha256": "cc4c8fc6d6701d21b0d4cf5c11ce789e9b7326bb08c15dfd581c01c1302bda14",
+          "status": "passed"
+        },
+        {
+          "source_id": "un-sdg",
+          "query": "查找中国能够使用电力的人口占比数据",
+          "search_results": 1,
+          "external_id": "EG_ACS_ELEC:156",
+          "bytes": 6321,
+          "sha256": "cc4c8fc6d6701d21b0d4cf5c11ce789e9b7326bb08c15dfd581c01c1302bda14",
+          "status": "passed"
+        }
+      ],
+      "cleanup": [
+        {
+          "source_id": "uci-ml",
+          "temporary_session_library_and_file_removed": true
+        },
+        {
+          "source_id": "macau-open-data",
+          "temporary_session_library_and_file_removed": true
+        },
+        {
+          "source_id": "un-sdg",
+          "temporary_session_library_and_file_removed": true
+        },
+        {
+          "source_id": "un-sdg",
+          "temporary_session_library_and_file_removed": true
+        }
+      ],
+      "catalog_count": 60,
+      "new_connectors": 11,
+      "pending_sources_hidden": true
+    },
+    "data_volumes_deleted": false,
+    "unrelated_services_recreated": false
+  },
+  "verification_scope": "每个新来源均从真实运行容器完整下载过实体样本，用于验收该接入链路；不意味着来源所有记录永久可用，具体研究适用性及使用许可仍以源站记录为准。",
+  "verified_at": "2026-10-21T13:40:04.668177+00:00"
+}

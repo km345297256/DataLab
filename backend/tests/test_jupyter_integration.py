@@ -103,3 +103,19 @@ def test_jupyter_names_follow_deployment_prefix(monkeypatch):
     monkeypatch.setattr(jupyter_service, "get_settings", lambda: SimpleNamespace(jupyter_name_prefix="datalab-jupyter"))
     assert jupyter_service.JupyterService._name("session123") == "datalab-jupyter-session123"
     assert jupyter_service.JupyterService._volume("session123") == "datalab-jupyter-work-session123"
+
+
+@pytest.mark.asyncio
+async def test_websocket_rejects_revoked_session_without_connecting(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+    from app.interfaces.api import session_routes
+    from app.application.errors.exceptions import NotFoundError
+    websocket = SimpleNamespace(query_params={"ticket": "valid-ticket"}, cookies={}, close=AsyncMock())
+    tokens = SimpleNamespace(verify_token=Mock(return_value={"type": "resource_access", "resource_type": "jupyter",
+        "resource_id": "session-a", "user_id": "user-a"}))
+    notebook = SimpleNamespace(proxy_target=AsyncMock(side_effect=NotFoundError("Jupyter session is not available")))
+    connect = Mock(side_effect=AssertionError("Revoked session must not open an upstream websocket"))
+    monkeypatch.setattr(session_routes.websockets, "connect", connect)
+    await session_routes.proxy_jupyter_websocket(websocket, "session-a", "api/kernels/test/channels", tokens, notebook)
+    websocket.close.assert_awaited_once_with(code=1008, reason="Jupyter session owner access required")
+    connect.assert_not_called()

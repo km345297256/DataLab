@@ -79,6 +79,47 @@ TOOL = {"type": "function", "function": {"name": "measure", "description": "Meas
 }}}
 
 
+@pytest.mark.parametrize("provider", ["openai", "deepseek"])
+def test_provider_sdk_has_no_hidden_request_deadline(provider):
+    import httpx
+    model = create_chat_model(
+        Settings(model_provider=provider, model_name="test-model", api_key="offline-key"),
+        # A stale saved override must not restore the retired cutoff.
+        {"timeout": 0.001},
+    )
+    for sdk in (model._client.root_client, model._client.root_async_client):
+        timeout = sdk.timeout
+        assert timeout is None or (isinstance(timeout, httpx.Timeout)
+            and all(getattr(timeout, part) is None for part in ("connect", "read", "write", "pool")))
+
+
+@pytest.mark.parametrize("provider", ["openai", "deepseek"])
+@pytest.mark.parametrize("use_override", [False, True])
+@pytest.mark.asyncio
+async def test_provider_sdk_uses_configured_endpoint_with_its_credential(monkeypatch, provider, use_override):
+    # Provider-specific environment defaults must not redirect explicit routes.
+    monkeypatch.setenv("DEEPSEEK_API_BASE", "https://environment-default.example.test")
+    endpoint = "https://configured.example.test/tenant/v1"
+    credential = "offline-configured-route-key"
+    settings = Settings(model_provider=provider, model_name="test-model", api_key=credential,
+                        api_base=endpoint)
+    overrides = None
+    if use_override:
+        endpoint = "https://override.example.test/v1"
+        credential = "offline-override-route-key"
+        overrides = {"api_base": endpoint, "api_key": credential}
+    model = create_chat_model(settings, overrides)
+    try:
+        # Checking a LangChain display field misses a misrouted OpenAI client.
+        for sdk in (model._client.root_client, model._client.root_async_client):
+            assert str(sdk.base_url) == endpoint + "/"
+            assert sdk.api_key == credential
+            assert sdk.max_retries == 0
+    finally:
+        model._client.root_client.close()
+        await model._client.root_async_client.close()
+
+
 @pytest.mark.asyncio
 async def test_bind_then_bind_tools_preserves_format_output_and_driver_boundary():
     model, client, middleware = driver()
@@ -224,7 +265,7 @@ def test_factory_only_sends_provider_appropriate_constructor_parameters(monkeypa
         return FakeClient(cache=False)
 
     monkeypatch.setattr("app.infrastructure.external.llm.chat_model.init_chat_model", create)
-    model = create_chat_model(Settings(api_key="test-secret", api_base="https://private.example/v1"), {
+    model = create_chat_model(Settings(model_provider=provider, api_key="test-secret", api_base="https://private.example/v1"), {
         "model_provider": provider, "model_name": "test-model", "temperature": 0.2,
         "max_tokens": 300, "client_max_retries": 8,
     })
@@ -232,9 +273,10 @@ def test_factory_only_sends_provider_appropriate_constructor_parameters(monkeypa
     assert "extra_body" not in captured
     assert captured["cache"] is False
     if provider == "ollama":
-        assert captured["num_predict"] == 300
+        assert "num_predict" not in captured
         assert "max_retries" not in captured and "api_key" not in captured
     else:
+        assert "max_tokens" not in captured
         assert captured["max_retries"] == 0
         assert captured["api_key"] == "test-secret"
     serialized = model.model_dump_json() + repr(model) + repr(model._identifying_params)
@@ -250,7 +292,7 @@ def test_deepseek_keeps_thinking_disabled_without_hidden_sdk_retries(monkeypatch
         return FakeClient(cache=False)
 
     monkeypatch.setattr("langchain_deepseek.ChatDeepSeek", create)
-    model = create_chat_model(Settings(api_key="test-secret"), {"model_provider": " DeepSeek "})
+    model = create_chat_model(Settings(model_provider="deepseek", api_key="test-secret"), {"model_provider": " DeepSeek "})
     assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
     assert captured["max_retries"] == 0
     assert model.identity.provider == "deepseek"
@@ -313,6 +355,8 @@ async def test_real_cordis_catalog_reaches_production_execution_agent_and_runtim
     monkeypatch.setattr(model_runtime, "invoke_model_request", middleware)
     monkeypatch.setattr(model_runtime, "get_settings", lambda: settings)
     monkeypatch.setattr("app.domain.services.agents.base.get_settings", lambda: settings)
+    monkeypatch.setattr("app.domain.services.agents.execution.get_settings", lambda: settings)
+    monkeypatch.setattr("app.domain.services.agents.vision.get_settings", lambda: settings)
     monkeypatch.setattr("app.domain.services.flows.plan_act.get_settings", lambda: settings)
     monkeypatch.setattr("app.domain.services.agents.base.create_chat_model", lambda *_, **__: governed)
     monkeypatch.setattr(type(governed._client), "_agenerate_with_cache", physical_request)
@@ -338,13 +382,14 @@ async def test_real_cordis_catalog_reaches_production_execution_agent_and_runtim
         assert all(schema["type"] == "function" and schema["function"]["parameters"]["type"] == "object"
                    for schema in received["tool_schemas"])
         assert received["response_format"] == {"type": "json_object"}
-        assert received["max_output_tokens"] == 4096
+        assert received["max_output_tokens"] is None
         assert observed["physical"]["tools"] == received["tool_schemas"]
         assert observed["physical"]["response_format"] == received["response_format"]
-        assert observed["physical"]["max_tokens"] == 4096
+        assert "max_tokens" not in observed["physical"]
         total, tools = observed["estimate"]
-        assert total <= 65_536 - 4096 - 2048
-        print(f"offline-cordis-model-budget tools=280 tool_tokens={tools} input_tokens={total} input_limit=59392 headroom={59392-total}")
+        input_limit = settings.model_context_capacity_tokens - settings.model_context_safety_tokens - 1
+        assert total <= input_limit
+        print(f"offline-cordis-model-capacity tools=280 tool_tokens={tools} input_tokens={total} input_limit={input_limit} headroom={input_limit-total}")
 
         # Include the actual production core toolkits, not just Cordis tools.
         # Only host/service objects are inert fakes: PlanActFlow, all tool
@@ -369,7 +414,8 @@ async def test_real_cordis_catalog_reaches_production_execution_agent_and_runtim
         flow.dataset_context = render_dataset_context([mounted])
         all_tools = governed.bind_tools(flow.executor.get_tools()).kwargs["tools"]
         full_messages = [SystemMessage(content=flow.executor.system_prompt),
-                         SystemMessage(content=flow._dynamic_system_prompt()), HumanMessage(content=prompt)]
+                         SystemMessage(content=flow._dynamic_system_prompt()),
+                         SystemMessage(content=flow._runtime_context_prompt()), HumanMessage(content=prompt)]
         full_total, full_tools = estimate_context_tokens(
             full_messages, tool_schemas=all_tools, response_format={"type": "json_object"},
         )
@@ -378,11 +424,11 @@ async def test_real_cordis_catalog_reaches_production_execution_agent_and_runtim
         fixed_fit = True
         try:
             prepare_context(full_messages, tool_schemas=all_tools, response_format={"type": "json_object"},
-                            capacity_tokens=65_536, max_output_tokens=4096, safety_tokens=2048)
+                            capacity_tokens=65_536, max_output_tokens=1, safety_tokens=2048)
         except ContextBudgetExceeded:
             fixed_fit = False
-        assert fixed_fit == (full_total <= 59_392)
-        print(f"offline-production-model-budget tools={len(all_tools)} tool_tokens={full_tools} input_tokens={full_total} input_limit=59392 headroom={59392-full_total} fits={fixed_fit}")
+        assert fixed_fit == (full_total <= input_limit)
+        print(f"offline-production-model-capacity tools={len(all_tools)} tool_tokens={full_tools} input_tokens={full_total} input_limit={input_limit} headroom={input_limit-full_total} fits={fixed_fit}")
         print("offline-production-toolkit-counts=" + json.dumps({toolkit.name: len(toolkit.get_tools()) for toolkit in flow.executor.toolkits}))
     finally:
         await runtime.shutdown()
@@ -393,11 +439,12 @@ async def test_real_cordis_catalog_reaches_production_execution_agent_and_runtim
 async def test_real_sdk_json_object_uses_create_with_unmodified_nonstrict_tools(provider):
     """Exercise actual LangChain + OpenAI SDK branches down to an HTTP stub."""
     import httpx
-    from openai import AsyncOpenAI
 
     captured = []
 
     def transport(request):
+        assert str(request.url) == "https://offline.example.test/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer offline-key"
         captured.append(json.loads(request.content))
         return httpx.Response(200, json={
             "id": "offline-sdk-response", "object": "chat.completion", "created": 1,
@@ -411,14 +458,17 @@ async def test_real_sdk_json_object_uses_create_with_unmodified_nonstrict_tools(
     middleware = RecordingMiddleware()
     model = create_chat_model(Settings(model_provider=provider, model_name="test-model", api_key="offline-key",
                                        api_base="https://offline.example.test/v1"), request_middleware=middleware)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http_client:
-        sdk = AsyncOpenAI(api_key="offline-key", base_url="https://offline.example.test/v1",
-                          http_client=http_client, max_retries=0)
-        model._client.root_async_client = sdk
-        model._client.async_client = sdk.chat.completions
-        result = await model.bind(response_format={"type": "json_object"}, tool_choice="none", max_tokens=64).bind_tools(
-            [TOOL], extra_body={"test_request_option": "preserved"},
-        ).ainvoke("Return a JSON object with ok=true. Do not call tools.")
+    # Stub only HTTP: replacing the SDK itself would hide factory routing bugs.
+    await model._client.root_async_client._client.aclose()
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http_client:
+            model._client.root_async_client._client = http_client
+            result = await model.bind(response_format={"type": "json_object"}, tool_choice="none", max_tokens=64).bind_tools(
+                [TOOL], extra_body={"test_request_option": "preserved"},
+            ).ainvoke("Return a JSON object with ok=true. Do not call tools.")
+    finally:
+        model._client.root_client.close()
+        await model._client.root_async_client.close()
     assert result.content == '{"ok":true}'
     assert result.usage_metadata["total_tokens"] == 34
     assert len(captured) == len(middleware.calls) == 1
@@ -434,3 +484,35 @@ async def test_real_sdk_json_object_uses_create_with_unmodified_nonstrict_tools(
         assert payload["thinking"] == {"type": "disabled"}
     else:
         assert "thinking" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('provider', ['openai', 'ollama'])
+async def test_production_ignores_legacy_profile_and_step_output_caps(monkeypatch, provider):
+    client = FakeClient(cache=False)
+    monkeypatch.setattr('app.infrastructure.external.llm.chat_model.init_chat_model', lambda **kwargs: client)
+    calls = []
+    async def middleware(**kwargs):
+        calls.append(kwargs['max_output_tokens'])
+        return await kwargs['invoke'](kwargs['messages'], kwargs['max_output_tokens'])
+    model = create_chat_model(Settings(model_provider=provider, max_tokens=2000, execution_max_tokens=4096),
+                              {'max_tokens': 20}, request_middleware=middleware)
+    await model.bind(max_tokens=10, max_completion_tokens=10, num_predict=10).ainvoke('complete analysis')
+    assert calls == [None]
+    assert 'max_tokens' not in client._requests[0]
+    assert 'max_completion_tokens' not in client._requests[0]
+    assert 'num_predict' not in client._requests[0]
+
+
+@pytest.mark.asyncio
+async def test_production_uses_verified_model_capacity_not_role_budget(monkeypatch):
+    client = FakeClient(cache=False)
+    monkeypatch.setattr('app.infrastructure.external.llm.chat_model.init_chat_model', lambda **kwargs: client)
+    async def middleware(**kwargs):
+        assert kwargs['max_output_tokens'] == 32768
+        return await kwargs['invoke'](kwargs['messages'], kwargs['max_output_tokens'])
+    settings = Settings(model_provider='openai', model_name='verified', model_request_capabilities={
+        'openai': {'verified': {'max_output_tokens': 32768}}})
+    model = create_chat_model(settings, {'max_tokens': 2000}, request_middleware=middleware)
+    await model.bind(max_tokens=600).ainvoke('complete analysis')
+    assert client._requests[0]['max_tokens'] == 32768

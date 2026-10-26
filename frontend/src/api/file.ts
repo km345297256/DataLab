@@ -1,3 +1,4 @@
+import { authSessionKey, ensureAccessToken } from '../utils/authTokens.ts';
 // File API service
 import { apiClient, API_CONFIG, BASE_URL } from './client.ts';
 import type { ApiResponse } from './client.ts';
@@ -103,16 +104,22 @@ export async function uploadLargeFilePart(
   blob: Blob,
   onProgress?: (loaded: number) => void,
 ): Promise<LargeUploadPartUploadResponse> {
+  const owner = authSessionKey();
+  const token = await ensureAccessToken(BASE_URL);
+  if (owner !== authSessionKey()) throw new DOMException('Account changed', 'AbortError');
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', `${BASE_URL}/files/large-uploads/${encodeURIComponent(uploadId)}/parts/${partNumber}`, true);
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.onprogress = (event) => {
+      if (owner !== authSessionKey()) { xhr.abort(); return; }
       if (event.lengthComputable) {
         onProgress?.(event.loaded);
       }
     };
     xhr.onload = () => {
+      if (owner !== authSessionKey()) { reject(new DOMException('Account changed', 'AbortError')); return; }
       if (xhr.status >= 200 && xhr.status < 300) {
         const payload = JSON.parse(xhr.responseText || '{}') as ApiResponse<LargeUploadPartUploadResponse>;
         if (!payload.data?.etag) {
@@ -125,6 +132,7 @@ export async function uploadLargeFilePart(
       reject(new Error(`Large upload part failed: ${xhr.status}`));
     };
     xhr.onerror = () => reject(new Error('Large upload part network error'));
+    xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
     xhr.send(blob);
   });
 }

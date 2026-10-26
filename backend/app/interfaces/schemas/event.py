@@ -1,4 +1,5 @@
 from app.domain.services.connector_results import connector_results
+from app.domain.models.skill_draft import SkillCreationView
 from pydantic import BaseModel, Field, TypeAdapter
 from typing import Any, Union, Literal, Dict, Optional, List, Self, Type
 from datetime import datetime
@@ -18,8 +19,12 @@ from app.domain.models.event import (
     MAX_EVENT_SEQUENCE,
 )
 from app.domain.models.spill import SpillArtifactNotice
+from app.domain.models.tool_result import ToolResult
 from app.domain.models.analysis_job import AnalysisJobView
 from app.domain.models.tool_approval import ToolApprovalView
+from app.domain.models.program_attempt import ProgramAttemptView
+from app.domain.models.skill_creation_progress import SkillCreationProgressView
+from app.domain.models.request_intent import ClarificationView
 from app.domain.services.tools.spill_projection import (
     sanitize_spill_notice,
     spill_notice_from_result,
@@ -99,13 +104,43 @@ class MessageSSEEvent(BaseSSEEvent):
 
     @classmethod
     async def from_event_async(cls, event: MessageEvent) -> Self:
+        metadata = None
+        content = event.message
+        if event.metadata is not None:
+            metadata = {key: value for key, value in event.metadata.items()
+                        if key not in {"analysis_input_files", "requested_clarification_id"}
+                        and (not key.startswith("clarification_") or key == "clarification_id")}
+            if "clarification" in metadata:
+                # Questions are public UI, while their execution context can
+                # contain host details. Sanitize both the structured card and
+                # its ordinary-message fallback on live SSE and history reads.
+                if event.role == "assistant":
+                    content = public_error_message(content)
+                try:
+                    view = ClarificationView.model_validate(metadata["clarification"])
+                    questions = []
+                    for question in view.questions:
+                        options = [public_error_message(option) for option in question.options]
+                        # A redacted option no longer identifies the original
+                        # choice reliably. Fall back to a free-text answer.
+                        if options != question.options or len(set(options)) != len(options):
+                            options = []
+                        questions.append(question.model_copy(update={
+                            "question": public_error_message(question.question),
+                            "reason": public_error_message(question.reason) if question.reason else "",
+                            "options": options,
+                        }))
+                    metadata["clarification"] = view.model_copy(update={"questions": questions}).model_dump(
+                        mode="json", exclude_none=True)
+                except (ValueError, TypeError):
+                    metadata.pop("clarification")
         return cls(
             data=MessageEventData(
                 **BaseEventData.base_event_data(event),
                 role=event.role,
-                content=event.message,
+                content=content,
                 attachments=[await FileInfoResponse.from_file_info(attachment) for attachment in event.attachments] if event.attachments else None,
-                metadata=event.metadata,
+                metadata=metadata,
             )
         )
 
@@ -113,6 +148,8 @@ class ToolEventData(BaseEventData):
     tool_call_id: str
     name: str
     status: ToolStatus
+    execution_status: Optional[Literal["succeeded", "failed", "not_started"]] = None
+    write_action: Optional[Literal["reuse", "execute_saved", "finalize_saved", "inspect_saved"]] = None
     function: str
     args: Dict[str, Any]
     content: Optional[ToolContent] = None
@@ -126,6 +163,11 @@ class ToolEventData(BaseEventData):
     tool_approval: Optional[ToolApprovalView] = None
     connector_status: Optional[str] = None
     connector_results: Optional[Dict[str, Any]] = None
+    open_data_search_id: Optional[str] = None
+    open_data_update_id: Optional[str] = None
+    program_attempt: Optional[ProgramAttemptView] = None
+    skill_creation: Optional[SkillCreationView] = None
+    skill_creation_progress: Optional[SkillCreationProgressView] = None
 
 class ToolSSEEvent(BaseSSEEvent):
     event: Literal["tool"] = "tool"
@@ -133,6 +175,27 @@ class ToolSSEEvent(BaseSSEEvent):
 
     @classmethod
     async def from_event_async(cls, event: ToolEvent) -> Self:
+        result = event.function_result
+        success = result.success if isinstance(result, ToolResult) else (
+            result.get("success") if isinstance(result, dict) else None
+        )
+        execution_status = None
+        if event.status == ToolStatus.CALLED and type(success) is bool:
+            execution_status = "succeeded" if success else "failed"
+            if (event.dispatch_status == "not_started"
+                    and event.program_attempt is None):
+                # Only the host-owned event projection can attest no dispatch.
+                # Plugin result strings/flags must not erase a real failure.
+                execution_status = "not_started"
+        write_action = None
+        if (execution_status == "not_started" and event.tool_name == "file"
+                and event.function_name in {"file_write", "file_str_replace", "file_apply_patch"}):
+            receipt = result.data if isinstance(result, ToolResult) else result
+            if isinstance(receipt, dict) and isinstance(receipt.get("data"), dict):
+                receipt = receipt["data"]
+            action = receipt.get("write_action") if isinstance(receipt, dict) else None
+            if isinstance(action, str) and action in {"reuse", "execute_saved", "finalize_saved", "inspect_saved"}:
+                write_action = action
         content = event.tool_content
         if isinstance(content, BrowserToolContent):
             from app.interfaces.dependencies import get_file_service
@@ -164,6 +227,8 @@ class ToolSSEEvent(BaseSSEEvent):
                 tool_call_id=event.tool_call_id,
                 name=event.tool_name,
                 status=event.status,
+                execution_status=execution_status,
+                write_action=write_action,
                 function=event.function_name,
                 args=safe_args if isinstance(safe_args, dict) else {},
                 content=safe_content,
@@ -173,8 +238,36 @@ class ToolSSEEvent(BaseSSEEvent):
                 tool_approval=event.tool_approval,
                 connector_status=connector_status_text(event),
                 connector_results=connector_results(event),
+                open_data_search_id=open_data_search_id(event),
+                open_data_update_id=open_data_update_id(event),
+                program_attempt=event.program_attempt if event.status == ToolStatus.CALLED else None,
+                skill_creation=skill_creation_view(event),
+                skill_creation_progress=event.skill_creation_progress if (
+                    event.tool_name == "skill" and event.function_name == "skill_create_from_session") else None,
             )
         )
+
+def skill_creation_view(event: ToolEvent) -> SkillCreationView | None:
+    """Project only the built-in creator's public draft receipt on live/history SSE."""
+    if (event.tool_name != "skill" or event.function_name != "skill_create_from_session"
+            or event.status != ToolStatus.CALLED):
+        return None
+    result = event.function_result
+    if isinstance(result, ToolResult):
+        result = result.model_dump(mode="json")
+    if not isinstance(result, dict) or result.get("success") is not True:
+        return None
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return None
+    # Old events and malformed results must not manufacture an actionable card.
+    # Whitelist the view rather than exposing owner/session/object metadata.
+    try:
+        safe = sanitize_tool_public_data({key: data[key] for key in SkillCreationView.model_fields if key in data})
+        return SkillCreationView.model_validate(safe)
+    except (TypeError, ValueError):
+        return None
+
 
 class DoneSSEEvent(BaseSSEEvent):
     event: Literal["done"] = "done"
@@ -378,3 +471,31 @@ def connector_status_text(event):
         return '数据包已下载并通过校验。任务结束后将统一提供结果和下载文件。'
     from app.domain.services.tools.data_discovery import connector_error_message
     return connector_error_message(data.get('reason', 'unknown'))
+
+
+def open_data_search_id(event: ToolEvent) -> str | None:
+    """Project a durable reference only, never provider URLs or file paths."""
+    import re
+    if event.status != ToolStatus.CALLED or event.function_name != "data_search":
+        return None
+    result = event.function_result
+    result = result if isinstance(result, dict) else result.model_dump() if isinstance(result, BaseModel) else {}
+    if result.get("success") is not True or not isinstance(result.get("data"), dict):
+        return None
+    value = result["data"].get("search_id")
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value) else None
+
+
+def open_data_update_id(event: ToolEvent) -> str | None:
+    """Invalidate an existing card after a conversational action without duplicating it."""
+    import re
+    if event.status != ToolStatus.CALLED or event.function_name not in {
+        'data_acquire', 'data_search_continue', 'data_search_resolve', 'data_search_status',
+    }:
+        return None
+    result = event.function_result
+    result = result if isinstance(result, dict) else result.model_dump() if isinstance(result, BaseModel) else {}
+    if result.get('success') is not True:
+        return None
+    value = (event.function_args or {}).get('search_id')
+    return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) else None

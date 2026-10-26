@@ -42,3 +42,48 @@ body,html {
 .ltr\:border-l {
   border-left-width: 1px;
 }
+
+
+:root { --control-focus-color: #2b7659; --control-selected-fill: #2b76590d; }
+.dark { --control-focus-color: #a9cbbb; --control-selected-fill: #a9cbbb14; }
+
+/* A single inset focus edge replaces browser outlines and component rings.
+   Compound fields put that edge on the shell, never on the inner editor. */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]), textarea, select, [data-slot="select-trigger"]):focus,
+.control-shell:has(:is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]), textarea, select, [data-slot="select-trigger"]):focus),
+.chat-composer-surface:has(.chat-message-input:focus) {
+  outline: 1px solid var(--control-focus-color) !important;
+  outline-offset: -1px !important;
+  box-shadow: none !important;
+}
+
+.control-shell :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]), textarea, select, [data-slot="select-trigger"]):focus,
+.chat-message-input:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+:is(input, textarea, select, [data-slot="select-trigger"])[aria-invalid="true"]:focus,
+.control-shell:has([aria-invalid="true"]:focus) {
+  outline-color: var(--function-error) !important;
+}
+
+/* A popup shell may receive programmatic focus; its own border is enough.
+   Keep focus indicators on the interactive children, not around the whole popup. */
+:is([data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="select-content"], [role="dialog"][tabindex="-1"]):focus {
+  outline: none;
+}
+
+/* Native choices and keyboard navigation share the same accessible accent.
+   Text fields use the inset edge above; compound fields keep it on their shell. */
+input:is([type="checkbox"], [type="radio"], [type="range"]) {
+  accent-color: var(--control-focus-color) !important;
+}
+:is(button, a, summary, [role="button"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], input:is([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="button"], [type="submit"], [type="reset"])):not([data-slot="select-trigger"]):focus-visible {
+  outline: 2px solid var(--control-focus-color) !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
+@media (forced-colors: active) {
+  :root, .dark { --control-focus-color: Highlight; }
+}

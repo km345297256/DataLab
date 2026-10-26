@@ -13,20 +13,32 @@ from app.domain.models.analysis_outcome import (
 KINDS = {
     "data": {"zip", "fasta", "fa", "fna", "faa", "fastq", "fq"},
     "image": {"png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "svg", "avif"},
-    "table": {"csv", "tsv", "xlsx", "xls", "parquet"},
+    "table": {"csv", "tsv", "xlsx", "xls", "parquet", "md", "markdown"},
     "report": {"md", "markdown", "txt", "json", "html", "htm", "pdf", "docx"},
     "code": {"py", "r", "js", "ts", "sh", "sql", "ipynb"},
 }
 LABELS = DELIVERABLE_LABELS
 REASONS = {
     "artifacts_missing": "部分要求的成果还未完成。",
-    "artifact_validation_failed": "部分文件尚未通过内容检查，暂不能计为已完成成果。",
-    "validation_unavailable": "暂时无法核验成果内容，完成情况尚未确认。",
+    "artifact_validation_failed": "部分成果文件无法确认可读取或版本一致，暂未完成交付。",
+    "answer_validation_unavailable": "本次说明暂无法完成证据核验；核验未完成不等于结论被判错误。",
+    "answer_validation_rejected": "本次说明中的部分引用或证据未通过检查，相关结论暂未发布。",
+    "report_validation_rejected": "报告已保存，但部分正文未通过证据核验。",
+    "report_validation_unavailable": "报告已保存，但正文尚未完成证据核验。",
+    "scientific_validation_rejected": "本次结果的计算方法或数值一致性未通过核验。",
+    "scientific_validation_unavailable": "本次结果的计算方法与数值一致性尚未完整核验。",
+    "answer_objectives_missing": "本次回答未完整覆盖原请求的分析目标。",
+    "analytical_requirements_missing": "部分要求的分析内容尚未完成。",
+    "validation_unavailable": "暂时无法确认成果文件的读取与版本信息，交付状态尚未确认。",
     "delivery_failed": "部分成果文件尚未成功交付。",
     "tool_budget_exhausted": "本轮工具执行额度已用尽。",
     "analysis_budget_deadline_exceeded": "本次分析已达到最长执行时间，尚未完成的部分已停止。",
     "analysis_budget_store_unavailable": "暂时无法可靠记录执行额度，系统已安全停止后续操作。",
     "budget_no_progress_loop": "连续操作未产生新的有效进展，系统已停止重复尝试。",
+    "analysis_no_progress_loop": "最新修复或运行请求未满足恢复条件，系统在执行前停止了该请求。",
+    "missing_dependencies": "运行环境缺少程序必需的依赖，预检已阻止程序启动。",
+    "dependency_check_unavailable": "运行依赖暂无法确认，程序尚未启动。",
+    "program_prerequisites_not_ready": "程序运行前的准备检查未通过，程序尚未启动。",
     "tool_arguments_invalid": "工具参数校验未通过。",
     "tool_execution_failed": "工具执行失败。",
     "tool_execution_unknown": "部分操作的执行状态尚未确认，未将其计为已完成。",
@@ -41,10 +53,19 @@ REASONS = {
 
 def artifact_kind(path: str) -> str | None:
     extension = PurePosixPath(path).suffix.lower().lstrip(".")
+    # Markdown is a report by default. Only a byte-validation receipt can
+    # establish its additional table capability; an extension is insufficient.
+    if extension in {"md", "markdown"}:
+        return "report"
     return next((kind for kind, formats in KINDS.items() if extension in formats), "data")
 
 
 def requirements_for_step(step, message) -> list[DeliverableRequirement]:
+    from app.domain.services.analysis_request_contract import current_artifact_requirement
+    if current_artifact_requirement(message) is False:
+        # A later router/model step cannot turn a current read-only request into
+        # a new chart obligation, including after earlier turns produced files.
+        return []
     declared = list(getattr(step, "deliverables", []) or [])
     requirements = [DeliverableRequirement.model_validate(item) for item in declared]
     intent = (step.inputs or {}).get("dataset_intent")
@@ -64,7 +85,7 @@ DIAGNOSTIC_KEYS = frozenset({
     "actual_cells", "width", "height", "frames", "max_pixels", "max_frames", "sheet_count", "max_sheets",
     "archive_entries", "max_archive_entries", "archive_bytes", "max_archive_bytes",
 })
-UNAVAILABLE_REASONS = frozenset({"validation_unavailable", "validator_unavailable", "validation_deadline"})
+UNAVAILABLE_REASONS = frozenset({"validation_unavailable", "validator_unavailable", "validation_deadline", "validation_cancelled"})
 
 
 def safe_diagnostics(value: Any) -> dict[str, int]:
@@ -86,9 +107,44 @@ def _value(item: Any, key: str, default=None):
 
 
 def _matches(requirement: DeliverableRequirement, kind: str, path: Any) -> bool:
-    return bool((kind == requirement.kind or (requirement.kind == "any" and kind != "code"))
+    markdown_table = (requirement.kind == "table" and kind == "report" and isinstance(path, str)
+                      and PurePosixPath(path).suffix.lower() in {".md", ".markdown"})
+    # This is candidate/diagnostic compatibility only. _missing_requirements
+    # additionally checks trusted content metadata before filling a table slot.
+    return bool((kind == requirement.kind or markdown_table or (requirement.kind == "any" and kind != "code"))
                 and (not requirement.formats or (isinstance(path, str)
-                    and PurePosixPath(path).suffix.lower().lstrip(".") in requirement.formats)))
+                    and PurePosixPath(path).suffix.lower().lstrip(".") in requirement.formats))
+                and (not requirement.output_paths or path in requirement.output_paths
+                     or (isinstance(path, str) and any(path.startswith(root + "/")
+                                                      for root in requirement.output_paths))
+                     or requirement.min_count > len(requirement.output_paths)))
+
+
+def _validated_markdown_table(record: dict) -> bool:
+    """Accept only bounded, internally consistent sandbox table observations.
+
+    The runner supplies these receipts after reading the actual uploaded
+    version. Neither a model's objective, filename nor a text 'table' heading
+    enters this predicate. Structural validity still does not prove content
+    coverage, column semantics, calculations, units or source attribution.
+    """
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("table_validation") != "rectangular":
+        return False
+    count, tables = metadata.get("table_count"), metadata.get("tables")
+    return bool(type(count) is int and 1 <= count <= 128 and isinstance(tables, list)
+                and len(tables) == count and all(isinstance(item, dict)
+                    and type(item.get("row_count")) is int and 2 <= item["row_count"] <= 100_000
+                    and type(item.get("column_count")) is int and 1 <= item["column_count"] <= 2_000
+                    for item in tables)
+                and sum(item["row_count"] * item["column_count"] for item in tables) <= 200_000)
+
+
+def _delivery_integrity(record: dict) -> bool:
+    """A host file receipt says nothing about contents, rendering or science."""
+    metadata = record.get("metadata")
+    return bool(isinstance(metadata, dict) and metadata.get("validation_scope") == "file_integrity"
+                and metadata.get("content_validation") in ("not_performed", "unsupported"))
 
 
 def _inspect_records(records, delivered, validation_available, *, _selected_deliveries=None):
@@ -96,6 +152,11 @@ def _inspect_records(records, delivered, validation_available, *, _selected_deli
 
     def failed(item, reason):
         item = item if isinstance(item, dict) else {}
+        # Request cancellation is normally propagated by the task runner. If
+        # a receipt outlives its caller, it proves unavailable validation, not
+        # malformed bytes and never permission to regenerate the file.
+        if reason == "validation_cancelled":
+            reason = "validation_unavailable"
         path = item.get("path")
         kind = item.get("expected_kind") or item.get("kind")
         if not isinstance(kind, str) or kind not in KINDS:
@@ -122,13 +183,14 @@ def _inspect_records(records, delivered, validation_available, *, _selected_deli
         suffix = PurePosixPath(path).suffix.lower().lstrip(".") if isinstance(path, str) else ""
         if (not _safe_output_path(path) or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
                 or type(size) is not int or size < 0
-                or (size == 0 and not (isinstance(item.get("metadata"), dict)
-                    and item["metadata"].get("validation_scope") == "file_integrity"))
+                or (size == 0 and not _delivery_integrity(item))
                 or not isinstance(kind, str) or kind not in KINDS
                 or (suffix not in KINDS[kind] and not (kind == "table" and suffix == "json")
-                    and not (isinstance(item.get("metadata"), dict)
-                             and item["metadata"].get("validation_scope") == "file_integrity"
-                             and item["metadata"].get("content_validation") == "unsupported"))):
+                    and not _delivery_integrity(item))):
+            failed(item, "validation_receipt_invalid")
+            continue
+        if (kind == "table" and suffix in {"md", "markdown"}
+                and not _delivery_integrity(item) and not _validated_markdown_table(item)):
             failed(item, "validation_receipt_invalid")
             continue
         valid[path] = item
@@ -170,9 +232,11 @@ def verified_deliveries(records: list[dict], delivered, *, validation_available:
     by_path = {item["path"]: item for item in accepted}
     for info in selected:
         record = by_path[_value(info, "file_path")]
-        scope = (record.get("metadata") or {}).get("validation_scope")
         metadata = dict(_value(info, "metadata") or {})
-        metadata["artifact_validation_scope"] = "file_integrity" if scope == "file_integrity" else "content"
+        # Publication attests saved/uploaded bytes only, even for historical
+        # content receipts. The user assesses format, appearance and meaning.
+        metadata["artifact_validation_scope"] = "file_integrity"
+        metadata["content_assessment"] = "user_evaluated"
         if isinstance(info, dict):
             info["metadata"] = metadata
         else:
@@ -183,12 +247,20 @@ def verified_deliveries(records: list[dict], delivered, *, validation_available:
 def _missing_requirements(requirements, accepted):
     # Each delivered artifact satisfies at most one count slot. Augmenting
     # paths handle overlaps (e.g. any + image) without greedy false failures.
-    slots = [index for index, requirement in enumerate(requirements) for _ in range(requirement.min_count)]
+    slots = [(index, path) for index, requirement in enumerate(requirements)
+             for path in [*requirement.output_paths,
+                          *([None] * (requirement.min_count - len(requirement.output_paths)))]]
     choices = []
-    for index in slots:
+    for index, required_path in slots:
         requirement = requirements[index]
         choices.append([position for position, item in enumerate(accepted)
-                        if _matches(requirement, item["kind"], item["path"])])
+                        if _matches(requirement, item["kind"], item["path"])
+                        and (requirement.kind != "table"
+                             or PurePosixPath(item["path"]).suffix.lower() not in {".md", ".markdown"}
+                             or _delivery_integrity(item)
+                             or _validated_markdown_table(item))
+                        and (required_path is None or item["path"] == required_path
+                             or item["path"].startswith(required_path + "/"))])
     assigned = {}
     def assign(slot, visited):
         for position in choices[slot]:
@@ -202,13 +274,18 @@ def _missing_requirements(requirements, accepted):
     for slot in sorted(range(len(slots)), key=lambda value: len(choices[value])):
         assign(slot, set())
     fulfilled = [0] * len(requirements)
+    fulfilled_paths = [set() for _ in requirements]
     for slot in assigned.values():
-        fulfilled[slots[slot]] += 1
+        index, path = slots[slot]
+        fulfilled[index] += 1
+        if path is not None:
+            fulfilled_paths[index].add(path)
     missing = []
     for index, requirement in enumerate(requirements):
         if fulfilled[index] < requirement.min_count:
             missing.append(requirement.model_copy(update={
                 "min_count": requirement.min_count - fulfilled[index], "label": LABELS[requirement.kind],
+                "output_paths": [path for path in requirement.output_paths if path not in fulfilled_paths[index]],
             }))
     return missing
 
@@ -288,7 +365,7 @@ def assess_delivery(requirements, records: list[dict], delivered: list[Any], *,
 
 
 def verified_delivery_counts(delivered_files: list[Any]) -> dict[str, int]:
-    """Summarize the caller's content-verified uploads without disclosing paths.
+    """Summarize the caller's byte-bound uploads without disclosing paths.
 
     Accept internal FileInfo instances or equivalent dictionaries, not a model's
     claimed type/count list. Receipt validation still belongs to assess_delivery;
@@ -313,12 +390,29 @@ def verified_delivery_counts(delivered_files: list[Any]) -> dict[str, int]:
         seen_ids.add(file_id)
         seen_paths.add(path)
         kind = artifact_kind(path)
-        # JSON is the one supported extension whose verified content may be a
-        # data table or a report. An explicit receipt-derived kind disambiguates it.
-        if PurePosixPath(path).suffix.lower() == ".json" and (get("kind") or metadata.get("artifact_kind")) == "table":
+        # Ambiguous formats keep their receipt-derived kind when supplied by
+        # the caller; this presentation helper does not infer table content.
+        if PurePosixPath(path).suffix.lower() in {".json", ".md", ".markdown"} and (get("kind") or metadata.get("artifact_kind")) == "table":
             kind = "table"
         counts[kind or "any"] += 1
     return {kind: count for kind, count in counts.items() if count}
+
+
+def _missing_format_label(formats: Any) -> str:
+    """Display only known extensions; malformed private copies stay generic."""
+    if not isinstance(formats, list) or not 1 <= len(formats) <= 8:
+        return ""
+    allowed = set().union(*KINDS.values())
+    normalized = []
+    for value in formats:
+        if not isinstance(value, str):
+            return ""
+        suffix = value.removeprefix(".").lower()
+        if suffix not in allowed:
+            return ""
+        if suffix not in normalized:
+            normalized.append(suffix)
+    return "（" + " / ".join(suffix.upper() for suffix in normalized) + "）"
 
 
 def outcome_message(outcome: AnalysisOutcome, *, delivered_count: int = 0,
@@ -339,7 +433,18 @@ def outcome_message(outcome: AnalysisOutcome, *, delivered_count: int = 0,
         # explanation about code when the actual delivered content is unknown.
         lines.append(f"已交付并保留 {delivered_count} 个文件。")
     if outcome.missing:
-        lines.append("待完成：" + "、".join(f"{LABELS[item.kind]} × {item.min_count}" for item in outcome.missing) + "。")
+        lines.append("待完成：" + "、".join(
+            f"{LABELS[item.kind]}{_missing_format_label(item.formats)} × {item.min_count}"
+            for item in outcome.missing) + "。")
+    missing_names = list(dict.fromkeys(issue.artifact_name for issue in outcome.issues
+                                      if issue.blocking and issue.reason_code == "missing_artifact"))
+    if missing_names:
+        def quoted_name(name):
+            fence = "`" * (max((len(match.group()) for match in re.finditer(r"`+", name)), default=0) + 1)
+            return f"{fence} {name} {fence}" if "`" in name else f"`{name}`"
+        # These names come from exact required-path validation, never from an
+        # executor's attachment claims. They are absent outputs, not downloads.
+        lines.append("尚未生成的所需文件：" + "、".join(quoted_name(name) for name in missing_names[:8]) + "。")
     if (not complete and outcome.can_resume and isinstance(outcome.resume_from, str)
             and re.fullmatch(r"[a-f0-9]{32}", outcome.resume_from)):
         lines.append("可点击“继续未完成部分”，从本任务的已保存进度继续。")

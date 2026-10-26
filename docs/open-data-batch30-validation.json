@@ -1,0 +1,1134 @@
+{
+  "verified_at": "2026-10-21T10:32:44.688834+00:00",
+  "new_source_institution_count": 32,
+  "new_connector_count": 35,
+  "total_discovery_connector_count": 48,
+  "counting_rule": "DANS four disciplinary repositories count as one institution; distinct national and regional government publishers count separately. Existing sources are excluded.",
+  "acquisition_policy": "Only content-verified entity-data files are displayed; downloads use the shared streaming and resume pipeline with no fixed file-size cap. Original format and available version, license and checksum evidence are retained.",
+  "selection_behavior": "With no source selected, the planner matches relevant enabled sources. Manual choices constrain retrieval to those sources. Planner fallback may query all allowed enabled sources.",
+  "verification_scope": "Each enabled source has a completely downloaded sample. This proves its integration path, not permanent availability of every record or permission to reuse every file; source licenses remain authoritative. Sample hashes identify the exact bytes downloaded during validation; dynamically generated exports can differ across acquisition times, and each acquisition stores its own SHA256.",
+  "sources": [
+    {
+      "source_id": "australia-vic",
+      "institution_id": "australia-vic",
+      "title": "澳大利亚维多利亚州开放数据",
+      "connector_title": "DataVic",
+      "country_or_region": "Australia / Victoria",
+      "official_url": "https://discover.data.vic.gov.au",
+      "subjects": [
+        "Australia",
+        "Victoria",
+        "public health",
+        "population health",
+        "health survey",
+        "regional government"
+      ],
+      "supported_scope": "当前接入维多利亚州卫生部门的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "population",
+        "external_id": "9773717e-bb94-460a-86ad-c400b122ed5e",
+        "record_url": "https://discover.data.vic.gov.au/dataset/9773717e-bb94-460a-86ad-c400b122ed5e",
+        "filename": "australia-vic_9773717e-bb94-460a-86ad-c400b122ed5e_d72215cf-afad-4571-869f-8f3647a84ab4_vphs-2014-quick-stats-xls.xlsx",
+        "bytes": 2348363,
+        "sha256": "e368ced5919c31a9e30263fc10824f354f399169679042944d82e4ba03fdc752",
+        "source_version": "2025-07-21T01:39:39.453428",
+        "license": "Creative Commons Attribution 4.0 International",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "canada-open-data",
+      "institution_id": "canada-open-data",
+      "title": "加拿大联邦开放数据",
+      "connector_title": "Canada Open Government",
+      "country_or_region": "Canada",
+      "official_url": "https://open.canada.ca/",
+      "subjects": [
+        "Canada",
+        "population",
+        "economics",
+        "agriculture",
+        "labour",
+        "official statistics"
+      ],
+      "supported_scope": "当前接入加拿大统计局的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "population",
+        "external_id": "46615d41-2be3-46ff-85ca-57e7fa940c87",
+        "record_url": "https://open.canada.ca/data/en/dataset/46615d41-2be3-46ff-85ca-57e7fa940c87",
+        "filename": "canada-open-data_46615d41-2be3-46ff-85ca-57e7fa940c87_131f628f-e601-40be-b353-415b797d1969_32100397-eng.zip",
+        "bytes": 9773,
+        "sha256": "6d707e5bf98b5d49bae8a1a4f2ffbb4617e98cce944db22c5e8a1bab6c7c46c8",
+        "source_version": "2023-09-18T14:20:22.010933",
+        "license": "Open Government Licence - Canada",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "canada-bc",
+      "institution_id": "canada-bc",
+      "title": "加拿大不列颠哥伦比亚省开放数据",
+      "connector_title": "BC Data Catalogue",
+      "country_or_region": "Canada / British Columbia",
+      "official_url": "https://catalogue.data.gov.bc.ca",
+      "subjects": [
+        "Canada",
+        "British Columbia",
+        "population",
+        "ecology",
+        "education",
+        "public health",
+        "regional government"
+      ],
+      "supported_scope": "当前接入BC 省门户直接托管资源的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "population",
+        "external_id": "fbb1584f-7f93-47e7-8001-16e3087bddea",
+        "record_url": "https://catalogue.data.gov.bc.ca/dataset/fbb1584f-7f93-47e7-8001-16e3087bddea",
+        "filename": "canada-bc_fbb1584f-7f93-47e7-8001-16e3087bddea_a7697e86-7a8b-4d41-9406-55538a8e1663_hl_category_summary.csv",
+        "bytes": 193,
+        "sha256": "1064a5db45e38b01fd5a0d271004d1a5f2b145c4de792d639e0b2708b0f8e742",
+        "source_version": "2026-02-26T19:45:59.285076",
+        "license": "Open Government Licence - British Columbia",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "canada-quebec",
+      "institution_id": "canada-quebec",
+      "title": "加拿大魁北克省开放数据",
+      "connector_title": "Données Québec",
+      "country_or_region": "Canada / Québec",
+      "official_url": "https://www.donneesquebec.ca/",
+      "subjects": [
+        "Canada",
+        "Québec",
+        "population",
+        "economics",
+        "public services",
+        "regional government"
+      ],
+      "supported_scope": "当前接入魁北克省门户直接托管资源的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "population",
+        "external_id": "b34de345-5bfe-4db2-a714-ed239a0c0b81",
+        "record_url": "https://www.donneesquebec.ca/recherche/dataset/b34de345-5bfe-4db2-a714-ed239a0c0b81",
+        "filename": "canada-quebec_b34de345-5bfe-4db2-a714-ed239a0c0b81_e55d6d67-459d-4f53-a46b-0518404a3615_pf-postes-2020-2020.csv",
+        "bytes": 5019,
+        "sha256": "060833fe6d984151d406b5efe3e4c0696311c7e90ee9d615c4920a31c7a86a30",
+        "source_version": "2026-10-21T08:16:51.436855",
+        "license": "Attribution (CC-BY 4.0)",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "germany-govdata",
+      "institution_id": "germany-govdata",
+      "title": "德国政府开放数据",
+      "connector_title": "GovData",
+      "country_or_region": "Germany",
+      "official_url": "https://www.govdata.de/",
+      "subjects": [
+        "Germany",
+        "Berlin",
+        "Ruhr",
+        "population",
+        "urban planning",
+        "economics",
+        "local government"
+      ],
+      "supported_scope": "当前接入柏林州和鲁尔地区官方数据节点的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "\"Gender Datenreport Berlin 2023\"",
+        "external_id": "ca123584-c89d-4f5a-b7b1-55246a77387c",
+        "record_url": "https://www.govdata.de/ckan/dataset/ca123584-c89d-4f5a-b7b1-55246a77387c",
+        "filename": "germany-govdata_ca123584-c89d-4f5a-b7b1-55246a77387c_d1c99546-87bf-4f4d-bd55-1edf03bb2831_2023_1_1_bevoelkerung_final.xlsx",
+        "bytes": 66567,
+        "sha256": "f23188a690d6f45770ae2a51f2bd167d9f6cb61ce9e492d957716b6983c5b61e",
+        "source_version": "2026-10-11T22:15:17.847627",
+        "license": "http://dcat-ap.de/def/licenses/cc-by",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "berlin-open-data",
+      "institution_id": "berlin-open-data",
+      "title": "德国柏林州开放数据",
+      "connector_title": "Berlin Open Data",
+      "country_or_region": "Germany / Berlin",
+      "official_url": "https://daten.berlin.de/",
+      "subjects": [
+        "Germany",
+        "Berlin",
+        "population",
+        "gender equality",
+        "social statistics",
+        "regional government"
+      ],
+      "supported_scope": "当前接入柏林州妇女与性别平等部门的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "Bevölkerung",
+        "external_id": "578e5c30-51a4-419f-956e-ac4de68f11f1",
+        "record_url": "https://datenregister.berlin.de/dataset/578e5c30-51a4-419f-956e-ac4de68f11f1",
+        "filename": "berlin-open-data_578e5c30-51a4-419f-956e-ac4de68f11f1_3588c076-34d0-48ec-bea0-2907ae809cb5_2023_1_1_bevoelkerung_final.xlsx",
+        "bytes": 66567,
+        "sha256": "f23188a690d6f45770ae2a51f2bd167d9f6cb61ce9e492d957716b6983c5b61e",
+        "source_version": "2025-06-20T12:02:09.442969",
+        "license": "Creative Commons Attribution",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "ireland-data-gov",
+      "institution_id": "ireland-data-gov",
+      "title": "爱尔兰政府开放数据",
+      "connector_title": "data.gov.ie",
+      "country_or_region": "Ireland",
+      "official_url": "https://data.gov.ie",
+      "subjects": [
+        "Ireland",
+        "population",
+        "economics",
+        "labour",
+        "agriculture",
+        "official statistics"
+      ],
+      "supported_scope": "当前接入爱尔兰中央统计局的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "population",
+        "external_id": "1d42bda8-396c-496f-9ed3-d8b60a4d8d98",
+        "record_url": "https://data.gov.ie/dataset/1d42bda8-396c-496f-9ed3-d8b60a4d8d98",
+        "filename": "ireland-data-gov_1d42bda8-396c-496f-9ed3-d8b60a4d8d98_08d415a7-6ad9-4244-9113-8bbc069f2fc8_Population.csv",
+        "bytes": 20085,
+        "sha256": "04d042f404991dc9480f29ba829f79b7094ef5a0f7232f292bd37a3cdac97e3e",
+        "source_version": "2026-10-21T01:15:02.309734",
+        "license": "Creative Commons Attribution 4.0",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "japan-e-gov",
+      "institution_id": "japan-e-gov",
+      "title": "日本 e-Gov 开放数据",
+      "connector_title": "e-Gov Data Portal",
+      "country_or_region": "Japan",
+      "official_url": "https://data.e-gov.go.jp/",
+      "subjects": [
+        "Japan",
+        "telecommunications",
+        "internet",
+        "media",
+        "digital economy",
+        "official statistics"
+      ],
+      "supported_scope": "当前接入日本总务省信息通信统计的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "人口",
+        "external_id": "8404447f-00f4-4fb3-91b3-a8a8ed73eb87",
+        "record_url": "https://data.e-gov.go.jp/data/dataset/8404447f-00f4-4fb3-91b3-a8a8ed73eb87",
+        "filename": "japan-e-gov_8404447f-00f4-4fb3-91b3-a8a8ed73eb87_0bf6c92e-5df7-4e7c-b784-49463b36128e_n5205021.csv",
+        "bytes": 1083,
+        "sha256": "c206ab201e42696155fe61402d2e5509853422439291eb501c0018b29c2226d2",
+        "source_version": "2023-06-05T21:30:25.961916",
+        "license": "cc-by",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "switzerland-open-data",
+      "institution_id": "switzerland-open-data",
+      "title": "瑞士国家开放数据",
+      "connector_title": "opendata.swiss",
+      "country_or_region": "Switzerland",
+      "official_url": "https://opendata.swiss",
+      "subjects": [
+        "Switzerland",
+        "transport",
+        "population",
+        "economics",
+        "official statistics"
+      ],
+      "supported_scope": "当前接入瑞士联邦统计局的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "population",
+        "external_id": "de396f37-d866-4c9c-b81b-8588f717e779",
+        "record_url": "https://opendata.swiss/en/dataset/de396f37-d866-4c9c-b81b-8588f717e779",
+        "filename": "switzerland-open-data_de396f37-d866-4c9c-b81b-8588f717e779_4d70e4c2-3f52-4119-8d93-8829028c6cea_Population_s_transport_behaviour__synthesis_tables.ods",
+        "bytes": 14948,
+        "sha256": "071e63463d3f24cbd2a4446d274132757d407af8348a9beb9aadba629c5d47b7",
+        "source_version": "2026-10-20T12:55:18.270531",
+        "license": "https://opendata.swiss/terms-of-use#terms_by",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "uk-data-gov",
+      "institution_id": "uk-data-gov",
+      "title": "英国政府开放数据",
+      "connector_title": "data.gov.uk",
+      "country_or_region": "United Kingdom",
+      "official_url": "https://www.data.gov.uk/",
+      "subjects": [
+        "United Kingdom",
+        "Calderdale",
+        "population",
+        "public services",
+        "local government"
+      ],
+      "supported_scope": "当前接入Calderdale 地方政府的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "population",
+        "external_id": "c3a542b2-2b7a-4ab7-9271-241a1b3c18c9",
+        "record_url": "https://www.data.gov.uk/dataset/c3a542b2-2b7a-4ab7-9271-241a1b3c18c9",
+        "filename": "uk-data-gov_c3a542b2-2b7a-4ab7-9271-241a1b3c18c9_46cb620e-64f4-451d-b4fb-082fb58f3a92_Calderdale_MYE_population_single_year.csv",
+        "bytes": 2263,
+        "sha256": "0fe46c2cc698ad8221a0120ef88f594493571811b9a840ac7422f1c17d65fe60",
+        "source_version": "2026-10-17T20:00:43.697399",
+        "license": null,
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "ngdc-gwh",
+      "institution_id": "ngdc-gwh",
+      "title": "NGDC GWH 国家基因组仓库",
+      "connector_title": "NGDC GWH",
+      "country_or_region": "中国",
+      "official_url": "https://ngdc.cncb.ac.cn/gwh/",
+      "subjects": [
+        "genomics",
+        "Chinese research data",
+        "genome assemblies",
+        "biodiversity"
+      ],
+      "supported_scope": "仅接入 GWH 自有公开组装；注释表与序列文件保留原格式及组装版本，不包含受控数据。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "Oryza sativa",
+        "external_id": "GWHBCKX00000000",
+        "record_url": "https://ngdc.cncb.ac.cn/gwh/Assembly/20704/show",
+        "filename": "GWHBCKX00000000.feature.gz",
+        "bytes": 2143927,
+        "sha256": "5aba3ef067183da1c65deeb77b9cf79a99ab40fe6feb15b2b4e44cdb8ec3c606",
+        "source_version": null,
+        "license": null,
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "cuhk-data",
+      "institution_id": "cuhk-data",
+      "title": "香港中文大学研究数据",
+      "connector_title": "香港中文大学研究数据",
+      "country_or_region": "中国香港",
+      "official_url": "https://researchdata.cuhk.edu.hk",
+      "subjects": [
+        "all disciplines",
+        "oceanography",
+        "climate"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.48668/9AKTCT",
+        "record_url": "https://doi.org/10.48668/9AKTCT",
+        "filename": "online_data.xlsx",
+        "bytes": 62234,
+        "sha256": "5297f5290fc3ee666b7f8240dc5368ca5450feea6a5a0d2e37e2f1bb2843c7d0",
+        "source_version": "1.0",
+        "license": "CC BY-NC 4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "hkust-dataspace",
+      "institution_id": "hkust-dataspace",
+      "title": "香港科技大学 DataSpace",
+      "connector_title": "香港科技大学 DataSpace",
+      "country_or_region": "中国香港",
+      "official_url": "https://dataspace.hkust.edu.hk",
+      "subjects": [
+        "all disciplines",
+        "environment",
+        "chemistry",
+        "engineering"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.14711/dataset/KURDVK",
+        "record_url": "https://doi.org/10.14711/dataset/KURDVK",
+        "filename": "HK Cloud water data.xlsx",
+        "bytes": 27485,
+        "sha256": "04936d909f80ddcd765f614788e3dfce6ad1c4f6f84d6f51e306620527948f59",
+        "source_version": "1.0",
+        "license": "CC0 1.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "hongkong-data",
+      "institution_id": "hongkong-data",
+      "title": "DATA.GOV.HK 香港开放数据",
+      "connector_title": "DATA.GOV.HK",
+      "country_or_region": "中国香港",
+      "official_url": "https://data.gov.hk/",
+      "subjects": [
+        "Hong Kong",
+        "statistics",
+        "weather",
+        "population",
+        "public services"
+      ],
+      "supported_scope": "官方目录查询匹配英文数据集标识；仅展示受支持官方文件主机上已核验的实体文件，未覆盖需认证接口。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "tropical cyclone best track",
+        "external_id": "hk-hko-rss-tropical-cyclone-best-track-data",
+        "record_url": "https://data.gov.hk/en-data/dataset/hk-hko-rss-tropical-cyclone-best-track-data",
+        "filename": "hongkong-data_hk-hko-rss-tropical-cyclone-best-track-data_HKO2024BST.csv",
+        "bytes": 34967,
+        "sha256": "a9c254d69117d084702e66ff5d5d556c2bf96e703f7cd7810e209cf95289db1c",
+        "source_version": "2026-10-06T16:32:36.300594",
+        "license": "https://data.gov.hk/en/terms-and-conditions",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "cifor-icraf",
+      "institution_id": "cifor-icraf",
+      "title": "CIFOR-ICRAF 林业与农林研究数据",
+      "connector_title": "CIFOR-ICRAF 林业与农林研究数据",
+      "country_or_region": "国际",
+      "official_url": "https://data.cifor-icraf.org",
+      "subjects": [
+        "forestry",
+        "agroforestry",
+        "ecology",
+        "social sciences"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.17528/CIFOR/DATA.00314",
+        "record_url": "https://doi.org/10.17528/CIFOR/DATA.00314",
+        "filename": "db02_NIM_summary.xlsx",
+        "bytes": 9845,
+        "sha256": "a1a867cfad1329ce7f38face19221ea0d690b87dcbf7fc6faf26df0250ab7bd6",
+        "source_version": "1.0",
+        "license": "NONE",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "aussda",
+      "institution_id": "aussda",
+      "title": "AUSSDA 奥地利社会科学数据档案",
+      "connector_title": "AUSSDA 奥地利社会科学数据档案",
+      "country_or_region": "奥地利",
+      "official_url": "https://data.aussda.at",
+      "subjects": [
+        "social sciences",
+        "surveys",
+        "economics",
+        "politics"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.11587/KZIQ4A",
+        "record_url": "https://doi.org/10.11587/KZIQ4A",
+        "filename": "10046_da_en_v1_0.dta",
+        "bytes": 159953,
+        "sha256": "2b6a408004dd20ad00d0ec8d713481b392e2f06c0e9f171a51e727bffc4744a6",
+        "source_version": "1.1",
+        "license": "CC BY 4.0 Attribution 4.0 International",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "darus",
+      "institution_id": "darus",
+      "title": "DaRUS 斯图加特研究数据",
+      "connector_title": "DaRUS 斯图加特研究数据",
+      "country_or_region": "德国",
+      "official_url": "https://darus.uni-stuttgart.de",
+      "subjects": [
+        "engineering",
+        "materials",
+        "physics",
+        "computer science"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.18419/DARUS-2040",
+        "record_url": "https://doi.org/10.18419/DARUS-2040",
+        "filename": "raw_data.csv",
+        "bytes": 4344872,
+        "sha256": "f08dab7df26ba06edcae67b6b69a70ccf211d3f7b76a2730948c7e3201676795",
+        "source_version": "1.0",
+        "license": "The parts of this dataset are licensed as follows: DuMuX and the DuMuX-pub module \"buerkle2021a\" under GNU GPL 3.0 The processing script \"processing_script.ipynb\" under GNU GPL 3.0 The data files \"raw_data\", \"processed_data\" and \"sherwood\" under CC BY Attribution 4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "edmond",
+      "institution_id": "edmond",
+      "title": "Edmond 马克斯普朗克学会",
+      "connector_title": "Edmond 马克斯普朗克学会",
+      "country_or_region": "德国",
+      "official_url": "https://edmond.mpg.de",
+      "subjects": [
+        "all disciplines",
+        "physics",
+        "chemistry",
+        "materials"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.17617/3.Q2GHPJ",
+        "record_url": "https://doi.org/10.17617/3.Q2GHPJ",
+        "filename": "Fig2A_Raw_Data.csv",
+        "bytes": 20457,
+        "sha256": "bc70c8e8bb00e01f7e706db625c645140fee148a17af9cc402870ca157b9ea61",
+        "source_version": "2.0",
+        "license": "CC0 1.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "gro-data",
+      "institution_id": "gro-data",
+      "title": "GRO.data 哥廷根研究数据",
+      "connector_title": "GRO.data 哥廷根研究数据",
+      "country_or_region": "德国",
+      "official_url": "https://data.goettingen-research-online.de",
+      "subjects": [
+        "all disciplines"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.25625/0ADDBM",
+        "record_url": "https://doi.org/10.25625/0ADDBM",
+        "filename": "soil_water_isotopes_22.csv",
+        "bytes": 32110,
+        "sha256": "4a3521432740c18ea3f345ce22601fc9eb4fa16ecc812c9dfe0b0a33d9801631",
+        "source_version": "1.0",
+        "license": "CC BY 4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "heidata",
+      "institution_id": "heidata",
+      "title": "heiDATA 海德堡大学研究数据",
+      "connector_title": "heiDATA 海德堡大学研究数据",
+      "country_or_region": "德国",
+      "official_url": "https://heidata.uni-heidelberg.de",
+      "subjects": [
+        "all disciplines",
+        "earth sciences",
+        "humanities"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.11588/DATA/AAKAF9",
+        "record_url": "https://doi.org/10.11588/DATA/AAKAF9",
+        "filename": "validation_samples.geojson",
+        "bytes": 1699065,
+        "sha256": "a91406b9f8f8308a94301ff39a73a0f8d8c45d900d63088f78471391e669b396",
+        "source_version": "1.1",
+        "license": "CC BY 4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "unimi-dataverse",
+      "institution_id": "unimi-dataverse",
+      "title": "米兰大学 Dataverse",
+      "connector_title": "米兰大学 Dataverse",
+      "country_or_region": "意大利",
+      "official_url": "https://dataverse.unimi.it",
+      "subjects": [
+        "all disciplines",
+        "medicine",
+        "life sciences"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "*",
+        "external_id": "doi:10.13130/RD_UNIMI/YMWBMU",
+        "record_url": "https://doi.org/10.13130/RD_UNIMI/YMWBMU",
+        "filename": "DCF triplicates.xlsx",
+        "bytes": 25488,
+        "sha256": "64fc866a9a5a6022c613c105966b774e8be0f02115c50c38e54d3558f73ef0d4",
+        "source_version": "1.1",
+        "license": "CC0 1.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "dataverse-no",
+      "institution_id": "dataverse-no",
+      "title": "DataverseNO",
+      "connector_title": "DataverseNO",
+      "country_or_region": "挪威",
+      "official_url": "https://dataverse.no",
+      "subjects": [
+        "all disciplines",
+        "language",
+        "climate"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.18710/Q39V7O",
+        "record_url": "https://doi.org/10.18710/Q39V7O",
+        "filename": "CWC_workshop_female.csv",
+        "bytes": 788398,
+        "sha256": "6e2cb28cb1b3d784c0cb08b2495cea7a4c657bfd1f00718affd7e9cbb740f3ab",
+        "source_version": "1.1",
+        "license": "CC0 1.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "kuleuven-rdr",
+      "institution_id": "kuleuven-rdr",
+      "title": "KU Leuven RDR 鲁汶大学研究数据",
+      "connector_title": "KU Leuven RDR 鲁汶大学研究数据",
+      "country_or_region": "比利时",
+      "official_url": "https://rdr.kuleuven.be",
+      "subjects": [
+        "all disciplines",
+        "engineering",
+        "physics"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.48804/QQU5VO",
+        "record_url": "https://doi.org/10.48804/QQU5VO",
+        "filename": "Comsol_wind_RH40-50.txt",
+        "bytes": 445329,
+        "sha256": "3ea986a2e57f515e9a456f4a754d57c5e9bfc70b42d9f01a1c9da79884299f0f",
+        "source_version": "1.0",
+        "license": "CC-BY-4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "ird-datasuds",
+      "institution_id": "ird-datasuds",
+      "title": "IRD DataSuds",
+      "connector_title": "IRD DataSuds",
+      "country_or_region": "法国",
+      "official_url": "https://dataverse.ird.fr",
+      "subjects": [
+        "earth sciences",
+        "ecology",
+        "development",
+        "social sciences"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.23708/SNGQHV",
+        "record_url": "https://doi.org/10.23708/SNGQHV",
+        "filename": "LMIOCE_WQ_Curuai_Floodplain_profiles.csv",
+        "bytes": 706210,
+        "sha256": "fae19f47cd6fbc35f166acbecd7ff11f4d01dfa8928303c1f2b0010ded10196b",
+        "source_version": "1.1",
+        "license": "This work is licensed under a Creative Commons Attribution 4.0 International License . Ce(tte) œuvre est mise à disposition selon les termes de la Licence Creative Commons Attribution 4.0 International .",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "nasa-exoplanet",
+      "institution_id": "nasa-exoplanet",
+      "title": "NASA Exoplanet 系外行星",
+      "connector_title": "NASA Exoplanet",
+      "country_or_region": "美国",
+      "official_url": "https://exoplanetarchive.ipac.caltech.edu/",
+      "subjects": [
+        "astronomy",
+        "astrophysics",
+        "exoplanets",
+        "planetary science"
+      ],
+      "supported_scope": "支持行星或恒星名称，以及系外行星复合参数全表；明确区分单行星记录和全表。全表是源站动态快照，无固定版本；下载后记录实际文件哈希。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "Kepler-22 b",
+        "external_id": "Kepler-22 b",
+        "record_url": "https://exoplanetarchive.ipac.caltech.edu/overview/Kepler-22%20b",
+        "filename": "nasa_exoplanet_Kepler-22_b.csv",
+        "bytes": 22369,
+        "sha256": "3c8b3319caf8b8f3cfbb3f7490581b76eb547341d9e5c1764d2e56f3af19ec60",
+        "source_version": null,
+        "license": "https://exoplanetarchive.ipac.caltech.edu/docs/acknowledge.html",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "pubchem",
+      "institution_id": "pubchem",
+      "title": "PubChem 化学数据",
+      "connector_title": "PubChem",
+      "country_or_region": "美国",
+      "official_url": "https://pubchem.ncbi.nlm.nih.gov/",
+      "subjects": [
+        "chemistry",
+        "molecular structures",
+        "materials",
+        "biochemistry"
+      ],
+      "supported_scope": "按化合物名称或 CID 精确查找；每条结果为完整化合物结构，不代表所有生物测定数据。遵循来源使用政策，不假定所有贡献数据采用统一许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "caffeine",
+        "external_id": "2519",
+        "record_url": "https://pubchem.ncbi.nlm.nih.gov/compound/2519",
+        "filename": "pubchem_2519.sdf",
+        "bytes": 4002,
+        "sha256": "a8fc4e8897ac0b6a030abb6da5a038ddcc9ec45ac96087e32d46792bf543488b",
+        "source_version": null,
+        "license": "https://pubchem.ncbi.nlm.nih.gov/docs/downloads",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "ucla-dataverse",
+      "institution_id": "ucla-dataverse",
+      "title": "UCLA Dataverse",
+      "connector_title": "UCLA Dataverse",
+      "country_or_region": "美国",
+      "official_url": "https://dataverse.ucla.edu",
+      "subjects": [
+        "all disciplines",
+        "social sciences"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.25346/S66YI6KV",
+        "record_url": "https://doi.org/10.25346/S66YI6KV",
+        "filename": "Adams_WB_Data.csv",
+        "bytes": 202401,
+        "sha256": "16b452b5fe453bbcfe1bf092e390c6de6e475dfa2a14ee3b66030fa93e1c1929",
+        "source_version": "3.0",
+        "license": "Code in this dataset is released under the MIT License (see LICENSE.txt). Input data files are derived from previously published sources; rights remain with the original authors and publishers. See the dataset documentation and the associated article for full citations.",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "chembl",
+      "institution_id": "chembl",
+      "title": "ChEMBL 化合物结构",
+      "connector_title": "ChEMBL",
+      "country_or_region": "英国 / 国际",
+      "official_url": "https://www.ebi.ac.uk/chembl/",
+      "subjects": [
+        "chemistry",
+        "drug discovery",
+        "molecular structures",
+        "pharmacology"
+      ],
+      "supported_scope": "每条结果对应一个分子结构；本入口不将文献或靶点说明当作实验活性数据。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "caffeine",
+        "external_id": "CHEMBL113",
+        "record_url": "https://www.ebi.ac.uk/chembl/compound_report_card/CHEMBL113/",
+        "filename": "chembl_CHEMBL113.sdf",
+        "bytes": 1302,
+        "sha256": "ac99b10903342a86e8fb5714823c34527e27ecb77013afd63a882842072c202d",
+        "source_version": null,
+        "license": "https://creativecommons.org/licenses/by-sa/3.0/",
+        "provider_checksum_verified": false
+      }
+    },
+    {
+      "source_id": "dans-archaeology",
+      "institution_id": "dans",
+      "title": "DANS 考古学",
+      "connector_title": "DANS 考古学",
+      "country_or_region": "荷兰",
+      "official_url": "https://archaeology.datastations.nl",
+      "subjects": [
+        "archaeology",
+        "history"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.17026/AR/VRLKYQ",
+        "record_url": "https://doi.org/10.17026/AR/VRLKYQ",
+        "filename": "Bart Levering Database_cisterns_Zutphen.csv",
+        "bytes": 1858,
+        "sha256": "721440f9b1cfa6204aa52f8dac43dbf19f58754aa04b4bf94f8be9347f729140",
+        "source_version": "1.2",
+        "license": "CC-BY-NC-SA-4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "dans-lifesciences",
+      "institution_id": "dans",
+      "title": "DANS 生命科学",
+      "connector_title": "DANS 生命科学",
+      "country_or_region": "荷兰",
+      "official_url": "https://lifesciences.datastations.nl",
+      "subjects": [
+        "life sciences",
+        "ecology",
+        "agriculture"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.17026/LS/EGLNWR",
+        "record_url": "https://doi.org/10.17026/LS/EGLNWR",
+        "filename": "gremmen_etal2023_biomass.csv",
+        "bytes": 6483,
+        "sha256": "4514f85eb6faeed39d8ddece8f259cc4af4c76ba9b7e54b762e98183a800178b",
+        "source_version": "1.0",
+        "license": "CC-BY-4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "dans-physical",
+      "institution_id": "dans",
+      "title": "DANS 物理与技术科学",
+      "connector_title": "DANS 物理与技术科学",
+      "country_or_region": "荷兰",
+      "official_url": "https://phys-techsciences.datastations.nl",
+      "subjects": [
+        "physics",
+        "engineering",
+        "earth sciences"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.17026/DANS-ZVQ-DQ4W",
+        "record_url": "https://doi.org/10.17026/DANS-ZVQ-DQ4W",
+        "filename": "Energy_fluxes_20152016.csv",
+        "bytes": 786638,
+        "sha256": "5f07f10464ee7f60a5439e17ee1f082431ee4e793b3d72578ae5bddf9cbff6a6",
+        "source_version": "3.1",
+        "license": "CC-BY-4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "dans-ssh",
+      "institution_id": "dans",
+      "title": "DANS 社会科学与人文学科",
+      "connector_title": "DANS 社会科学与人文学科",
+      "country_or_region": "荷兰",
+      "official_url": "https://ssh.datastations.nl",
+      "subjects": [
+        "social sciences",
+        "humanities"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.17026/DANS-29R-WYYR",
+        "record_url": "https://doi.org/10.17026/DANS-29R-WYYR",
+        "filename": "Mozambique -  Sanitation costs and service levels.xlsx",
+        "bytes": 2375196,
+        "sha256": "fa050bcb4593da58bf4342ee6f750bf15f2942bf78d15fda71f4a68e9218e662",
+        "source_version": "1.1",
+        "license": "CC0-1.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "polen-datahub",
+      "institution_id": "polen-datahub",
+      "title": "POLEN DataHub",
+      "connector_title": "POLEN DataHub",
+      "country_or_region": "葡萄牙",
+      "official_url": "https://datahub.polen.fccn.pt",
+      "subjects": [
+        "all disciplines"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "*",
+        "external_id": "doi:10.57979/8AFSNH",
+        "record_url": "https://doi.org/10.57979/8AFSNH",
+        "filename": "Abr25_OrgsPT_in_ROR_1.62.xlsx",
+        "bytes": 150255,
+        "sha256": "bb5810a4334ba83e69d582a4cfa9bba5fdd54b73339de5c4ba51a0868bd40549",
+        "source_version": "4.0",
+        "license": "CC BY 4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "uminho-datarepositorium",
+      "institution_id": "uminho-datarepositorium",
+      "title": "米尼奥大学 DataRepositóriUM",
+      "connector_title": "米尼奥大学 DataRepositóriUM",
+      "country_or_region": "葡萄牙",
+      "official_url": "https://datarepositorium.uminho.pt",
+      "subjects": [
+        "all disciplines"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "water",
+        "external_id": "doi:10.34622/DATAREPOSITORIUM/TFICCJ",
+        "record_url": "https://doi.org/10.34622/DATAREPOSITORIUM/TFICCJ",
+        "filename": "Aguieira_Reservoir_Chlorophyll_Reflectance_Dataset.xlsx",
+        "bytes": 14708,
+        "sha256": "0a2790d233761cce54391274b555cfea4ef9326f3f7056f37dbfa91717b2ba4d",
+        "source_version": "1.0",
+        "license": "CC BY-NC-SA 4.0",
+        "provider_checksum_verified": true
+      }
+    },
+    {
+      "source_id": "bsc-dataverse",
+      "institution_id": "bsc-dataverse",
+      "title": "BSC 巴塞罗那超算中心数据",
+      "connector_title": "BSC 巴塞罗那超算中心数据",
+      "country_or_region": "西班牙",
+      "official_url": "https://dataverse.bsc.es",
+      "subjects": [
+        "climate",
+        "computer science",
+        "engineering"
+      ],
+      "supported_scope": "仅获取公开、无禁运且无需访客问卷的文件；保留原格式、发布版本与许可。",
+      "verification": "passed",
+      "environment": "DataLab backend container with the source code for this release",
+      "flow": "search -> resolve -> content probe -> complete original-file download",
+      "sample": {
+        "query": "*",
+        "external_id": "doi:10.82201/TE7JWA",
+        "record_url": "https://doi.org/10.82201/TE7JWA",
+        "filename": "2t_0001_r3_r100_monthly_1990.nc",
+        "bytes": 4584836,
+        "sha256": "3024733f89c31bff084be7b304f0a17b98b78de721a7ecefd2ab57feb0327f05",
+        "source_version": "1.3",
+        "license": "CC BY 4.0",
+        "provider_checksum_verified": true
+      }
+    }
+  ],
+  "pending_sources": [
+    {
+      "source_id": "taiwan-data",
+      "title": "台湾政府资料开放平台",
+      "reason": "目录接口已接入，当前运行环境获取原始文件超时；完成完整下载验收后启用。"
+    },
+    {
+      "source_id": "uniprot",
+      "title": "UniProt 蛋白质序列",
+      "reason": "待验收，当前未启用。每条结果对应一条蛋白质记录；下载完整序列，不代表整个物种蛋白质组。"
+    },
+    {
+      "source_id": "rcsb-pdb",
+      "title": "RCSB PDB 分子结构",
+      "reason": "待验收，当前未启用。每条结果对应一个已公开结构，获取完整坐标文件；不把结构说明元数据当成坐标数据。"
+    },
+    {
+      "source_id": "ena",
+      "title": "ENA 核酸序列档案",
+      "reason": "待验收，当前未启用。每条结果对应一个公开序列记录，并固定其序列版本；原始测序 FASTQ 仍由 SRA 连接器获取。"
+    },
+    {
+      "source_id": "pride",
+      "title": "PRIDE 蛋白质组数据",
+      "reason": "待验收，当前未启用。只获取公开研究的实际数据文件，保留原格式与项目许可；研究可能包含多个需要分别获取的文件。"
+    },
+    {
+      "source_id": "metabolights",
+      "title": "MetaboLights 代谢组数据",
+      "reason": "待验收，当前未启用。仅展示明确公开研究中的实体数据；调查说明、样本描述和目录本身不算可获取实验数据。"
+    },
+    {
+      "source_id": "metabolomics-workbench",
+      "title": "Metabolomics Workbench 代谢组",
+      "reason": "待验收，当前未启用。获取所选研究的完整 mwTab 数据；各研究的许可不同，以来源实际声明为准。"
+    },
+    {
+      "source_id": "argentina-data-gov",
+      "title": "阿根廷国家开放数据",
+      "reason": "当前运行环境访问官方检索接口返回 403，恢复公开访问并复核后启用。当前接入阿根廷官方 infra.datos.gob.ar 数据托管节点的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "source_id": "uruguay-open-data",
+      "title": "乌拉圭国家开放数据",
+      "reason": "当前运行环境访问官方检索接口持续超时，恢复服务并复核后启用。当前接入乌拉圭国家门户直接托管资源的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "source_id": "italy-dati",
+      "title": "意大利国家开放数据",
+      "reason": "当前运行环境访问官方文件节点返回 403，恢复公开下载并复核后启用。当前接入米兰市政府开放数据门户的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "source_id": "canada-ontario",
+      "title": "加拿大安大略省开放数据",
+      "reason": "当前运行环境访问官方检索接口持续返回 429，恢复服务并复核后启用。当前接入安大略省门户直接托管资源的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "source_id": "australia-nsw",
+      "title": "澳大利亚新南威尔士州开放数据",
+      "reason": "当前运行环境访问官方文件节点返回 403，恢复公开下载并复核后启用。当前接入新南威尔士州交通部门的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    },
+    {
+      "source_id": "australia-sa",
+      "title": "澳大利亚南澳州开放数据",
+      "reason": "当前运行环境访问官方检索接口返回 403，恢复公开访问并复核后启用。当前接入南澳州门户直接托管资源的公开原始文件；仅展示已核验可读取的实体数据，保留来源许可与格式。门户其他发布方需逐批验证接入。"
+    }
+  ],
+  "regression_checks": {
+    "backend": {
+      "passed": 10210,
+      "skipped": 42,
+      "subtests_passed": 190
+    },
+    "frontend": {
+      "passed": 3059,
+      "type_check": "passed",
+      "build": "passed",
+      "connector_picker_browser": "50 options, 49 official logos, mobile widths, keyboard focus passed"
+    },
+    "sandbox": {
+      "passed": 6164,
+      "skipped": 84,
+      "subtests_passed": 563
+    },
+    "compose_config": "passed",
+    "literal_name_queries": {
+      "passed": 125,
+      "scope": "PubChem quoted names are passed as plain name values; native query syntax for other providers is retained."
+    }
+  },
+  "deployment": {
+    "status": "deployed_and_verified",
+    "release": "v2-completion-20261021-r2",
+    "url": "http://localhost:10030",
+    "connector_picker_count": 49,
+    "new_connectors_visible": 35,
+    "live_api_checks": [
+      "35 new registered connectors visible; pending sources hidden",
+      "explicit source search returned verified caffeine entity data",
+      "acquisition saved to My Data and full original SDF hash matched"
+    ],
+    "downloaded_sample": {
+      "source_id": "pubchem",
+      "external_id": "2519",
+      "bytes": 4002,
+      "sha256": "41e798aa6ff637f5ab3c7752cbd81546a1f7fb906c887be6a982ab82814ead5d"
+    },
+    "temporary_resources_cleaned": true
+  }
+}

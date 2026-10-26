@@ -1,0 +1,5 @@
+{
+  "kind": "response",
+  "stage": "synthetic_plan_review",
+  "content": "{\"scripts\":[{\"script_path\":\"scripts/longitudinal_report.py\",\"support\":{\"status\":\"accepted\",\"explanation\":\"该脚本以 argparse 提供 --input（只读 JSON）与 --output（独立目录）接口，可用合成 JSON 在隔离环境验证字符串数字输入的拒绝行为；本片段仅审查 invalid_string_number 用例。\"},\"cases\":[{\"case_id\":\"invalid_string_number\",\"input_validity\":{\"status\":\"accepted\",\"explanation\":\"五张表均存在且为数组；observations 唯一行的 value 为字符串 \\\"5\\\"，其余 id/group/feature/unit 非空且 unit=mg 在默认 units 中；pairs 两组各 2 个完整数值配对，associations 有 2 个完整数值行，hypotheses 与 long_rows 为空数组合法。该输入的唯一无效点是字符串数字，符合 invalid 用例目的。\"},\"exit_behavior\":{\"status\":\"accepted\",\"explanation\":\"公开接口为 --input 只读 JSON、--output 独立目录；字符串数字违反 R005，应在写文件前拒绝。候选以 expected_exit_code=\\\"nonzero\\\" 表达拒绝，不猜测具体退出码，符合无效输入用例的退出行为要求。\"},\"method_coverage\":{\"status\":\"rejected\",\"explanation\":\"该用例确实覆盖 R005 的字符串数字拒绝，但仅检查非零退出码；R018 要求任一表无效时不得产生部分输出，计划未对 --output 下 report.json/wide.csv 不存在（或输出目录为空）作任何断言，因此无法验证“不产生部分输出”，存在方法覆盖缺口。\"},\"assertions\":[]}]}]}"
+}

@@ -1,9 +1,8 @@
 from typing import Optional, AsyncGenerator, List
 import asyncio
+import json
 import logging
 import re
-import shutil
-import tempfile
 import uuid
 import weakref
 from datetime import UTC, datetime
@@ -12,6 +11,7 @@ from app.domain.external.sandbox import Sandbox
 from app.domain.external.search import SearchEngine
 from app.domain.models.event import BaseEvent, ErrorEvent, DoneEvent, MessageEvent, WaitEvent, AgentEvent
 from app.domain.utils.public_error import public_error_message
+from app.domain.utils.shutdown import cancel_and_join, cleanup_steps, join_cleanup
 from pydantic import TypeAdapter
 from app.domain.repositories.agent_repository import AgentRepository
 from app.domain.repositories.session_repository import SessionRepository
@@ -30,6 +30,7 @@ from app.infrastructure.external.sandbox.runtime import (
     get_default_sandbox_runtime,
 )
 from app.core.config import get_settings
+from app.application.errors.exceptions import BadRequestError
 from app.application.services.data_center_dataset_service import DataCenterDatasetService
 from app.application.services.dataset_request_resolver import DatasetRequestResolver, FrontControllerResolution
 from app.application.services.jupyter_service import JupyterService
@@ -38,6 +39,20 @@ from app.domain.services.tools.pipeline import opaque_log_identifier
 from app.domain.models.input_admission import AcceptedInput
 from app.domain.services.input_delivery import InputDeliveryService, InputLeaseLost
 from app.domain.services.analysis_checkpoint import configuration_digest
+from app.domain.services.analysis_clarification import (
+    build_clarification_reply, get_clarification_context, validate_execution_clarification_scope,
+)
+from app.domain.models.analysis_input import AnalysisInputContext, upload_catalog_views
+from app.domain.services.analysis_input_selection import (
+    PUBLISHED_INPUT_ORIGIN, explicitly_referenced_outputs, input_snapshot,
+    published_input_reference, published_output_candidates, select_input_files,
+    session_input_state, snapshot_files,
+)
+from app.domain.services.model_runtime import ModelBudgetStopped, model_execution_scope
+from app.domain.services.analysis_terminal import preparation_failure_message, terminal_analysis_message
+from app.infrastructure.repositories.mongo_model_trace_repository import get_model_trace_repository
+from app.infrastructure.external.sandbox.dataset_readability import DatasetReadabilityError
+from app.infrastructure.external.sandbox.object_mount import file_input_signature
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -103,23 +118,28 @@ class AgentDomainService:
             
     async def shutdown(self) -> None:
         """Clean up all Agent's resources"""
-        logger.info("Starting to close all Agents")
-        input_monitor = getattr(self, "_input_monitor", None)
-        if input_monitor is not None:
-            input_monitor.cancel()
-            await asyncio.gather(input_monitor, return_exceptions=True)
-            self._input_monitor = None
-        bootstrap_tasks = list(self._chat_bootstrap_tasks)
-        for task in bootstrap_tasks:
-            task.cancel()
-        await asyncio.gather(*bootstrap_tasks, return_exceptions=True)
+        if getattr(self, "_shutdown_task", None) is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown_resources())
+        await join_cleanup(self._shutdown_task)
 
-        # No bootstrap can create a new Task after this registry teardown.
-        await self._task_cls.destroy()
-        prewarm_tasks = list(self._jupyter_prewarm_tasks)
-        for task in prewarm_tasks:
-            task.cancel()
-        await asyncio.gather(*prewarm_tasks, return_exceptions=True)
+    async def _shutdown_resources(self) -> None:
+        logger.info("Starting to close all Agents")
+
+        async def stop_monitor():
+            monitor = getattr(self, "_input_monitor", None)
+            try:
+                await cancel_and_join([monitor] if monitor is not None else [])
+            finally:
+                self._input_monitor = None
+
+        # Bootstrap must settle before the task snapshot, even if its cleanup
+        # failed. Prewarm cleanup must run even if a runner fails to close.
+        await cleanup_steps(
+            stop_monitor,
+            lambda: cancel_and_join(self._chat_bootstrap_tasks),
+            self._task_cls.destroy,
+            lambda: cancel_and_join(self._jupyter_prewarm_tasks),
+        )
         logger.info("All agents closed successfully")
 
     def _prewarm_jupyter(self, session: Session, *, dataset_ids: list[str]) -> None:
@@ -160,6 +180,7 @@ class AgentDomainService:
         dataset_ids: Optional[List[str]] = None,
         front_controller_resolution: Optional[FrontControllerResolution] = None,
         session_events_snapshot: list | None = None,
+        input_files: list[FileInfo] | None = None,
     ) -> Task:
         """Create a new agent task"""
         await self._ensure_plugin_runtime_ready()
@@ -168,7 +189,9 @@ class AgentDomainService:
         sandbox_replaced = False
         sandbox_id = session.sandbox_id
         requested_dataset_ids = list(dict.fromkeys(dataset_ids or []))
-        if sandbox_id and set(session.sandbox_dataset_ids) != set(requested_dataset_ids):
+        requested_input_signature = file_input_signature(input_files)
+        if sandbox_id and (set(session.sandbox_dataset_ids) != set(requested_dataset_ids)
+                           or session.sandbox_input_signature != requested_input_signature):
             try:
                 stale_sandbox = await sandbox_runtime.restore(sandbox_id)
                 await self._retire_replaced_sandbox(stale_sandbox, sandbox_id)
@@ -193,6 +216,7 @@ class AgentDomainService:
             )
             session.sandbox_id = None
             session.sandbox_dataset_ids = []
+            session.sandbox_input_signature = None
             session.task_id = None
             await self._session_repository.save(session)
             sandbox_id = None
@@ -267,83 +291,207 @@ class AgentDomainService:
                 # must never resume the same broken container again.
                 session.sandbox_id = None
                 session.sandbox_dataset_ids = []
+                session.sandbox_input_signature = None
                 session.task_id = None
                 await self._session_repository.save(session)
 
-        if not sandbox:
-            pool = get_sandbox_pool() if not dataset_ids else None
-            if pool and pool.enabled:
-                sandbox = await pool.acquire()
-                # Warm container already has a record; update it with session association
-                await sandbox_runtime.assign(sandbox, session)
-            else:
-                sandbox = (
-                    await sandbox_runtime.allocate(session, dataset_ids=dataset_ids)
-                    if dataset_ids
-                    else await sandbox_runtime.allocate(session)
+        # A pool handoff ends the pool's ownership, not bootstrap ownership.
+        # Until Task registration, only this scope can retire a newly acquired
+        # handle. A restored session environment remains session-owned.
+        bootstrap_sandbox = None
+        publication_attempted = False
+        previous_task_id = session.task_id
+
+        async def prepare_write(operation):
+            if bootstrap_sandbox is None:
+                return await operation
+            # Finish an already-issued external write before rollback. A late
+            # assign/save must not resurrect a retired sandbox association.
+            return await join_cleanup(asyncio.create_task(operation))
+
+        async def retire_bootstrap():
+            owned = bootstrap_sandbox
+            if publication_attempted:
+                cleared = await self._session_repository.compare_and_clear_sandbox(
+                    session.id, expected_sandbox_id=owned.id,
+                    expected_task_id=previous_task_id,
                 )
-            session.sandbox_id = sandbox.id
-            session.sandbox_dataset_ids = requested_dataset_ids
-            await self._session_repository.save(session)
-            if sandbox_replaced:
-                try:
-                    await self._ensure_sandbox_api_ready(sandbox)
-                    await self._hydrate_replacement_sandbox(
-                        session,
-                        sandbox,
-                        previous_sandbox_id=sandbox_id,
+                if not cleared:
+                    current = await self._session_repository.find_by_id(session.id)
+                    if current is not None and current.sandbox_id == owned.id:
+                        # Another task now owns this same environment. Neither
+                        # its pointer nor its container belongs to our rollback.
+                        return
+            if not await owned.destroy():
+                raise _SandboxRetirementError("The new analysis environment could not be safely released")
+            if session.sandbox_id == owned.id and session.task_id == previous_task_id:
+                session.sandbox_id = None
+                session.sandbox_dataset_ids = []
+                session.sandbox_input_signature = None
+
+        try:
+            if not sandbox:
+                pool = get_sandbox_pool() if not dataset_ids and not input_files else None
+                if pool and pool.enabled:
+                    sandbox = await pool.acquire()
+                    bootstrap_sandbox = sandbox
+                    await prepare_write(sandbox_runtime.assign(sandbox, session))
+                else:
+                    sandbox = (
+                        await sandbox_runtime.allocate(session, dataset_ids=dataset_ids, input_files=input_files)
+                        if input_files
+                        else await sandbox_runtime.allocate(session, dataset_ids=dataset_ids)
+                        if dataset_ids
+                        else await sandbox_runtime.allocate(session)
                     )
-                except Exception:
-                    await self._retire_replaced_sandbox(sandbox, sandbox.id)
-                    session.sandbox_id = None
-                    session.sandbox_dataset_ids = []
-                    session.task_id = None
-                    await self._session_repository.save(session)
-                    raise
+                    bootstrap_sandbox = sandbox
+                session.sandbox_id = sandbox.id
+                session.sandbox_dataset_ids = requested_dataset_ids
+                session.sandbox_input_signature = requested_input_signature
+                publication_attempted = True
+                await prepare_write(self._session_repository.save(session))
+                if sandbox_replaced:
+                    await self._ensure_sandbox_api_ready(sandbox)
+                    # Sources and previously published outputs remain in object storage.
+                    # Only this request's selected inputs are mounted; never rehydrate copies.
 
-        self._prewarm_jupyter(session, dataset_ids=requested_dataset_ids)
+            if input_files:
+                await sandbox.verify_readonly_inputs(input_files)
 
-        browser = await sandbox.get_browser()
-        if not browser:
-            logger.error(
-                "Failed to get browser sandbox=%s",
-                opaque_log_identifier(sandbox_id, namespace="sandbox"),
+            browser = await sandbox.get_browser()
+            if not browser:
+                logger.error(
+                    "Failed to get browser sandbox=%s",
+                    opaque_log_identifier(sandbox_id, namespace="sandbox"),
+                )
+                raise RuntimeError(f"Failed to get browser for Sandbox {sandbox_id}")
+
+            await prepare_write(self._session_repository.save(session))
+            task_runner = AgentTaskRunner(
+                session_id=session.id,
+                agent_id=session.agent_id,
+                user_id=session.user_id,
+                sandbox=sandbox,
+                browser=browser,
+                file_storage=self._file_storage,
+                search_engine=self._search_engine,
+                session_repository=self._session_repository,
+                agent_repository=self._repository,
+                mcp_repository=self._mcp_repository,
+                llm_overrides=session.llm_overrides,
+                front_controller_resolution=front_controller_resolution,
+                plugin_runtime=self._plugin_runtime,
+                spill_artifact_store=self._spill_artifact_store,
+                analysis_job_service=self._analysis_job_service,
+                tool_approval_service=self._tool_approval_service,
+                credential_service=self._credential_service,
+                input_delivery=self._input_delivery,
+                session_events_snapshot=session_events_snapshot,
+                effective_dataset_ids=requested_dataset_ids,
             )
-            raise RuntimeError(f"Failed to get browser for Sandbox {sandbox_id}")
+            task = self._task_cls.create(task_runner)
+            bootstrap_sandbox = None  # Atomic handoff: registered runner owns it.
+            result = await self._finish_task_preparation(session, task, sandbox=sandbox)
+            self._prewarm_jupyter(session, dataset_ids=requested_dataset_ids)
+            return result
+        except BaseException as error:
+            if bootstrap_sandbox is None:
+                # Registered tasks and restored environments retain their
+                # existing owner and failure/cancellation policy.
+                raise
+            failure = error
+            cause = error
+            while isinstance(cause, asyncio.CancelledError):
+                cause = cause.__cause__
+            if isinstance(error, asyncio.CancelledError) and cause is not None:
+                # gather(return_exceptions=True) discards cancellation causes;
+                # an accepted assign/save failure must remain observable.
+                failure = BaseExceptionGroup("Sandbox bootstrap cancellation and write failed", [error, cause])
+            if bootstrap_sandbox is not None:
+                try:
+                    await join_cleanup(asyncio.create_task(retire_bootstrap()))
+                except asyncio.CancelledError as cancellation:
+                    if cancellation.__cause__ is not None:
+                        raise BaseExceptionGroup("Sandbox bootstrap and cleanup failed", [failure, cancellation.__cause__])
+                    raise failure
+                except BaseException as cleanup_error:
+                    raise BaseExceptionGroup("Sandbox bootstrap and cleanup failed", [failure, cleanup_error])
+            raise failure
 
-        await self._session_repository.save(session)
+    async def _finish_task_preparation(
+        self, session: Session, task: Task, *, sandbox: Sandbox | None = None,
+    ) -> Task:
+        """Own a registered, unstarted task until all preparation has settled.
 
-        task_runner = AgentTaskRunner(
-            session_id=session.id,
-            agent_id=session.agent_id,
-            user_id=session.user_id,
-            sandbox=sandbox,
-            browser=browser,
-            file_storage=self._file_storage,
-            search_engine=self._search_engine,
-            session_repository=self._session_repository,
-            agent_repository=self._repository,
-            mcp_repository=self._mcp_repository,
-            llm_overrides=session.llm_overrides,
-            front_controller_resolution=front_controller_resolution,
-            plugin_runtime=self._plugin_runtime,
-            spill_artifact_store=self._spill_artifact_store,
-            analysis_job_service=self._analysis_job_service,
-            tool_approval_service=self._tool_approval_service,
-            credential_service=self._credential_service,
-            input_delivery=self._input_delivery,
-            session_events_snapshot=session_events_snapshot,
-            effective_dataset_ids=requested_dataset_ids,
-        )
+        Cancellation must not let an in-flight database write publish the task
+        *after* rollback. Shield preparation, then await it before rolling back.
+        The task never starts here; the dispatcher owns enqueue/run after this
+        method returns successfully.
+        """
+        previous_task_id = session.task_id
 
-        task = self._task_cls.create(task_runner)
-        session.task_id = task.id
-        await self._session_repository.save(session)
+        async def prepare() -> None:
+            published = await self._session_repository.compare_and_set_task_id(
+                session.id, expected_task_id=previous_task_id, task_id=task.id,
+                dataset_ids=session.dataset_ids,
+            )
+            if not published:
+                raise TaskInputClosedError("Session task changed during preparation")
+            session.task_id = task.id
+            if sandbox is not None:
+                if not getattr(task, "accepting_input", True):
+                    raise TaskInputClosedError("Task closed during preparation")
+                await self._sandbox_runtime.assign(sandbox, session, task.id)
 
-        # Update record with task_id now that we have it
-        await sandbox_runtime.assign(sandbox, session, task.id)
+        preparation = asyncio.create_task(prepare())
+        try:
+            await asyncio.shield(preparation)
+            return task
+        except BaseException:
+            # Synchronous cancel immediately removes unstarted Redis tasks
+            # from their registry and closes input admission.
+            task.cancel()
 
-        return task
+            async def rollback() -> None:
+                try:
+                    await preparation
+                except BaseException:
+                    # Preserve the original preparation/cancellation failure.
+                    pass
+                wait_closed = getattr(task, "wait_closed", None)
+                if callable(wait_closed):
+                    await wait_closed()
+                try:
+                    await self._session_repository.compare_and_set_task_id(
+                        session.id, expected_task_id=task.id, task_id=previous_task_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Could not roll back prepared task pointer session=%s task=%s error_type=%s",
+                        opaque_log_identifier(session.id, namespace="session"),
+                        opaque_log_identifier(task.id, namespace="task"),
+                        type(exc).__name__,
+                    )
+                finally:
+                    if session.task_id == task.id:
+                        session.task_id = previous_task_id
+                # Do not call runner.destroy/on_done: they destroy or pause
+                # the session-owned sandbox and close existing browser pages.
+                # No runner resources have been started yet. Sandbox assign
+                # is a non-authoritative observability link, not execution
+                # ownership; without a task-scoped CAS unassign, clearing it
+                # could undo another task's association. The next assignment
+                # replaces it while the reusable sandbox/artifacts survive.
+
+            cleanup = asyncio.create_task(rollback())
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    # Repeated caller cancellation must not detach cleanup.
+                    continue
+            cleanup.result()
+            raise
 
     async def _ensure_plugin_runtime_ready(self) -> None:
         """Recover a crashed Cordis child before capturing a task snapshot.
@@ -373,8 +521,7 @@ class AgentDomainService:
             input_delivery=self._input_delivery,
         )
         task = self._task_cls.create(runner)
-        session.task_id = task.id
-        await self._session_repository.save(session)
+        await self._finish_task_preparation(session, task)
         logger.info(
             "Selected execution without sandbox allocation session=%s mode=%s",
             opaque_log_identifier(session.id, namespace="session"),
@@ -430,96 +577,6 @@ class AgentDomainService:
             "The previous analysis environment could not be safely released"
         )
 
-    async def _hydrate_replacement_sandbox(
-        self,
-        session: Session,
-        sandbox: Sandbox,
-        *,
-        previous_sandbox_id: Optional[str],
-    ) -> None:
-        """Restore persisted files when a session gets a replacement sandbox."""
-        restored = 0
-        failed = 0
-        seen_paths: set[str] = set()
-        pending_files: list[FileInfo] = []
-        for file_info in session.files:
-            if not file_info.file_id or not file_info.file_path or file_info.file_path in seen_paths:
-                continue
-            seen_paths.add(file_info.file_path)
-            pending_files.append(file_info)
-
-        semaphore = asyncio.Semaphore(
-            max(1, get_settings().sandbox_hydration_concurrency)
-        )
-
-        async def restore_file(file_info: FileInfo) -> bool:
-            async with semaphore:
-                file_data = None
-                staged_file = None
-                try:
-                    file_data, stored_info = await self._file_storage.download_file(file_info.file_id, session.user_id)
-                    # MinIO/urllib3 response reads are synchronous. Stage them
-                    # off the event loop and spill larger files to disk instead
-                    # of keeping several full artifacts resident in memory.
-                    staged_file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
-                    await asyncio.to_thread(
-                        shutil.copyfileobj,
-                        file_data,
-                        staged_file,
-                        1024 * 1024,
-                    )
-                    await asyncio.to_thread(staged_file.seek, 0)
-                    result = await sandbox.file_upload(
-                        staged_file,
-                        file_info.file_path,
-                        filename=stored_info.filename or file_info.filename,
-                    )
-                    if result.success:
-                        return True
-                    logger.warning(
-                        "Failed to hydrate file into replacement sandbox file=%s sandbox=%s message_chars=%d",
-                        opaque_log_identifier(file_info.file_path, namespace="file"),
-                        opaque_log_identifier(sandbox.id, namespace="sandbox"),
-                        len(str(result.message or "")),
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to hydrate file into replacement sandbox file=%s object=%s session=%s sandbox=%s error_type=%s",
-                        opaque_log_identifier(file_info.file_path, namespace="file"),
-                        opaque_log_identifier(file_info.file_id, namespace="object"),
-                        opaque_log_identifier(session.id, namespace="session"),
-                        opaque_log_identifier(sandbox.id, namespace="sandbox"),
-                        type(exc).__name__,
-                    )
-                finally:
-                    if staged_file is not None:
-                        await asyncio.to_thread(staged_file.close)
-                    if file_data is not None:
-                        close = getattr(file_data, "close", None)
-                        if callable(close):
-                            await asyncio.to_thread(close)
-                        release_conn = getattr(file_data, "release_conn", None)
-                        if callable(release_conn):
-                            await asyncio.to_thread(release_conn)
-                return False
-
-        results = await asyncio.gather(
-            *(restore_file(file_info) for file_info in pending_files)
-        )
-        for succeeded in results:
-            if succeeded:
-                restored += 1
-            else:
-                failed += 1
-        logger.info(
-            "Hydrated replacement sandbox session=%s sandbox=%s previous=%s restored=%d failed=%d",
-            opaque_log_identifier(session.id, namespace="session"),
-            opaque_log_identifier(sandbox.id, namespace="sandbox"),
-            opaque_log_identifier(previous_sandbox_id, namespace="sandbox"),
-            restored,
-            failed,
-        )
-        
     async def _get_task(self, session: Session) -> Optional[Task]:
         """Get a task for the given session"""
 
@@ -600,7 +657,8 @@ class AgentDomainService:
         task.add_done_callback(on_done)
         return task
 
-    async def _handle_chat_bootstrap_error(self, session_id: str, exc: BaseException) -> None:
+    async def _handle_chat_bootstrap_error(self, session_id: str, exc: BaseException,
+                                          *, analysis_started: bool | None = False) -> None:
         session_ref = opaque_log_identifier(session_id, namespace="session")
         logger.error(
             "Chat bootstrap failed session=%s error_type=%s",
@@ -608,9 +666,16 @@ class AgentDomainService:
             type(exc).__name__,
         )
         try:
+            code = (exc.code if isinstance(exc, DatasetReadabilityError)
+                    else "model_audit_unavailable" if isinstance(exc, ModelBudgetStopped)
+                    and exc.code == "trace_store_unavailable" else "input_preparation_failed")
+            outcome_event = (preparation_failure_message(code, 1) if analysis_started is False else
+                terminal_analysis_message("本轮请求的执行状态尚未确认（execution_failed）。请检查运行记录后再继续。",
+                    reason_code="execution_failed", stage="execution", analysis_started=analysis_started))
+            await self._session_repository.add_event(session_id, outcome_event)
             await self._session_repository.add_event(
                 session_id,
-                ErrorEvent(error=public_error_message(exc)),
+                ErrorEvent(error=outcome_event.message),
             )
             await self._session_repository.update_status(session_id, SessionStatus.COMPLETED)
         except Exception as persist_error:
@@ -659,6 +724,8 @@ class AgentDomainService:
         client_message_id: Optional[str],
         resume_from: Optional[str] = None,
         data_connectors: Optional[List[str]] = None,
+        input_file_ids: Optional[List[str]] = None,
+        clarification_id: Optional[str] = None,
     ) -> Optional[Task]:
         """Serialize one session's bootstrap and refresh state inside the lock."""
         input_generation = None
@@ -692,6 +759,8 @@ class AgentDomainService:
                 client_message_id=client_message_id,
                 resume_from=resume_from,
                 input_generation=input_generation,
+                input_file_ids=input_file_ids,
+                clarification_id=clarification_id,
             )
 
     async def _bootstrap_chat_task_locked(
@@ -709,10 +778,15 @@ class AgentDomainService:
         input_generation: int | None = None,
         resume_from: Optional[str] = None,
         data_connectors: Optional[List[str]] = None,
+        input_file_ids: Optional[List[str]] = None,
+        clarification_id: Optional[str] = None,
     ) -> Optional[Task]:
         if getattr(self, "_input_delivery", None) is not None:
             return await self._bootstrap_durable_input(session, user_id, message, timestamp, attachments,
-                skills, mcp_servers, dataset_ids, mcp_access_all, client_message_id, input_generation, resume_from, data_connectors)
+                skills, mcp_servers, dataset_ids, mcp_access_all, client_message_id, input_generation, resume_from,
+                data_connectors, input_file_ids, clarification_id)
+        if clarification_id is not None:
+            raise ValueError("当前服务不支持可靠的确认回复，请刷新后重试。")
         if resume_from:
             raise ContinuationRejected("当前服务不支持安全续作，请检查原任务。")
         client_message_claimed = False
@@ -783,6 +857,9 @@ class AgentDomainService:
                     await wait_closed()
                     task = None
 
+            selected_inputs, submitted_inputs = await self._prepare_input_selection(
+                session.id, user_id, attachments, input_file_ids, message=message,
+            )
             controller_resolution: FrontControllerResolution | None = None
             if task is None or task.done:
                 try:
@@ -797,18 +874,20 @@ class AgentDomainService:
                         for item in (attachments or [])
                         if isinstance(item, dict)
                     ]
-                    controller_resolution = await self._dataset_request_resolver.resolve(
-                        question=message,
-                        datasets=datasets,
-                        events=conversation_events,
-                        llm_overrides=session.llm_overrides,
-                        user_id=user_id,
-                        session_id=session.id,
-                        selected_skills=skills or [],
-                        selected_mcp_servers=mcp_servers or [],
-                        selected_data_connectors=data_connectors or [],
-                        attachment_names=attachment_names,
-                    )
+                    with model_execution_scope(user_id=user_id, session_id=session.id,
+                            task_id=f"preparation-{uuid.uuid4().hex}", store=get_model_trace_repository()):
+                        controller_resolution = await self._dataset_request_resolver.resolve(
+                            question=message,
+                            datasets=datasets + upload_catalog_views(selected_inputs),
+                            events=conversation_events,
+                            llm_overrides=session.llm_overrides,
+                            user_id=user_id,
+                            session_id=session.id,
+                            selected_skills=skills or [],
+                            selected_mcp_servers=mcp_servers or [],
+                            selected_data_connectors=data_connectors or [],
+                            attachment_names=attachment_names,
+                        )
                 except Exception as exc:
                     logger.error(
                         "Front Controller failed before task creation session=%s error_type=%s",
@@ -829,13 +908,14 @@ class AgentDomainService:
                     if controller_resolution is not None and (
                         controller_resolution.mode == "reject"
                         or (
-                            controller_resolution.mode in {"direct", "catalog"}
+                            controller_resolution.mode in {"direct", "catalog", "clarify"}
                         )
                     )
                     else await self._create_task(
                         session,
                         effective_dataset_ids or None,
                         front_controller_resolution=controller_resolution,
+                        input_files=selected_inputs,
                     )
                 )
                 if not task:
@@ -848,6 +928,8 @@ class AgentDomainService:
                 "mcp_servers": mcp_servers or [],
                 "data_connectors": data_connectors or [],
                 "dataset_ids": effective_dataset_ids,
+                "analysis_input_file_ids": [item.file_id for item in selected_inputs],
+                "analysis_input_files": input_snapshot(selected_inputs),
                 "mcp_access_all": mcp_access_all,
             }
             if client_message_id:
@@ -856,7 +938,7 @@ class AgentDomainService:
             message_event = MessageEvent(
                 message=message,
                 role="user",
-                attachments=await self._resolve_message_attachments(attachments, user_id),
+                attachments=submitted_inputs or None,
                 metadata=metadata,
             )
             if client_message_id:
@@ -904,13 +986,14 @@ class AgentDomainService:
                     if controller_resolution is not None and (
                         controller_resolution.mode == "reject"
                         or (
-                            controller_resolution.mode in {"direct", "catalog"}
+                            controller_resolution.mode in {"direct", "catalog", "clarify"}
                         )
                     )
                     else await self._create_task(
                         session,
                         effective_dataset_ids or None,
                         front_controller_resolution=controller_resolution,
+                        input_files=selected_inputs,
                     )
                 )
                 enqueue_input = getattr(task, "enqueue_input", None)
@@ -930,7 +1013,7 @@ class AgentDomainService:
                 len(message),
             )
             return task
-        except Exception as exc:
+        except (Exception, ModelBudgetStopped) as exc:
             release_claim = queued_event_id is None
             if queued_event_id is not None and task is not None:
                 try:
@@ -959,7 +1042,8 @@ class AgentDomainService:
                         opaque_log_identifier(session.id, namespace="session"),
                         type(release_error).__name__,
                     )
-            await self._handle_chat_bootstrap_error(session.id, exc)
+            await self._handle_chat_bootstrap_error(session.id, exc,
+                analysis_started=None if queued_event_id is not None else False)
             raise
 
     def start_input_recovery(self) -> None:
@@ -1031,7 +1115,7 @@ class AgentDomainService:
                 or session.user_id != user_id or not isinstance(expiry, datetime) or expiry <= datetime.now(UTC)
                 or checkpoint.get("configuration_digest") != configuration_digest(session)
                 or not session.sandbox_id or checkpoint.get("sandbox_id") != session.sandbox_id
-                or checkpoint.get("attachment_file_ids")
+                or (checkpoint.get("attachment_file_ids") and not checkpoint.get("analysis_input_manifest"))
                 or not isinstance(checkpoint.get("goal"), str) or not checkpoint["goal"].strip()):
             raise ContinuationRejected("续作进度已失效，或任务配置已变化；系统未重新执行。")
         if checkpoint.get("claimed_by") not in (None, client_message_id):
@@ -1044,7 +1128,7 @@ class AgentDomainService:
                     or any(not isinstance(value, str) or not value or len(value) > 4096 for value in values)
                     or len(set(values)) != len(values)):
                 raise ContinuationRejected("续作进度的数据范围记录不完整，系统未重新执行。")
-        if not checkpoint["dataset_ids"]:
+        if not checkpoint["dataset_ids"] and not checkpoint.get("analysis_input_manifest"):
             raise ContinuationRejected("该任务没有可验证的数据集来源，不能安全续作。")
         source_seq = checkpoint.get("source_seq")
         if type(source_seq) is not int or source_seq < 1:
@@ -1077,7 +1161,12 @@ class AgentDomainService:
 
     async def _bootstrap_durable_input(self, session, user_id, message, timestamp, attachments,
                                        skills, mcp_servers, dataset_ids, mcp_access_all, client_message_id,
-                                       input_generation=None, resume_from=None, data_connectors=None):
+                                       input_generation=None, resume_from=None, data_connectors=None, input_file_ids=None,
+                                       clarification_id=None):
+        if clarification_id is not None and resume_from:
+            raise ValueError("确认回复不能同时恢复旧任务。")
+        if resume_from and input_file_ids is not None:
+            raise ContinuationRejected("续作不能修改原任务的资料范围。")
         if resume_from and data_connectors:
             raise ContinuationRejected("续作不能更改数据连接器。")
         self._validate_continuation_payload(resume_from, message, attachments, skills, mcp_servers,
@@ -1099,11 +1188,16 @@ class AgentDomainService:
                 requested_metadata = {"skills": skills or [], "mcp_servers": mcp_servers or [], "data_connectors": data_connectors or [],
                     "dataset_ids": list(dict.fromkeys(dataset_ids)) if dataset_ids is not None else previous_metadata.get("dataset_ids", []),
                     "mcp_access_all": mcp_access_all}
+                if "requested_input_file_ids" in previous_metadata:
+                    requested_metadata["requested_input_file_ids"] = input_file_ids
+                if "requested_clarification_id" in previous_metadata or clarification_id is not None:
+                    requested_metadata["requested_clarification_id"] = clarification_id
                 previous_files = [item.file_id for item in existing.event.attachments or []]
                 requested_files = [item["file_id"] for item in attachments or [] if isinstance(item, dict) and item.get("file_id")]
                 if (existing.admission.actor_user_id != user_id or existing.event.message != message
                         or previous_files != requested_files
-                        or any(previous_metadata.get(key, False if key == "mcp_access_all" else []) != value
+                        or any(previous_metadata.get(key, None if key == "requested_clarification_id"
+                                                     else False if key == "mcp_access_all" else []) != value
                                for key, value in requested_metadata.items())):
                     raise ValueError("Client message identity was reused with different input")
                 # A reconnect attaches immediately, even while the original
@@ -1120,6 +1214,11 @@ class AgentDomainService:
             if latest is None:
                 raise RuntimeError("Session not found")
             session = latest
+        clarification_reply = None
+        if not resume_from:
+            history_getter = getattr(self._session_repository, "get_events", None)
+            history = await history_getter(session.id) if callable(history_getter) else []
+            clarification_reply = build_clarification_reply(history, message, clarification_id)
         checkpoint = None
         if resume_from:
             checkpoint = await self._resume_checkpoint(session, user_id, resume_from, client_message_id)
@@ -1136,15 +1235,29 @@ class AgentDomainService:
             dataset_ids, skills, mcp_servers = (list(checkpoint[field]) for field in ("dataset_ids", "skills", "mcp_servers"))
             data_connectors = list(checkpoint.get("data_connectors", []))
             mcp_access_all = bool(checkpoint.get("mcp_access_all", False))
+        selected_inputs, submitted_inputs = await self._prepare_input_selection(
+            session.id, user_id, attachments, input_file_ids,
+            # A reply may quote the full question and all candidate filenames.
+            # That quoted text is not a grant to mount those candidates. Only
+            # explicit file selections/uploads may extend a clarification turn.
+            checkpoint=checkpoint, message=None if clarification_reply is not None else message,
+        )
         effective_ids = list(dict.fromkeys(dataset_ids or session.dataset_ids or []))
         metadata = {"skills": skills or [], "mcp_servers": mcp_servers or [], "data_connectors": data_connectors or [],
-                    "dataset_ids": effective_ids, "mcp_access_all": mcp_access_all}
+                    "dataset_ids": effective_ids, "mcp_access_all": mcp_access_all,
+                    "requested_input_file_ids": input_file_ids,
+                    "analysis_input_file_ids": [item.file_id for item in selected_inputs],
+                    "analysis_input_files": input_snapshot(selected_inputs)}
+        if clarification_reply is not None:
+            metadata.update(clarification_reply=clarification_reply,
+                            clarification_id=clarification_reply["clarification_id"],
+                            requested_clarification_id=clarification_id)
         if client_message_id:
             metadata["client_message_id"] = client_message_id
         if resume_from:
             metadata["resume_from"] = resume_from
         event = MessageEvent(message=message, role="user", metadata=metadata,
-            attachments=await self._resolve_message_attachments(attachments, user_id))
+            attachments=submitted_inputs or None)
         if timestamp is not None:
             event.timestamp = timestamp
         if client_message_id:
@@ -1189,8 +1302,25 @@ class AgentDomainService:
             await self._input_delivery._require_live(record.session_id, record.key, states={"claimed"})
             event = record.event
             metadata = event.metadata or {}
+            clarification_context = get_clarification_context(metadata)
+            # Recovery consumes the exact admitted snapshot. Recheck ownership
+            # and publication identity before routing; never reinterpret the
+            # old message against outputs published after admission.
+            selected_inputs = snapshot_files(metadata)
+            await self._reauthorize_input_files(session.id, record.admission.actor_user_id, selected_inputs)
             ids = list(metadata.get("dataset_ids") or [])
-            history = await self._session_repository.get_events(record.session_id)
+            # Continuation admission retains its full canonical-history checks.
+            # Ordinary inputs use the private incremental view; this is not an
+            # authorization source and must never include later queued inputs.
+            from app.domain.services.execution_history import ExecutionHistory
+            history_getter = getattr(self._session_repository, "get_execution_history", None)
+            projection = None
+            if not metadata.get("resume_from") and callable(history_getter) and type(event.seq) is int:
+                candidate = await history_getter(record.session_id, before_seq=event.seq)
+                if isinstance(candidate, ExecutionHistory):
+                    projection = candidate
+            history = (projection.resolver_events() if projection is not None
+                       else await self._session_repository.get_events(record.session_id))
             checkpoint = None
             if metadata.get("resume_from"):
                 checkpoint = await self._resume_checkpoint(
@@ -1205,26 +1335,63 @@ class AgentDomainService:
                         or event.attachments):
                     raise ContinuationRejected("续作请求的数据范围或执行配置已变化。")
             # The newly accepted input is not prior conversational context.
-            snapshot = [item for item in history if item.seq is None or item.seq <= event.seq]
-            history = [item for item in snapshot if item.seq is None or item.seq < event.seq]
+            if projection is not None:
+                snapshot = projection.with_event(event)
+            else:
+                snapshot = [item for item in history if item.seq is None or item.seq <= event.seq]
+                history = [item for item in snapshot if item.seq is None or item.seq < event.seq]
             if not ids and checkpoint is None:
-                ids = next((list(dict.fromkeys((item.metadata or {}).get("dataset_ids", [])))
-                            for item in reversed(history) if isinstance(item, MessageEvent)
-                            and (item.metadata or {}).get("dataset_ids")), [])
+                ids = (list(projection.latest_dataset_ids) if projection is not None else
+                       next((list(dict.fromkeys((item.metadata or {}).get("dataset_ids", [])))
+                             for item in reversed(history) if isinstance(item, MessageEvent)
+                             and (item.metadata or {}).get("dataset_ids")), []))
             try:
                 datasets = [await self._dataset_service.get_dataset(item, user_id=record.admission.actor_user_id) for item in ids]
             except Exception as exc:
                 if checkpoint is not None:
                     raise ContinuationRejected("原任务的数据来源不可用或访问权限已变化，不能续作。") from exc
                 raise
-            resolution = await self._dataset_request_resolver.resolve(
-                question=checkpoint["goal"] if checkpoint is not None else event.message, datasets=datasets,
-                events=history, llm_overrides=session.llm_overrides, user_id=record.admission.actor_user_id,
-                session_id=session.id, selected_skills=metadata.get("skills") or [],
-                selected_mcp_servers=metadata.get("mcp_servers") or [],
-                selected_data_connectors=metadata.get("data_connectors") or [],
-                attachment_names=[item.filename for item in event.attachments or []])
+            # Routing runs before an analysis Task exists. Give every physical
+            # provider call an owner/session and exact preparation attempt now,
+            # including attempts that later fail sandbox admission. The normal
+            # governed driver deduplicates settlement by trace_id; no estimated
+            # usage is promoted to actual usage here.
+            preparation_id = f"preparation-{record.key}-{record.admission.attempts}"
+            with model_execution_scope(user_id=record.admission.actor_user_id, session_id=session.id,
+                    task_id=preparation_id, store=get_model_trace_repository()):
+                resolution = await self._dataset_request_resolver.resolve(
+                    question=checkpoint["goal"] if checkpoint is not None else event.message,
+                    datasets=datasets + upload_catalog_views(selected_inputs),
+                    events=history, llm_overrides=session.llm_overrides, user_id=record.admission.actor_user_id,
+                    session_id=session.id, selected_skills=metadata.get("skills") or [],
+                    selected_mcp_servers=metadata.get("mcp_servers") or [],
+                    selected_data_connectors=metadata.get("data_connectors") or [],
+                    attachment_names=[item.filename for item in selected_inputs],
+                    **({"clarification_context": clarification_context} if clarification_context is not None else {}))
+            if clarification_context is not None:
+                resolution.clarification_context = clarification_context
+            resolution.controller_metadata["preparation_attempt_id"] = preparation_id
             await self._input_delivery._require_live(record.session_id, record.key, states={"claimed"})
+            if (clarification_context is not None and clarification_context.get("stage") == "execution"
+                    and resolution.decision.clarification_response == "continue"
+                    and resolution.mode not in {"reject", "clarify"}):
+                current_session = await self._session_repository.find_by_id_and_user_id(
+                    session.id, record.admission.actor_user_id)
+                if current_session is None:
+                    raise ContinuationRejected("待确认会话已不可用，原步骤没有继续执行。")
+                try:
+                    saved = validate_execution_clarification_scope(
+                        clarification_context, input_file_ids=[item.file_id for item in selected_inputs],
+                        dataset_ids=ids, metadata=metadata, configuration=configuration_digest(current_session))
+                except ValueError as exc:
+                    raise ContinuationRejected(str(exc)) from exc
+                # A short answer may look like a direct conversational turn to
+                # the router. Its bound execution question instead resumes the
+                # original pending step and original authoritative targets.
+                resolution.decision.execution.mode = "sandbox"
+                resolution.decision.execution.target_files = list(saved["controller_target_files"])
+                resolution.target_files = list(saved["controller_target_files"])
+                resolution.controller_metadata["execution_mode"] = "sandbox"
             if checkpoint is not None:
                 current_session = await self._session_repository.find_by_id_and_user_id(session.id, record.admission.actor_user_id)
                 if current_session is None:
@@ -1244,9 +1411,10 @@ class AgentDomainService:
             session.dataset_ids = ids
             await self._session_repository.update_status(session.id, SessionStatus.RUNNING)
             task = (await self._create_lightweight_task(session, resolution)
-                    if resolution.mode in {"reject", "direct", "catalog"}
+                    if resolution.mode in {"reject", "direct", "catalog", "clarify"}
                     else await self._create_task(session, ids or None, front_controller_resolution=resolution,
-                                                 session_events_snapshot=snapshot))
+                                                 session_events_snapshot=snapshot,
+                                                 input_files=selected_inputs))
             await self._input_delivery.bind(record, task)
             await task.enqueue_input(event.model_dump_json())
             await task.run()
@@ -1256,10 +1424,20 @@ class AgentDomainService:
                 task.cancel()
             await self._reject_claimed_continuation(record, error)
             return None
-        except BaseException:
+        except BaseException as error:
             if task is not None:
                 task.cancel()
-            await self._input_delivery.retry_preparation(record)
+            failure_code = (error.code if isinstance(error, DatasetReadabilityError)
+                            else "model_audit_unavailable" if isinstance(error, ModelBudgetStopped)
+                            and error.code == "trace_store_unavailable" else "input_preparation_failed")
+            if isinstance(error, DatasetReadabilityError):
+                # DatasetReadabilityError owns the fixed diagnostic schema. It
+                # includes only anonymous object hashes and comparison fields.
+                logger.warning("Dataset preparation rejected session=%s attempt=%d code=%s diagnostic=%s",
+                    opaque_log_identifier(record.session_id, namespace="session"),
+                    record.admission.attempts, failure_code,
+                    json.dumps(getattr(error, "diagnostic", None), sort_keys=True))
+            await self._input_delivery.retry_preparation(record, failure_code=failure_code)
             raise
 
     async def chat(
@@ -1279,12 +1457,21 @@ class AgentDomainService:
         client_message_id: Optional[str] = None,
         resume_from: Optional[str] = None,
         data_connectors: Optional[List[str]] = None,
+        input_file_ids: Optional[List[str]] = None,
+        observe_client_message_id: Optional[str] = None,
+        clarification_id: Optional[str] = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """
         Chat with an agent
         """
 
         try:
+            if clarification_id is not None:
+                if (not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", clarification_id)
+                        or not (message or "").strip() or resume_from):
+                    raise ValueError("确认回复需要有效问题标识和回答，不能同时恢复旧任务。")
+            if resume_from and input_file_ids is not None:
+                raise ContinuationRejected("续作不能修改原任务的资料范围。")
             self._validate_continuation_payload(resume_from, message, attachments, skills, mcp_servers,
                                                 dataset_ids, mcp_access_all, client_message_id)
             if resume_from and data_connectors:
@@ -1299,6 +1486,15 @@ class AgentDomainService:
                     opaque_log_identifier(user_id, namespace="user"),
                 )
                 raise RuntimeError("Session not found")
+
+            if observe_client_message_id is not None:
+                if (not observe_client_message_id.strip() or len(observe_client_message_id) > 128
+                        or message or resume_from or clarification_id or client_message_id or llm_overrides is not None
+                        or attachments or skills or mcp_servers or data_connectors or dataset_ids or input_file_ids is not None):
+                    raise ValueError("Invalid read-only input observation")
+                async for event in self._observe_input_events(session_id, observe_client_message_id, latest_event_seq):
+                    yield event
+                return
 
             if llm_overrides is not None:
                 session.llm_overrides = llm_overrides
@@ -1322,6 +1518,8 @@ class AgentDomainService:
                             mcp_access_all=mcp_access_all,
                             client_message_id=client_message_id,
                             resume_from=resume_from,
+                            input_file_ids=input_file_ids,
+                            clarification_id=clarification_id,
                         )
                     ),
                     session_id,
@@ -1425,6 +1623,36 @@ class AgentDomainService:
                         "No event found in session queue session=%s",
                         opaque_log_identifier(session_id, namespace="session"),
                     )
+                    # A terminal can be durable without a Redis notification:
+                    # cancellation recovery writes directly to history, and a
+                    # live XADD can fail after a successful durable commit.
+                    # Cleanup may still be running, so task.done is not a
+                    # reliable signal that a viewer should keep waiting.
+                    read_after = getattr(self._session_repository, "get_events_after", None)
+                    if last_seen_seq is not None and callable(read_after):
+                        try:
+                            durable_events = await read_after(session_id, last_seen_seq)
+                        except Exception as error:
+                            # A failed observation is not a task failure. Keep
+                            # the existing transport/recovery path available.
+                            logger.warning("Durable live observation unavailable error_type=%s", type(error).__name__)
+                            durable_events = []
+                        for durable_event in durable_events:
+                            if durable_event.seq is None or durable_event.seq <= last_seen_seq:
+                                continue
+                            last_seen_seq = durable_event.seq
+                            if isinstance(durable_event, MessageEvent) and durable_event.role == "user":
+                                continue
+                            terminal = isinstance(durable_event, (DoneEvent, ErrorEvent, WaitEvent))
+                            if terminal and not await self._terminal_matches_input(
+                                    session_id, stream_input_key, stream_input_seq, durable_event):
+                                continue
+                            yield durable_event
+                            if terminal:
+                                stream_terminal = True
+                                break
+                        if stream_terminal:
+                            break
                     # If the task completed during this bounded read, loop once
                     # more: its final XADD may have landed immediately after
                     # the timeout. Only an empty read that *started* after the
@@ -1467,6 +1695,10 @@ class AgentDomainService:
             )
             raise
         except Exception as e:
+            if observe_client_message_id is not None:
+                # Observation failures are transport failures, never persisted
+                # execution terminals that could falsely settle the input.
+                raise
             logger.error(
                 "Session stream failed session=%s error_type=%s",
                 opaque_log_identifier(session_id, namespace="session"),
@@ -1482,6 +1714,53 @@ class AgentDomainService:
                     type(persist_error).__name__,
                 )
             yield event # TODO: raise api exception
+
+    async def _observe_input_events(self, session_id: str, client_message_id: str, cursor: int | None):
+        """Bounded, strictly read-only replay for one stopped/uncertain input.
+
+        Never substitute the latest input when this ID has not been accepted.
+        EOF without a terminal is retried with bounded backoff by the client.
+        """
+        from app.domain.models.input_admission import input_key
+        delivery = getattr(self, "_input_delivery", None)
+        if delivery is None:
+            return
+        key = input_key(MessageEvent(id=self._client_message_event_id(session_id, client_message_id), role="user", message=""))
+        cursor = max(0, cursor or 0)
+        crossed_next_input = False
+        first_read = True
+        for attempt in range(20):
+            record = await delivery.repository.get(session_id, key)
+            if record is not None:
+                cursor = max(cursor, record.event.seq or 0)
+                # Reconstruct the next-input boundary on reconnect as well;
+                # the client's cursor may already be past another tab's input.
+                events = await self._session_repository.get_events_after(
+                    session_id, (record.event.seq or 0) if first_read else cursor)
+                first_read = False
+                for event in events:
+                    if isinstance(event, MessageEvent) and event.role == "user":
+                        crossed_next_input = True
+                    if event.seq is None or event.seq <= cursor:
+                        continue
+                    cursor = event.seq
+                    if isinstance(event, MessageEvent) and event.role == "user":
+                        continue
+                    if isinstance(event, (DoneEvent, ErrorEvent, WaitEvent)):
+                        if await self._terminal_matches_input(session_id, key, record.event.seq, event):
+                            yield event
+                            return
+                        continue
+                    if crossed_next_input:
+                        # A different tab may have started a later turn. Only
+                        # this input's exact durable outcome is safe to replay.
+                        committed = getattr(delivery.repository, "committed_outcome", None)
+                        own_outcome = await committed(record) if callable(committed) else None
+                        if own_outcome is None or own_outcome.seq != event.seq:
+                            continue
+                    yield event
+            if attempt < 19:
+                await asyncio.sleep(0.5)
 
     async def _terminal_matches_input(self, session_id, key, input_seq, event) -> bool:
         if input_seq is None or event.seq is None:
@@ -1534,13 +1813,74 @@ class AgentDomainService:
             if not attachment or not attachment.get("file_id"):
                 continue
             file_info = await self._file_storage.get_file_info(attachment["file_id"], user_id)
-            if file_info:
+            if file_info and file_info.user_id == user_id:
                 resolved.append(file_info)
             else:
-                resolved.append(
-                    FileInfo(
-                        file_id=attachment["file_id"],
-                        filename=attachment.get("filename", ""),
-                    )
-                )
+                raise BadRequestError("所选文件不存在或不可访问，请重新选择数据。")
         return resolved or None
+
+    async def _prepare_input_selection(self, session_id, user_id, attachments, input_file_ids, *,
+                                       checkpoint=None, message=None):
+        """Freeze only explicitly authorized user inputs at message admission."""
+        history = await self._session_repository.get_events(session_id)
+        publications = published_output_candidates(history)
+        if checkpoint is not None:
+            # A legacy dataset-only checkpoint has no upload manifest. It must
+            # not inherit files added by later, independent user messages.
+            context = AnalysisInputContext.model_validate(checkpoint.get("analysis_input_manifest") or {})
+            known, _ = session_input_state(history)
+            previous_inputs = {item.file_id: item for item in known}
+            selected = []
+            for source in context.sources:
+                if source.kind != "upload":
+                    continue
+                for item in source.files:
+                    from pathlib import PurePosixPath
+                    path = PurePosixPath(item.runtime_path)
+                    previous = previous_inputs.get(item.file_id) or publications.get(item.file_id)
+                    previous_metadata = (previous.metadata or {}) if previous is not None else {}
+                    selected.append(FileInfo(file_id=item.file_id,
+                        filename=previous.filename if previous is not None else path.name, size=item.size,
+                        content_type=item.content_type, metadata={
+                            **{key: value for key, value in previous_metadata.items()
+                               if key in {"analysis_input_origin", "analysis_input_sha256"}},
+                            "analysis_input_namespace": path.parent.name, "analysis_input_filename": path.name}))
+            submitted = []
+        else:
+            incoming = []
+            for item in attachments or []:
+                if not isinstance(item, dict) or not isinstance(item.get("file_id"), str) or not item["file_id"]:
+                    raise ValueError("上传资料缺少有效文件标识。")
+                info = await self._file_storage.get_file_info(item["file_id"], user_id)
+                if info is None:
+                    raise ValueError("上传资料已不可用或无权访问，请重新选择文件。")
+                incoming.append(info)
+            promoted = []
+            for publication in explicitly_referenced_outputs(history, message, input_file_ids, incoming):
+                current = await self._file_storage.get_file_info(publication.file_id, user_id)
+                if current is None:
+                    raise ValueError("所选派生结果已不可用或无权访问，请重新选择文件。")
+                promoted.append(published_input_reference(publication, current, session_id=session_id, user_id=user_id))
+            selected, submitted = select_input_files(history, incoming, input_file_ids, promoted=promoted)
+        await self._reauthorize_input_files(session_id, user_id, selected, publications=publications)
+        by_id = {item.file_id: item for item in selected}
+        return selected, [by_id[item.file_id] for item in submitted]
+
+    async def _reauthorize_input_files(self, session_id, user_id, selected, *, publications=None):
+        """Check an exact snapshot without expanding scope or opening source bytes."""
+        for item in selected:
+            current = await self._file_storage.get_file_info(item.file_id, user_id)
+            if current is None or current.file_id != item.file_id or current.user_id not in {None, user_id}:
+                raise ValueError("所选分析资料已不可用或无权访问，请调整资料范围。")
+            if current.size != item.size:
+                raise ValueError("分析资料内容已变化，请重新选择文件。")
+            if ((item.metadata or {}).get("analysis_input_origin") == PUBLISHED_INPUT_ORIGIN
+                    or (current.metadata or {}).get("source") == "sandbox_artifact"):
+                publication = (item if (item.metadata or {}).get("analysis_input_origin") == PUBLISHED_INPUT_ORIGIN
+                               else (publications or {}).get(item.file_id))
+                if publication is None:
+                    raise ValueError("所选派生结果没有本会话的已发布记录，请重新选择已发布文件。")
+                verified = published_input_reference(publication, current, session_id=session_id, user_id=user_id)
+                item.metadata = {**(item.metadata or {}), **verified.metadata}
+            item.user_id = current.user_id or user_id
+            item.upload_date = current.upload_date

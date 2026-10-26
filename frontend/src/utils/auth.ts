@@ -128,7 +128,7 @@ export function validateUserInput(data: {
   // Email validation
   if (data.email !== undefined) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!data.email || !emailRegex.test(data.email)) {
+    if (!data.email || !emailRegex.test(data.email.trim())) {
       errors.email = i18n.global.t('Please enter a valid email address')
     }
   }

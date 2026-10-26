@@ -1,0 +1,341 @@
+{
+  "project": "DataLab",
+  "date": "2026-10-21",
+  "branch": "datalab",
+  "source": {
+    "repository": "km345297256/AI-DATASEEK",
+    "branch": "v2",
+    "commit": "1e3963c84ed376a03941df400a66f4018580f9bf",
+    "live_github_branch_verified": true,
+    "comparison_base": "9b95762b601455939e21e1077c35d0aa980dc0a6"
+  },
+  "verdict": "all_confirmed_implementation_gaps_resolved",
+  "conclusion": "本次已修复原审计的6类前端遗漏和2类后端边界，补齐全部延期功能及验收工具，完成所列回归并部署DataLab。此结论覆盖功能实现，不把框架测试等同于付费模型科学质量或完整84类真实文件HTTP预览结果。",
+  "method": [
+    "共同基线到 v2 的实际差异重建",
+    "当前源码实际入口和调用链核对",
+    "定向回归",
+    "生产函数或实际代码片段的隔离最小复现"
+  ],
+  "confirmed_findings": [
+    {
+      "id": "F1",
+      "area": "frontend",
+      "priority": "优先补齐",
+      "title": "首页首轮请求没有整体冻结",
+      "categories": [
+        5
+      ],
+      "locations": [
+        "frontend/src/pages/HomePage.vue:134"
+      ],
+      "impact": "创建会话等待期间更改问题、能力或 Agent，会把原文件与新参数混合提交；创建会话和发送请求的 Agent 也可能不一致。",
+      "evidence": "生产函数内存复现：等待后 message/skills/connectors/agentProfileId 均为新值，而 files 仍为 original.csv。v2 在 await 前复制整个 pendingChat。",
+      "missing_test": "实际 HomePage 提交等待期间修改输入和 Agent 的组件回归。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "frontend/src/pages/HomePage.vue",
+        "frontend/tests/chatRequestLifecycle.test.mjs",
+        "frontend/tests/analysisHome.test.mjs"
+      ]
+    },
+    {
+      "id": "F2",
+      "area": "frontend",
+      "priority": "优先补齐",
+      "title": "上传缺少草稿归属及卸载保护",
+      "categories": [
+        5
+      ],
+      "locations": [
+        "frontend/src/components/ChatBoxFiles.vue:122"
+      ],
+      "impact": "切换草稿后旧批次的后续文件可能进入新附件列表；离开组件后仍继续上传。",
+      "evidence": "生产函数内存复现：替换附件数组后 calls=[init:first.csv,init:second.csv]，新草稿出现 saved-2。已有失败分片清理不能替代归属检查。",
+      "missing_test": "更换附件数组、移除附件和卸载组件的上传回归；保留 DataLab 已有分片 settle/abort。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "frontend/src/components/ChatBoxFiles.vue",
+        "frontend/tests/chatBoxUploads.test.mjs"
+      ]
+    },
+    {
+      "id": "F3",
+      "area": "frontend",
+      "priority": "随后补齐",
+      "title": "Agent 设置保存后没有强制刷新目录",
+      "categories": [],
+      "locations": [
+        "frontend/src/components/settings/AgentProfileRuntimeSettings.vue:297",
+        "frontend/src/utils/agentProfileDirectory.ts:26",
+        "frontend/src/components/AgentSelector.vue:110"
+      ],
+      "impact": "保存后的刷新复用保存前仍在进行的旧请求，新配置可能没有出现在选择器；部分刷新入口也缺少失败处理。",
+      "evidence": "目录生产代码复现：reads=1, ids=[], samePromise=true。设置页实际调用遗漏 force:true。",
+      "missing_test": "通过设置页真实保存入口，在已有目录请求未完成时保存新配置。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "frontend/src/components/settings/AgentProfileRuntimeSettings.vue",
+        "frontend/tests/agentProfileSaveRace.test.mjs"
+      ]
+    },
+    {
+      "id": "F4",
+      "area": "frontend",
+      "priority": "随后补齐",
+      "title": "阶段行未投影部分完成和停止状态",
+      "categories": [
+        7
+      ],
+      "locations": [
+        "frontend/src/components/PlanPanel.vue:15",
+        "frontend/src/pages/SharePage.vue:58"
+      ],
+      "impact": "阶段行仍按原始 step.status 显示绿勾，可能与当前轮 analysis_outcome 的部分完成或停止结果矛盾。",
+      "evidence": "缺少 v2 planPresentation 的 step_id + 当前轮 outcome 映射。DataLab 总任务状态已由 DataRun 严格判断，应保留；此发现仅针对阶段展示。",
+      "missing_test": "实际 PlanPanel 同时接收 completed step 与 partial/stopped outcome，以及分享页的集成回归。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "frontend/src/components/PlanPanel.vue",
+        "frontend/tests/planPresentation.test.mjs",
+        "frontend/tests/browser/followup-outcome-smoke.mjs"
+      ]
+    },
+    {
+      "id": "F5",
+      "area": "frontend",
+      "priority": "随后补齐",
+      "title": "附加文件问题被父组件隐藏",
+      "categories": [
+        6
+      ],
+      "locations": [
+        "frontend/src/components/ChatMessage.vue:104",
+        "frontend/src/components/AnalysisOutcomeNotice.vue:9"
+      ],
+      "impact": "主成果成功但附加文件存在非阻断问题时，用户看不到该文件未交付的原因。",
+      "evidence": "succeeded + missing=[] + blocking=false issues 无法通过 ChatMessage 的 v-if，已迁入的子组件问题列表不会挂载。",
+      "missing_test": "从 ChatMessage 父组件入口渲染成功结果及非阻断附加文件问题。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "frontend/src/components/ChatMessage.vue",
+        "frontend/tests/analysisArtifactIssues.test.mjs",
+        "frontend/tests/browser/followup-outcome-smoke.mjs"
+      ]
+    },
+    {
+      "id": "F6",
+      "area": "frontend",
+      "priority": "随后补齐",
+      "title": "文件修订历史缺少展开入口",
+      "categories": [
+        2,
+        7
+      ],
+      "locations": [
+        "frontend/src/components/ChatMessage.vue:157",
+        "frontend/src/utils/toolTimeline.ts:49"
+      ],
+      "impact": "数据层已累计多次修订，界面只能查看最后一次请求，早期失败和未执行请求不能逐项查看。",
+      "evidence": "v2 的 details + item.revisions 列表未接入，当前仅有聚合数量和最后一次请求入口。",
+      "missing_test": "实际组件展开修订列表并点击每条请求。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "frontend/src/components/ChatMessage.vue",
+        "frontend/tests/toolTimeline.test.mjs",
+        "frontend/tests/browser/followup-outcome-smoke.mjs"
+      ]
+    },
+    {
+      "id": "B1",
+      "area": "backend",
+      "priority": "优先补齐",
+      "title": "等待或后续错误时阶段正文未完整交付",
+      "categories": [
+        6
+      ],
+      "locations": [
+        "backend/app/domain/services/agent_task_runner.py:3169",
+        "backend/app/domain/services/agent_task_runner.py:3298",
+        "backend/app/domain/services/agent_task_runner.py:3309"
+      ],
+      "impact": "前一步成功后进入 Wait 或 Error，聊天消息可能没有已完成阶段的说明。StepEvent 仍保存原始说明，不是结果记录丢失。",
+      "evidence": "调用实际 _run_flow、模拟外部服务：成功步骤 mean=7 后 Wait 只有 step/wait，Error 只有任务未能完整完成，Done 则保留正文。DataLab 聚合交付的边界与 v2 逐阶段发布不等价。",
+      "missing_test": "成功阶段之后 Wait/Error 的完整聊天交付回归，保留已验证文件边界。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "backend/app/domain/services/agent_task_runner.py",
+        "backend/tests/test_analysis_staged_delivery.py"
+      ]
+    },
+    {
+      "id": "B2",
+      "area": "backend",
+      "priority": "优先补齐",
+      "title": "OpenData worker 未纳入抗取消关闭链",
+      "categories": [],
+      "locations": [
+        "backend/app/main.py:316",
+        "backend/app/main.py:133"
+      ],
+      "impact": "关闭等待 OpenData worker 时再次取消 lifespan，可能跳过后续 Agent、插件、沙盒、Redis、Mongo 清理。",
+      "evidence": "AST 提取实际 lifespan finally 的内存复现：正常后续 shutdown 调用1次，等待慢 worker 时再次取消则0次并返回 CancelledError。",
+      "missing_test": "覆盖真实 lifespan 外层及 OpenData worker 的重复取消；现有测试只覆盖统一清理 helper。",
+      "current_status": "resolved",
+      "resolution_evidence": [
+        "backend/app/main.py",
+        "backend/tests/test_application_shutdown.py",
+        "backend/tests/test_shutdown_settlement.py"
+      ]
+    }
+  ],
+  "covered_runtime_directions": [
+    "可信程序执行、源码快照、真实退出状态和长任务",
+    "局部修复、重复失败治理和成果版本的后端逻辑",
+    "输入回执、断线恢复、停止观察和终态持久化",
+    "CSV、Unicode、Excel、NetCDF、GeoTIFF探查",
+    "同名文件隔离、历史投影和连续追问",
+    "成果字节、Markdown和IPYNB校验",
+    "长对话索引、阅读锚点和完整日志分页",
+    "SVG原生导出、隔离PNG预览和结果图片",
+    "模型路由、重试、凭据隔离和审计"
+  ],
+  "previously_deferred": [
+    {
+      "item": "Cesium离线底图",
+      "status": "implemented_and_deployed",
+      "original_status": "not_migrated"
+    },
+    {
+      "item": "Jupyter宿主机持久化及长期归档",
+      "status": "implemented_and_deployed",
+      "original_status": "not_migrated",
+      "original_note": "当前仍使用带用户会话鉴权和容器标签核对的Docker命名卷；未发现鉴权绕过，不能把未启用模式的配套检查定性为当前漏洞。"
+    },
+    {
+      "item": "DataSeek生产发布治理及前端版本兼容提示",
+      "status": "implemented_and_deployed",
+      "original_status": "not_migrated",
+      "original_note": "v2版本提示不自动刷新或重提任务。"
+    }
+  ],
+  "validation_gaps": [
+    "未运行付费模型36题科学质量对比。",
+    "完整84类真实文件HTTP预览尚未整套执行；对应目录、输入鉴权、生成脚本、检查器和离线门禁已实现并测试。"
+  ],
+  "current_audit_validation": {
+    "model_tests_passed": 199,
+    "core_tests_passed": 141,
+    "sandbox_adapter_visualization_tests_passed": 146,
+    "targeted_tests_passed_total": 486,
+    "note": "以上为本轮定向复验；没有重新运行全量套件或生产浏览器测试。5项异步/交付/清理问题另用内存最小复现，其余3项界面缺口通过父子组件实际接线及源版本差异确认。",
+    "test_groups": {
+      "model": [
+        "test_model_route_boundaries.py",
+        "test_model_retry_policy.py",
+        "test_model_response_boundary.py",
+        "test_model_driver.py",
+        "test_model_cache_observability.py",
+        "test_model_trace_persistence.py"
+      ],
+      "core": [
+        "test_live_stream_durable_terminal.py",
+        "test_analysis_inputs.py",
+        "test_input_receipt.py",
+        "test_followup_reviewed_history_recovery.py",
+        "test_program_progress_agent_flow.py",
+        "test_application_shutdown.py",
+        "test_shutdown_settlement.py"
+      ],
+      "sandbox_adapter_visualization": [
+        "test_program_source_snapshot.py",
+        "test_shell_output_api.py",
+        "test_sandbox_pool_shutdown.py",
+        "test_sandbox_allocation_ownership.py",
+        "test_unlimited_sandbox_capacity.py",
+        "test_svg_visualization.py",
+        "test_visualization_catalog.py"
+      ]
+    }
+  },
+  "recommended_order": [
+    {
+      "batch": 1,
+      "purpose": "输入和任务交付可靠性",
+      "findings": [
+        "F1",
+        "F2",
+        "B1",
+        "B2"
+      ]
+    },
+    {
+      "batch": 2,
+      "purpose": "配置一致性和结果可观察性",
+      "findings": [
+        "F3",
+        "F4",
+        "F5",
+        "F6"
+      ]
+    },
+    {
+      "batch": 3,
+      "purpose": "补实际组件、端到端和浏览器验收，再复核覆盖结论"
+    }
+  ],
+  "actions_this_audit": {
+    "runtime_code_changed": false,
+    "coverage_documents_updated": true,
+    "deployed": false,
+    "committed_or_pushed": false
+  },
+  "resolution": {
+    "status": "implemented_deployed_and_verified",
+    "date": "2026-10-21",
+    "finding_ids": [
+      "F1",
+      "F2",
+      "F3",
+      "F4",
+      "F5",
+      "F6",
+      "B1",
+      "B2"
+    ],
+    "previously_deferred_implemented": [
+      "Cesium离线底图与降级",
+      "Jupyter持久工作区及闲置保留",
+      "DataLab受控发布与停服归档",
+      "前端版本兼容提示"
+    ],
+    "validation_tools_implemented": [
+      "当前用户file_id鉴权的离线评测框架",
+      "84项可视化样例矩阵与HTTP门禁",
+      "Chromium/WebKit完整14场景门禁"
+    ],
+    "runtime_release_pending": false,
+    "notes": [
+      "原始审计发现保留为历史记录；当前实施状态以resolution及最终核对表为准。",
+      "Jupyter命名卷和host-backed模式均已完成真实Docker写入、空闲回收、重开保留与跨用户拒绝验证；Colima host路径需在共享范围内。",
+      "工具实现不等于已运行付费模型科学质量评测或全部84类真实文件HTTP预览。",
+      "最后复核另补summary→Wait/Error/Done的成果失效边界，保留有效阶段正文，定向111项通过。"
+    ],
+    "completion_checklist": "docs/v2-completion-checklist.json",
+    "release": "v2-completion-20261021-r2",
+    "url": "http://localhost:10030"
+  },
+  "original_verdict": "partial",
+  "original_conclusion": "主要运行链已迁入，但端到端覆盖不完整；确认6类前端遗漏和2类后端整合边界问题。撤回全部覆盖的表述，不按文件数量估算功能完成率。",
+  "original_validation_gaps": [
+    "离线基准评测框架、可视化样例目录及配套门禁没有完整迁入，不能宣称已验证相同的数据分析质量。",
+    "完整Chromium + WebKit浏览器矩阵没有执行；已有定制Chromium验证不等价于完整v2矩阵。",
+    "独立工具及子组件测试没有覆盖上述真实页面接线、异步竞态和外层关闭边界。"
+  ],
+  "actions_this_completion": {
+    "runtime_code_changed": true,
+    "coverage_documents_updated": true,
+    "deployed": true,
+    "committed_or_pushed": false
+  }
+}

@@ -250,7 +250,7 @@ function useProfileInNewChat(): void {
   if (!selectedProfile.value || creatingNew.value || saving.value || hasChanges.value) return;
   setSelectedProfile(selectedProfile.value);
   closeSettingsDialog();
-  void router.push('/');
+  void router.push('/chat');
 }
 
 async function load(): Promise<void> {
@@ -294,7 +294,7 @@ async function save(): Promise<void> {
     newProfileName.value = '';
     selectedProfileId.value = updated.id;
     syncDraft(updated);
-    void refreshProfiles().catch(() => undefined);
+    void refreshProfiles({ force: true }).catch(() => undefined);
     showSuccessToast(t(index >= 0 ? 'Agent profile tool settings saved' : 'Agent profile created. Select it in a new chat to use it.'));
   } catch {
     showErrorToast(t(creatingNew.value ? 'Failed to create agent profile' : 'Failed to save agent profile tool settings'));

@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,7 +13,7 @@ from app.domain.external.model_driver import ModelIdentity, ModelCapabilities
 from app.infrastructure.external.llm.chat_model import LangChainModelDriver
 from test_model_driver import FakeClient
 
-from app.core.config import Settings
+from app.core.config import ModelRequestCapability, Settings
 from app.domain.models.model_trace import ModelTraceRecord
 from app.domain.services import model_runtime as runtime
 from app.domain.services.agents.base import BaseAgent
@@ -20,6 +22,27 @@ from app.interfaces.api.model_trace_routes import router
 from app.interfaces.dependencies import get_agent_service, get_current_user
 from app.interfaces.errors.exception_handlers import register_exception_handlers
 from app.infrastructure.repositories.mongo_model_trace_repository import get_model_trace_repository
+
+
+def test_native_output_trace_reads_legacy_without_inventing_provider_limit():
+    import jsonschema
+
+    previous = json.loads((Path(__file__).resolve().parents[2] /
+        "docs/persistence/2026-10-22-analysis-recovery.json").read_text())
+    old_schema = previous["roots"]["ModelTraceRecord"]["read_schema"]
+    legacy = ModelTraceRecord(user_id="u", session_id="s", task_id="old",
+        reserved_output_tokens=2000, actual_total_tokens=100).model_dump(mode="json", exclude={"output_token_limit"})
+    jsonschema.validate(legacy, old_schema)
+    restored = ModelTraceRecord.model_validate(legacy)
+    assert restored.output_token_limit is None
+    assert restored.reserved_output_tokens == 2000
+    assert restored.actual_total_tokens == 100
+    current = restored.model_copy(update={"output_token_limit": 65536}).model_dump(mode="json")
+    assert ModelTraceRecord.model_validate(current).output_token_limit == 65536
+    # The old strict reader rejects the new metadata instead of confusing
+    # accounting reservation with an imposed provider output limit.
+    with pytest.raises(jsonschema.ValidationError, match="output_token_limit"):
+        jsonschema.validate(current, old_schema)
 
 
 class TraceStore:
@@ -151,6 +174,52 @@ async def test_production_task_metering_has_no_cumulative_limit_and_trace_says_u
     record = next(iter(store.records.values()))
     assert record.task_token_limit is None and record.task_call_limit is None
     assert record.public_view().model_dump()["task_token_limit"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requested_output", [None, 65_536])
+async def test_model_output_capacity_equal_to_context_uses_headroom_without_task_quota(
+    fixed_settings, requested_output,
+):
+    fixed_settings.model_context_capacity_tokens = 65_536
+    fixed_settings.model_context_safety_tokens = 2048
+    fixed_settings.model_request_capabilities = {
+        "deepseek": {"fixture": ModelRequestCapability(
+            context_tokens=65_536, max_output_tokens=65_536)},
+    }
+    store = TraceStore()
+    output_limits = []
+    with runtime.model_execution_scope(user_id="u", session_id="s", task_id="physical-capacity", store=store) as scope:
+        # Long-running tasks still admit later calls; context capacity constrains
+        # one request, never the accumulated usage of the analysis.
+        scope.ledger.calls = 1000
+        scope.ledger.charged_tokens = 100_000_000
+
+        async def send(messages, max_output):
+            admitted = store.history[-1]
+            assert admitted.status == "started"
+            assert max_output == 65_536 - 2048 - admitted.input_tokens_after
+            assert 4096 < max_output < 65_536
+            assert admitted.output_token_limit == max_output
+            assert admitted.reserved_output_tokens == max_output
+            assert admitted.task_token_limit is None and admitted.task_call_limit is None
+            output_limits.append(max_output)
+            return AIMessage(content="done", usage_metadata={
+                "input_tokens": 20, "output_tokens": 10, "total_tokens": 30,
+            })
+
+        for text in ("hello", "hello " * 100):
+            await runtime.invoke_model_request(
+                messages=[HumanMessage(content=text)], max_output_tokens=requested_output,
+                provider="deepseek", model_name="fixture", invoke=send,
+            )
+        assert scope.ledger.calls == 1002
+        assert scope.ledger.charged_tokens == 100_000_060
+        assert scope.ledger.token_limit is None and scope.ledger.call_limit is None
+        assert scope.ledger.stopped_code is None
+
+    assert len(output_limits) == 2 and output_limits[1] < output_limits[0]
+    assert all(record.status == "succeeded" for record in store.records.values())
 
 
 @pytest.mark.asyncio

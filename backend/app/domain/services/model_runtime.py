@@ -6,8 +6,10 @@ JSON repair and tool-owned browser calls. It never queries a user's quota.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import math
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -18,10 +20,12 @@ from uuid import uuid4
 
 from app.core.config import get_settings
 from app.domain.models.execution_environment import safe_public_identifier
-from app.domain.models.model_trace import MemoryChange, ModelTraceRecord
+from app.domain.models.model_trace import MemoryChange, ModelTraceRecord, ScheduledModelRetry
 from app.domain.services.context_budget import ContextBudgetExceeded, prepare_context
 from app.domain.services.execution_identity import private_identity_hmac
+from app.domain.services.model_input_policy import ImageInputError, request_image_estimator, resolve_model_capability
 from app.domain.services.token_usage_service import TokenUsageService
+from app.domain.utils.model_response import ModelEmptyResponseError, ModelResponseValidationError, validate_model_response
 
 logger = logging.getLogger(__name__)
 USAGE_RECORDED_KEY = "dataseek_model_usage_recorded"
@@ -36,6 +40,10 @@ class ModelBudgetStopped(asyncio.CancelledError):
         if scope is not None:
             scope.ledger.stopped_code = code
         super().__init__("Model execution stopped at its configured runtime boundary")
+
+
+class ModelProviderTimeout(TimeoutError):
+    """One configured provider request timed out, not the analysis task."""
 
 
 class ModelTraceStore(Protocol):
@@ -83,9 +91,34 @@ class ModelExecutionScope:
     durable_budget: Any = None
 
 
+@dataclass(frozen=True)
+class _FailedModelAttempt:
+    scope: ModelExecutionScope
+    trace: ModelTraceRecord
+
+
+_FAILED_ATTEMPT_ATTRIBUTE = "_dataseek_failed_model_attempt"
+
+
 _SCOPE: ContextVar[ModelExecutionScope | None] = ContextVar("model_execution_scope", default=None)
 _ROLE: ContextVar[tuple[str, str | None]] = ContextVar("model_call_role", default=("auxiliary", None))
+_RESPONSE_VALIDATOR: ContextVar[Callable[[Any], Any] | None] = ContextVar("model_response_validator", default=None)
 _ANALYSIS_BUDGET: ContextVar[Any] = ContextVar("analysis_budget", default=None)
+_REQUEST_CAPACITY: ContextVar[Any] = ContextVar("verified_request_capacity", default=None)
+
+
+@contextmanager
+def model_request_capacity(provider, model_name, capability):
+    """Use trusted, route-verified native capacity for this physical call only.
+
+    No task quota, ledger, timeout or global configuration is changed. Callers
+    must verify the exact endpoint and model before supplying this metadata.
+    """
+    token = _REQUEST_CAPACITY.set((provider, model_name, capability))
+    try:
+        yield
+    finally:
+        _REQUEST_CAPACITY.reset(token)
 
 
 def current_analysis_budget():
@@ -136,6 +169,30 @@ def model_call_role(role: str):
         _ROLE.reset(token)
 
 
+@contextmanager
+def model_response_validation(validator: Callable[[Any], Any]):
+    """Run a trusted, synchronous response parser inside the request audit.
+
+    JSON decoding and the shared empty-response guard are protocol failures.
+    Other parser/schema errors propagate without changing a successful transport
+    into a retryable failure. No response content or parser error text is
+    persisted, and no private receipt is attached to the returned message.
+    """
+    if not callable(validator):
+        raise TypeError("A response validator must be callable")
+    token = _RESPONSE_VALIDATOR.set(validator)
+    try:
+        yield
+    finally:
+        _RESPONSE_VALIDATOR.reset(token)
+
+
+async def _invoke_provider(invoke, messages, max_output_tokens):
+    # Physical provider requests have no application deadline. Explicit user
+    # cancellation remains a distinct, audited control-flow signal.
+    return await invoke(messages, max_output_tokens)
+
+
 def _message_payload(messages) -> list:
     # Artifacts and provider metadata are not part of a model request. Do not
     # include their potentially huge/private extra payloads even in a digest.
@@ -182,13 +239,35 @@ async def _store(scope, record) -> None:
     if scope is None or scope.store is None:
         return
     try:
-        async with asyncio.timeout(get_settings().model_trace_store_timeout_seconds):
-            await scope.store.put(record)
+        await scope.store.put(record)
     except asyncio.CancelledError:
         raise
     except Exception as error:
         logger.warning("Model trace unavailable error_type=%s", type(error).__name__)
         raise ModelBudgetStopped("trace_store_unavailable") from None
+
+
+async def record_model_retry(error: Exception, schedule: ScheduledModelRetry) -> bool:
+    """Amend the exact failed physical request before waiting to retry it.
+
+    Non-driver compatibility calls may have no trace. A driver-owned trace
+    must stay in its original live scope and persist successfully; otherwise
+    fail closed rather than issuing another unrecorded physical request.
+    """
+    failed = getattr(error, _FAILED_ATTEMPT_ATTRIBUTE, None)
+    if not isinstance(failed, _FailedModelAttempt):
+        return False
+    scope = _SCOPE.get()
+    trace = failed.trace
+    if (scope is None or scope is not failed.scope or scope.ledger.closed
+            or scope.ledger.stopped_code
+            or (trace.user_id, trace.session_id, trace.task_id) != (scope.user_id, scope.session_id, scope.task_id)
+            or trace.kind != "model_request" or trace.status != "failed"
+            or trace.error_code not in {"provider_error", "provider_timeout", "invalid_json"}):
+        raise ModelBudgetStopped("runtime_closed")
+    updated = trace.model_copy(update={"scheduled_retry": schedule}, deep=True)
+    await _store(scope, updated)
+    return True
 
 
 async def flush_memory_changes() -> None:
@@ -218,10 +297,44 @@ def _usage(message) -> dict[str, int] | None:
     return usage
 
 
-async def invoke_model_request(*, messages, tool_schemas=(), response_format=None, max_output_tokens: int,
+def _tool_schema_identity(tool_schemas) -> tuple[str | None, int | None]:
+    """Observe the exact ordered wire schemas without logging their contents.
+
+    Key order is JSON-insignificant; array order is request-prefix significant.
+    Unsupported synthetic adapters leave identity unknown rather than changing
+    request behavior. This is observability, never a dispatch/authorization key.
+    """
+    if not isinstance(tool_schemas, (list, tuple)) or not all(isinstance(item, dict) for item in tool_schemas):
+        return None, None
+    try:
+        encoded = json.dumps(tool_schemas, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return None, None
+    return hashlib.sha256(b"dataseek-tool-schema/v1\0" + encoded).hexdigest(), len(tool_schemas)
+
+
+async def invoke_model_request(*, messages, tool_schemas=(), response_format=None, max_output_tokens: int | None,
                                provider: str, model_name: str, driver_version: str = "langchain-driver/v1",
-                               invoke: Callable[[list, int], Awaitable[Any]]):
+                               invoke: Callable[[list, int | None], Awaitable[Any]]):
     settings = get_settings()
+    capability = resolve_model_capability(settings, provider, model_name)
+    scoped_capacity = _REQUEST_CAPACITY.get()
+    native_capacity = scoped_capacity is not None and scoped_capacity[:2] == (provider, model_name)
+    if native_capacity:
+        capability = scoped_capacity[2]
+    if capability.max_output_tokens is not None:
+        max_output_tokens = (min(max_output_tokens, capability.max_output_tokens)
+                             if max_output_tokens is not None else capability.max_output_tokens)
+    # A sizing reservation leaves room in the context and estimates usage when
+    # the provider omits it. It is never sent as an output or task token cap.
+    context_capacity = (capability.context_tokens if native_capacity and capability.context_tokens
+                        else min(settings.model_context_capacity_tokens,
+                                 capability.context_tokens or settings.model_context_capacity_tokens))
+    # Without a declared output capacity, admit the input against the context
+    # itself. After compaction, account for the remaining context as headroom;
+    # an arbitrary 2K/4K/8K reservation must not become a hidden analysis limit.
+    output_reservation = 1
     scope = _SCOPE.get()
     durable_budget = current_analysis_budget()
     durable_reservation_id = None
@@ -232,29 +345,41 @@ async def invoke_model_request(*, messages, tool_schemas=(), response_format=Non
     trace = ModelTraceRecord(user_id=scope.user_id if scope else "", session_id=scope.session_id if scope else "",
         task_id=scope.task_id if scope else "standalone", role=role, logical_call_id=logical_id,
         provider=safe_public_identifier(provider), model_name=safe_public_identifier(model_name),
-        driver_version=safe_public_identifier(driver_version)[:64], reserved_output_tokens=max_output_tokens,
+        driver_version=safe_public_identifier(driver_version)[:64], reserved_output_tokens=output_reservation,
+        output_token_limit=max_output_tokens,
         task_token_limit=scope.ledger.token_limit if scope else None, task_call_limit=scope.ledger.call_limit if scope else None)
     trace.timings.memory_flush_ms = memory_flush_ms
+    trace.tool_schema_sha256, trace.tool_schema_count = _tool_schema_identity(tool_schemas)
     try:
         phase_started = time.perf_counter()
         try:
+            image_estimator = request_image_estimator(messages, settings=settings, capability=capability)
             prepared = prepare_context(messages, tool_schemas=tool_schemas, response_format=response_format,
-                capacity_tokens=settings.model_context_capacity_tokens, max_output_tokens=max_output_tokens,
+                capacity_tokens=context_capacity,
+                max_output_tokens=output_reservation, image_tokens=capability.image_tokens, image_estimator=image_estimator,
                 safety_tokens=settings.model_context_safety_tokens)
         finally:
             trace.timings.context_prepare_ms = (time.perf_counter() - phase_started) * 1000
         trace.input_tokens_before = prepared.input_tokens_before
         trace.input_tokens_after = prepared.input_tokens_after
+        headroom = max(1, context_capacity - settings.model_context_safety_tokens
+                       - prepared.input_tokens_after)
+        if max_output_tokens is not None:
+            max_output_tokens = min(max_output_tokens, headroom)
+        output_reservation = max_output_tokens if max_output_tokens is not None else headroom
+        trace.reserved_output_tokens = output_reservation
+        trace.output_token_limit = max_output_tokens
         trace.tool_tokens = prepared.tool_tokens
         trace.input_limit = prepared.input_limit
         trace.compactions = list(prepared.records)
         trace.estimator_version = prepared.estimator_version
+        trace.estimator_version += f"+image_{capability.image_token_strategy}_v1"
         if scope is not None:
             phase_started = time.perf_counter()
             trace.request_hmac_before = _request_hmac(messages, tool_schemas, response_format)
             trace.request_hmac_after = _request_hmac(prepared.messages, tool_schemas, response_format)
             trace.timings.request_identity_ms = (time.perf_counter() - phase_started) * 1000
-            reserved = prepared.input_tokens_after + max_output_tokens
+            reserved = prepared.input_tokens_after + output_reservation
             trace.call_index = scope.ledger.reserve(reserved)
             trace.task_tokens_charged = scope.ledger.charged_tokens
         if durable_budget is not None:
@@ -263,19 +388,19 @@ async def invoke_model_request(*, messages, tool_schemas=(), response_format=Non
                 raise ModelBudgetStopped("trace_store_unavailable")
             try:
                 admission = await durable_budget.reserve_model_request(
-                    prepared.input_tokens_after + max_output_tokens, reservation_id=trace.trace_id)
+                    prepared.input_tokens_after + output_reservation, reservation_id=trace.trace_id)
             except BudgetUnavailableError:
                 raise ModelBudgetStopped("trace_store_unavailable") from None
             if not admission.allowed:
                 code = admission.reason if admission.reason in {"task_call_budget_exceeded", "task_token_budget_exceeded", "analysis_budget_deadline_exceeded"} else "trace_store_unavailable"
                 raise ModelBudgetStopped(code)
             durable_reservation_id = admission.reservation_id
-    except (ContextBudgetExceeded, ModelBudgetStopped) as error:
+    except (ContextBudgetExceeded, ModelBudgetStopped, ImageInputError) as error:
         trace.status = "budget_exceeded"
         trace.error_code = getattr(error, "code", "context_budget_exceeded")
         trace.finished_at = datetime.now(UTC)
         await _store(scope, trace)
-        if scope is not None:
+        if scope is not None and not isinstance(error, ImageInputError):
             raise ModelBudgetStopped(trace.error_code) from None
         raise
     phase_started = time.perf_counter()
@@ -285,32 +410,33 @@ async def invoke_model_request(*, messages, tool_schemas=(), response_format=Non
     try:
         if durable_budget is not None and durable_budget.require_live is not None:
             await durable_budget.require_live()
-        if durable_budget is not None and admission.deadline_at is not None:
-            remaining = (admission.deadline_at - datetime.now(UTC)).total_seconds()
-            if remaining <= 0:
-                raise ModelBudgetStopped("analysis_budget_deadline_exceeded")
-            deadline_window = asyncio.timeout(remaining)
-            try:
-                async with deadline_window:
-                    message = await invoke(prepared.messages, max_output_tokens)
-            except TimeoutError:
-                if deadline_window.expired():
-                    raise ModelBudgetStopped("analysis_budget_deadline_exceeded") from None
-                raise
-        else:
-            message = await invoke(prepared.messages, max_output_tokens)
+        message = await _invoke_provider(invoke, prepared.messages, max_output_tokens)
     except BaseException as error:
         trace.timings.provider_call_ms = (time.perf_counter() - phase_started) * 1000
         trace.status = "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
         trace.error_code = (error.code if isinstance(error, ModelBudgetStopped) else
-                            "cancelled" if isinstance(error, asyncio.CancelledError) else "provider_error")
+                            "cancelled" if isinstance(error, asyncio.CancelledError) else
+                            "provider_timeout" if isinstance(error, ModelProviderTimeout) else "provider_error")
         trace.usage_source = "reservation"
         trace.finished_at = datetime.now(UTC)
         await _store(scope, trace)
+        if (isinstance(error, Exception) and scope is not None and scope.store is not None
+                and trace.error_code in {"provider_error", "provider_timeout"}):
+            # Exceptions never cross the API boundary here. Only a typed
+            # internal marker may authorize a later same-owner trace update.
+            try:
+                setattr(error, _FAILED_ATTEMPT_ATTRIBUTE, _FailedModelAttempt(scope, trace))
+            except (AttributeError, TypeError):
+                # Preserve immutable third-party exceptions; compatibility
+                # retries without an attachable marker still emit safe logs.
+                logger.warning("Model failure does not support retry trace binding error_type=%s", type(error).__name__)
         raise
     trace.timings.provider_call_ms = (time.perf_counter() - phase_started) * 1000
     phase_started = time.perf_counter()
     usage = _usage(message)
+    cache_usage = TokenUsageService().extract_cache_usage(message)
+    trace.cache_read_tokens = cache_usage["cache_read_tokens"]
+    trace.cache_write_tokens = cache_usage["cache_write_tokens"]
     if scope is not None:
         scope.ledger.settle(reserved, usage["total_tokens"] if usage else None)
         trace.task_tokens_charged = scope.ledger.charged_tokens
@@ -332,7 +458,32 @@ async def invoke_model_request(*, messages, tool_schemas=(), response_format=Non
     else:
         trace.usage_source = "reservation"
     trace.timings.usage_settlement_ms = (time.perf_counter() - phase_started) * 1000
-    trace.status = "succeeded"
+    validation_error = None
+    protocol_error = None
+    try:
+        validate_model_response(message)
+    except ModelResponseValidationError as error:
+        protocol_error = error
+    validator = _RESPONSE_VALIDATOR.get()
+    if validator is not None and (protocol_error is None or isinstance(protocol_error, ModelEmptyResponseError)):
+        try:
+            validator(message)
+        except Exception as error:
+            validation_error = error
+    # Preserve the established JSON syntax-recovery contract for empty JSON
+    # responses. A schema-only failure cannot hide an actual empty response;
+    # refusal/non-normal finishes must not become retryable JSON failures.
+    if protocol_error is not None and not (
+        isinstance(protocol_error, ModelEmptyResponseError)
+        and isinstance(validation_error, json.JSONDecodeError)
+    ):
+        validation_error = protocol_error
+    invalid_json = isinstance(validation_error, json.JSONDecodeError)
+    invalid_response = isinstance(validation_error, ModelResponseValidationError)
+    trace.status = "failed" if invalid_json or invalid_response else "succeeded"
+    # Keep the durable enum readable by earlier builds. The internal exception
+    # type distinguishes empty/incomplete responses without storing payloads.
+    trace.error_code = "invalid_json" if invalid_json else "provider_error" if invalid_response else None
     trace.finished_at = datetime.now(UTC)
     await _store(scope, trace)
     if durable_settlement_failed:
@@ -350,5 +501,12 @@ async def invoke_model_request(*, messages, tool_schemas=(), response_format=Non
             logger.warning("Model usage reporting unavailable error_type=%s", type(error).__name__)
         message.additional_kwargs[USAGE_RECORDED_KEY] = True
     logger.info("model_request role=%s provider=%s input_estimate=%d output_reserve=%d compacted=%d usage_source=%s",
-                role, trace.provider, trace.input_tokens_after, max_output_tokens, len(trace.compactions), trace.usage_source)
+                role, trace.provider, trace.input_tokens_after, output_reservation, len(trace.compactions), trace.usage_source)
+    if validation_error is not None:
+        if (invalid_json or invalid_response) and scope is not None and scope.store is not None:
+            # The host parser runs while the exact driver's owner and trace
+            # are still available. Public/model-supplied metadata can never
+            # bind an unrelated successful request to this protocol retry.
+            setattr(validation_error, _FAILED_ATTEMPT_ATTRIBUTE, _FailedModelAttempt(scope, trace))
+        raise validation_error
     return message

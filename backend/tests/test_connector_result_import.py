@@ -1,4 +1,3 @@
-from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 import pytest
@@ -28,27 +27,30 @@ def runtime(monkeypatch):
     repository=SimpleNamespace(find_owned_by_id_and_user_id=AsyncMock(return_value=SimpleNamespace(status='completed')),
         get_events=AsyncMock(return_value=[event()]), upsert_connector_file=AsyncMock())
     monkeypatch.setattr('app.infrastructure.repositories.mongo_session_repository.MongoSessionRepository',lambda:repository)
-    info=SimpleNamespace(file_id='file1', filename='catalog.csv', size=123, content_type='text/csv', upload_date=None)
-    files=SimpleNamespace(upload_file=AsyncMock(return_value=info), download_file=AsyncMock(return_value=(BytesIO(b'csv'),info)))
+    info=SimpleNamespace(file_id='file1', user_id='owner', filename='catalog.csv', size=123, content_type='text/csv', upload_date=None)
+    files=SimpleNamespace(upload_file=AsyncMock(return_value=info), get_file_info=AsyncMock(return_value=info),
+        download_file=AsyncMock(side_effect=AssertionError('Import must not download an existing object')))
     monkeypatch.setattr('app.application.services.file_service.FileService',lambda **kwargs:files)
     monkeypatch.setattr('app.infrastructure.external.file.factory.get_file_storage',lambda:None)
-    sandbox=SimpleNamespace(file_upload=AsyncMock(return_value=SimpleNamespace(success=True)))
-    agent=SimpleNamespace(ensure_interactive_sandbox=AsyncMock(return_value=(None,sandbox)))
+    sandbox=SimpleNamespace(file_upload=AsyncMock(side_effect=AssertionError('Import must not copy files into a sandbox')))
+    agent=SimpleNamespace(ensure_interactive_sandbox=AsyncMock(side_effect=AssertionError('Import must not allocate a sandbox')))
+    monkeypatch.setattr('app.application.services.agent_service.AgentService.ensure_interactive_sandbox', agent.ensure_interactive_sandbox)
+    monkeypatch.setattr('app.infrastructure.external.sandbox.docker_sandbox.DockerSandbox.file_upload', sandbox.file_upload)
     return repository,files,sandbox,agent
 
 
 @pytest.mark.asyncio
-async def test_import_catalog_and_only_confirm_sandbox_success(runtime):
+async def test_import_catalog_keeps_only_owned_object_reference(runtime):
     repo,files,sandbox,agent=runtime
     request=ImportSelection(tool_call_id='call-1',resource_ids=['GSE123'],mode='catalog')
-    result=await import_selection(request,('owner','session'),agent,None)
+    result=await import_selection(request,('owner','session'),None)
     assert result.data['files'][0]['file_id']=='file1'
-    assert sandbox.file_upload.call_args.args[1]=='/home/ubuntu/upload/catalog.csv'
     assert repo.upsert_connector_file.await_count==1
-    sandbox.file_upload.return_value.success=False
-    result=await import_selection(request,('owner','session'),agent,None)
-    assert result.data['files']==[] and result.data['failures']
-    assert repo.upsert_connector_file.await_count==1
+    files.get_file_info.assert_awaited_once_with('file1', 'owner')
+    assert repo.upsert_connector_file.call_args.args[2].file_path is None
+    files.download_file.assert_not_awaited()
+    agent.ensure_interactive_sandbox.assert_not_awaited()
+    sandbox.file_upload.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -56,7 +58,7 @@ async def test_import_catalog_and_only_confirm_sandbox_success(runtime):
 async def test_reject_unsupported_download_or_forged_selection(runtime,mode,ids):
     repo,files,sandbox,agent=runtime
     with pytest.raises(HTTPException) as err:
-        await import_selection(ImportSelection(tool_call_id='call-1',resource_ids=ids,mode=mode),('owner','session'),agent,None)
+        await import_selection(ImportSelection(tool_call_id='call-1',resource_ids=ids,mode=mode),('owner','session'),None)
     assert err.value.status_code==400
     agent.ensure_interactive_sandbox.assert_not_awaited()
 
@@ -67,7 +69,7 @@ async def test_reject_nonowner_and_running_task(runtime,session,code):
     repo,files,sandbox,agent=runtime
     repo.find_owned_by_id_and_user_id.return_value=session
     with pytest.raises(HTTPException) as err:
-        await import_selection(ImportSelection(tool_call_id='call-1',resource_ids=['GSE123'],mode='catalog'),('owner','session'),agent,None)
+        await import_selection(ImportSelection(tool_call_id='call-1',resource_ids=['GSE123'],mode='catalog'),('owner','session'),None)
     assert err.value.status_code==code
     agent.ensure_interactive_sandbox.assert_not_awaited()
 
@@ -83,7 +85,31 @@ async def test_download_dispatches_saved_identifier_and_imports_archive(runtime)
     info.filename='GCF_000009045.1_genomic.zip'
     service=SimpleNamespace(call=AsyncMock(return_value=SimpleNamespace(files=[info])))
     result=await import_selection(ImportSelection(tool_call_id='call-1',resource_ids=['GCF_000009045.1'],mode='download'),
-        ('owner','session'),agent,service)
+        ('owner','session'),service)
     service.call.assert_awaited_once_with('owner','session','ncbi-datasets-v2','acquire',{'accession':'GCF_000009045.1'})
     assert result.data['files'][0]['filename'].endswith('.zip')
-    assert sandbox.file_upload.call_args.args[1].endswith('.zip')
+    files.download_file.assert_not_awaited()
+    agent.ensure_interactive_sandbox.assert_not_awaited()
+    sandbox.file_upload.assert_not_awaited()
+    assert repo.upsert_connector_file.call_args.args[2].file_path is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['missing', 'wrong-owner', 'wrong-file'])
+async def test_import_rejects_unowned_or_mismatched_object_reference(runtime, case):
+    repo,files,sandbox,agent=runtime
+    info=files.get_file_info.return_value
+    if case == 'missing':
+        files.get_file_info.return_value=None
+    elif case == 'wrong-owner':
+        info.user_id='another-owner'
+    else:
+        files.get_file_info.return_value=SimpleNamespace(**{**vars(info), 'file_id':'another-file'})
+    with pytest.raises(HTTPException) as error:
+        await import_selection(ImportSelection(tool_call_id='call-1',resource_ids=['GSE123'],mode='catalog'),
+            ('owner','session'),None)
+    assert error.value.status_code == 403
+    repo.upsert_connector_file.assert_not_awaited()
+    files.download_file.assert_not_awaited()
+    agent.ensure_interactive_sandbox.assert_not_awaited()
+    sandbox.file_upload.assert_not_awaited()

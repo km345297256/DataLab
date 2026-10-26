@@ -32,7 +32,6 @@ from app.domain.models.execution_node import (
     SandboxAllocationStatus,
 )
 from app.domain.models.dataset import DataCenterDataset, DatasetFile, DatasetLocation
-from app.domain.models.data_product import DataProduct
 from app.domain.models.execution_environment import (
     CordisCatalogIdentity,
     ExecutionEnvironmentSnapshot,
@@ -83,6 +82,7 @@ class UserDocument(BaseDocument[User], id_field="user_id", domain_model_class=Us
     fullname: str
     email: str  # Now required field for login
     password_hash: Optional[str] = None
+    auth_version: int = Field(default=0, ge=0)
     role: UserRole = UserRole.USER
     is_active: bool = True
     registration_status: RegistrationStatus = RegistrationStatus.APPROVED
@@ -96,8 +96,8 @@ class UserDocument(BaseDocument[User], id_field="user_id", domain_model_class=Us
     installed_skill_ids: List[str] = Field(default_factory=list)
     installed_mcp_names: List[str] = Field(default_factory=list)
     installed_renderer_ids: List[str] = Field(default_factory=list)
-    created_at: datetime = datetime.now(timezone.utc)
-    updated_at: datetime = datetime.now(timezone.utc)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_login_at: Optional[datetime] = None
 
     class Settings:
@@ -279,6 +279,8 @@ class TokenUsageDocument(BaseDocument[TokenUsageRecord], id_field="usage_id", do
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache_read_tokens: int | None = Field(default=None, ge=0, strict=True)
+    cache_write_tokens: int | None = Field(default=None, ge=0, strict=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     class Settings:
@@ -417,35 +419,6 @@ class DataCenterDatasetDocument(Document):
         ]
 
 
-class DataProductDocument(Document):
-    product_id: str
-    dataset_id: str
-    source_session_id: str
-    name: str
-    description: str = ""
-    generation_method: str = "agent_tool"
-    created_by: str
-    owner_id: str | None = None
-    version: int = 1
-    files: List[Dict[str, Any]] = Field(default_factory=list)
-    directories: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-    def to_domain(self) -> DataProduct:
-        return DataProduct.model_validate(self.model_dump(exclude={"id"}))
-
-    class Settings:
-        name = "data_products"
-        indexes = [
-            IndexModel([("product_id", ASCENDING)], unique=True),
-            IndexModel([("dataset_id", ASCENDING), ("created_at", DESCENDING)]),
-            IndexModel([("source_session_id", ASCENDING)]),
-            IndexModel([("created_by", ASCENDING), ("updated_at", DESCENDING)]),
-        ]
-
-
 class TemporaryDatasetDocument(Document):
     """Owner-scoped setup submission kept outside the public catalog."""
 
@@ -562,6 +535,7 @@ class SessionDocument(BaseDocument[Session], id_field="session_id", domain_model
     llm_overrides: Optional[Dict] = None
     dataset_ids: List[str] = Field(default_factory=list)
     sandbox_dataset_ids: List[str] = Field(default_factory=list)
+    sandbox_input_signature: Optional[str] = None
     title: Optional[str] = None
     title_manually_set: bool = False
     unread_message_count: int = 0
@@ -660,6 +634,7 @@ class SessionEventDocument(Document):
     # by the history/SSE projections. Legacy events omit it entirely.
     input_admission: Optional[Dict[str, Any]] = None
     input_active_session: Optional[str] = None
+    program_method_evidence: Optional[Dict[str, Any]] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     class Settings:
@@ -884,7 +859,6 @@ class AgentProfileDocument(BaseDocument[AgentProfile], id_field="profile_id", do
             IndexModel([("workspace_id", ASCENDING)]),
             IndexModel([("scope", ASCENDING), ("name", ASCENDING)]),
         ]
-
 
 
 class ModelConfigurationDocument(BaseDocument[ModelConfiguration], id_field="model_config_id", domain_model_class=ModelConfiguration):

@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Any, Optional
 
-from app.domain.models.user import User, UserRole
+from app.domain.models.user import RegistrationStatus, User, UserRole
 from app.domain.models.workspace import WorkspaceRole
 from app.infrastructure.models.documents import WorkspaceDocument, WorkspaceMemberDocument
 from app.domain.models.workspace import personal_workspace_id
@@ -54,8 +54,10 @@ class PermissionService:
         return await self.ensure_personal_workspace(user)
 
     async def can(self, user: User, action: str, resource: Any = None, workspace_id: Optional[str] = None) -> bool:
-        if user.role == UserRole.ADMIN:
-            return True
+        if not user.is_active or user.registration_status != RegistrationStatus.APPROVED:
+            return False
+        if action not in {"read", "use", "write", "delete", "manage"}:
+            return False
 
         if resource is not None:
             scope = getattr(resource, "scope", None)
@@ -65,11 +67,15 @@ class PermissionService:
             if owner_user_id == user.id:
                 return True
             if scope == ResourceScope.GLOBAL or scope == "global":
-                return action in {"read", "use"}
+                return user.role == UserRole.ADMIN or action in {"read", "use"}
             if scope in {ResourceScope.PRIVATE, ResourceScope.USER, "private", "user"}:
                 return owner_user_id == user.id
             if scope in {ResourceScope.WORKSPACE, ResourceScope.SHARED, "workspace", "shared"}:
                 workspace_id = resource_workspace_id or workspace_id
+            else:
+                # An unknown resource scope cannot inherit permission from a
+                # caller-supplied workspace or an installation-wide admin role.
+                return False
 
         if not workspace_id:
             return False
@@ -85,10 +91,10 @@ class PermissionService:
         return action in permissions
 
     async def require(self, user: User, action: str, resource: Any = None, workspace_id: Optional[str] = None) -> None:
-        from app.application.errors.exceptions import UnauthorizedError
+        from app.application.errors.exceptions import ForbiddenError
 
         if not await self.can(user, action, resource, workspace_id):
-            raise UnauthorizedError("Not authorized")
+            raise ForbiddenError("Not authorized")
 
 
 def get_permission_service() -> PermissionService:

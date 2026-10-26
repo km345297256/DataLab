@@ -9,6 +9,11 @@ from app.domain.models.session_history import SessionHistoryPage
 class SessionRepository(Protocol):
     """Repository interface for Session aggregate"""
 
+    async def get_successful_program_sources(self, session_id: str, user_id: str,
+                                             event_sequences: list[int]) -> list[dict]:
+        """Private host-verified method evidence for explicitly selected events."""
+        ...
+
     async def save_analysis_checkpoint(self, session_id: str, checkpoint: dict) -> None: ...
     async def get_analysis_checkpoint(self, session_id: str, checkpoint_id: str) -> dict | None: ...
     async def claim_analysis_checkpoint(self, session_id: str, checkpoint_id: str,
@@ -26,6 +31,24 @@ class SessionRepository(Protocol):
 
     async def save(self, session: Session) -> None:
         """Save or update a session"""
+        ...
+
+    async def compare_and_set_task_id(
+        self, session_id: str, *, expected_task_id: str | None,
+        task_id: str | None, dataset_ids: list[str] | None = None,
+    ) -> bool:
+        """Publish/rollback only the task pointer still owned by the caller.
+
+        Publication may also persist the effective dataset selection. Rollback
+        leaves all other session fields, including that selection, untouched.
+        """
+        ...
+
+    async def compare_and_clear_sandbox(
+        self, session_id: str, *, expected_sandbox_id: str,
+        expected_task_id: str | None,
+    ) -> bool:
+        """Clear only a failed bootstrap's still-owned sandbox association."""
         ...
 
     async def find_by_id(self, session_id: str) -> Optional[Session]:
@@ -102,6 +125,10 @@ class SessionRepository(Protocol):
 
     async def get_events(self, session_id: str) -> List[AgentEvent]:
         """Get all events for a session"""
+        ...
+
+    async def get_execution_history(self, session_id: str, *, before_seq: int):
+        """Private rebuildable execution projection strictly before an input."""
         ...
 
     async def add_execution_snapshot(

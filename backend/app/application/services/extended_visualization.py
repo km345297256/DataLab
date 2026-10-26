@@ -26,6 +26,7 @@ MAX_INPUT = 64 * 1024 * 1024
 MAX_OUTPUT = 8 * 1024 * 1024
 _SLOTS = asyncio.Semaphore(2)
 _KINDS = {
+    "svg": {"image"},
     "mysql-sdi": {"tree"}, "sst-records": {"tree"},
     "sql-dump": {"tree", "table"}, "pg-dump": {"tree"},
     "bson": {"tree", "table"}, "redis-rdb": {"tree", "table"},
@@ -43,6 +44,7 @@ _KINDS = {
     "geoformat": {"map"}, "czi": {"tree", "image"}, "mca": {"series"},
 }
 _OPTIONS = {
+    "svg": set(),
     "mysql-sdi": set(), "sst-records": set(),
     "sql-dump": {"dialect", "table", "columns", "row_offset", "row_limit"}, "pg-dump": set(),
     "bson": {"group_id", "offset", "limit"}, "redis-rdb": {"group_id", "offset", "limit"},
@@ -69,6 +71,7 @@ _DEFAULT_KIND.update({"mysql-sdi": "tree", "sst-records": "tree"})
 _DEFAULT_KIND.update({reader: "tree" for reader in ("sql-dump", "pg-dump", "bson", "redis-rdb")})
 _DEFAULT_KIND.update({"mass-spectrum": "tree", "diffraction": "tree"})
 _DEFAULT_KIND.update({"gro-trajectory": "tree", "simulation-mesh": "tree"})
+_DEFAULT_KIND["svg"] = "image"
 _KINDS.update(migration.KINDS)
 _DEFAULT_KIND.update({reader: "tree" for reader in migration.KINDS})
 
@@ -150,6 +153,9 @@ def validate_options(reader: str, options: dict) -> None:
 
 
 def validate_payload(payload: Any, reader: str, kind: str, limit: int) -> dict:
+    if reader == "svg":
+        from app.application.services.svg_visualization import validate_svg_preview_payload
+        return validate_svg_preview_payload(payload, kind=kind, limit=limit)
     if reader in {"sql-dump", "pg-dump", "bson", "redis-rdb", "mysql-sdi", "sst-records"}:
         from app.application.services.database_file_visualization import validate_payload as validate_database_file
         return validate_database_file(payload, reader, kind, limit=limit)
@@ -200,6 +206,8 @@ def validate_payload(payload: Any, reader: str, kind: str, limit: int) -> dict:
         elif isinstance(value, float):
             if not math.isfinite(value):
                 raise ValueError("Nonfinite preview")
+        elif type(value) is int and abs(value) > 2**53 - 1:
+            raise ValueError("Integer preview would lose browser precision")
         elif value is not None and type(value) not in {bool, int}:
             raise ValueError("Unsupported preview value")
     visit({key: value for key, value in payload.items() if key != "data_base64"})
@@ -320,6 +328,23 @@ def validate_payload(payload: Any, reader: str, kind: str, limit: int) -> dict:
 def validate_requested_selection(result: dict, reader: str, kind: str, options: dict, format: str, size: int):
     """A well-formed result must still belong to the requested resource/window."""
     meta = result["metadata"]
+    if reader == "tabular" and "table" in result:
+        table = result["table"]
+        row, column = table.get("row_offset"), table.get("column_offset")
+        total_rows, total_columns = table.get("total_rows"), table.get("total_columns")
+        width, height = len(table["columns"]), len(table["rows"])
+        if (type(row) is not int or not 0 <= row <= 100000 or row != options.get("row_offset", 0)
+                or type(column) is not int or not 0 <= column <= 16383 or column != options.get("column_offset", 0)
+                or type(total_columns) is not int or not 1 <= total_columns <= (16384 if format in {"csv", "tsv"} else 2**31 - 1)
+                or width != min(100, total_columns - column) or width < 1
+                or any(len(values) != width for values in table["rows"])
+                or (total_rows is None and (format not in {"csv", "tsv"} or height != 200))
+                or (total_rows is not None and (type(total_rows) is not int or not row + height <= total_rows <= 2**53 - 1))
+                or (row > 0 and not height)):
+            raise ValueError("Tabular window does not match the requested range")
+        partial = row > 0 or column > 0 or total_rows is None or row + height < total_rows or column + width < total_columns
+        if result["sampled"] != partial:
+            raise ValueError("Tabular window coverage does not match its diagnostics")
     if reader in {"sql-dump", "pg-dump", "bson", "redis-rdb", "mysql-sdi", "sst-records"}:
         from app.application.services.database_file_visualization import validate_payload as validate_database_file
         validate_database_file(result, reader, kind, options=options, fmt=format, size=size)
@@ -464,6 +489,8 @@ async def extended_visualization(file_service, catalog, image: str | None, file_
         reader_limit = 16 * 1024 * 1024
     if reader in migration.INPUT_LIMITS:
         reader_limit = migration.INPUT_LIMITS[reader]
+    if reader == "svg":
+        reader_limit = 8 * 1024 * 1024
     if type(info.size) is not int or not 0 < info.size <= min(reader_limit, plugin.limits.max_input_bytes):
         raise ScientificPreviewRejected("文件超过此交互式插件的安全上限，请使用分析工具处理。")
     version = preview_version(info)

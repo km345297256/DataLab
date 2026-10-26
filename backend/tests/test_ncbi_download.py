@@ -115,8 +115,8 @@ def test_download_progress_and_failures_are_explained_without_upstream_content()
 
 
 @pytest.mark.asyncio
-async def test_agent_import_reuses_owned_download_and_returns_deliverable_path(monkeypatch):
-    from app.domain.models.tool_result import ToolResult
+@pytest.mark.parametrize('case', ['valid', 'without-sandbox', 'missing', 'wrong-owner', 'wrong-id', 'wrong-size'])
+async def test_agent_acquisition_returns_only_verified_owned_object_references(monkeypatch, case):
     from app.domain.services.tools.data_discovery import DataDiscoveryToolkit
     from app.application.services.file_service import FileService
     from app.infrastructure.repositories.mongo_session_repository import MongoSessionRepository
@@ -127,19 +127,34 @@ async def test_agent_import_reuses_owned_download_and_returns_deliverable_path(m
         size=len(content), sha256=digest, source_url='https://api.ncbi.nlm.nih.gov/datasets/v2/download')
     upstream = SimpleNamespace(acquire=AsyncMock(return_value=receipt))
     info = FileInfo(file_id=receipt.file_id, filename=receipt.filename, size=len(content), user_id='owner')
-    async def download(self, identity, owner):
-        assert (identity, owner) == ('owned-file', 'owner')
-        return io.BytesIO(content), info
+    if case == 'wrong-owner':
+        info.user_id = 'another-owner'
+    elif case == 'wrong-id':
+        info.file_id = 'another-object'
+    elif case == 'wrong-size':
+        info.size += 1
     monkeypatch.setattr(factory, 'get_file_storage', lambda: object())
+    lookup = AsyncMock(return_value=None if case == 'missing' else info)
+    download = AsyncMock(side_effect=AssertionError('Acquisition must not download a stored object'))
+    monkeypatch.setattr(FileService, 'get_file_info', lookup)
     monkeypatch.setattr(FileService, 'download_file', download)
     saved = AsyncMock()
     monkeypatch.setattr(MongoSessionRepository, 'upsert_connector_file', saved)
-    sandbox = SimpleNamespace(file_upload=AsyncMock(return_value=ToolResult(success=True)))
-    toolkit = DataDiscoveryToolkit(user_id='owner', session_id='session', service=upstream, sandbox=sandbox)
+    sandbox = SimpleNamespace(file_upload=AsyncMock(side_effect=AssertionError('Acquisition must not copy files into a sandbox')))
+    toolkit = DataDiscoveryToolkit(user_id='owner', session_id='session', service=upstream,
+        sandbox=None if case == 'without-sandbox' else sandbox)
     result = await toolkit.get_tool('data_connector_call')._arun(
         connector_id='ncbi-datasets-v2', operation='acquire', arguments={'accession': ACCESSION})
-    assert result.success and result.data['files_downloaded']
-    assert result.data['attachments'] == [f'/home/ubuntu/output/{ACCESSION}_genomic.zip']
-    saved.assert_awaited_once()
-    assert info.metadata['artifact_sha256'] == digest
-    assert info.file_id == 'owned-file' and info.file_path.endswith('.zip')
+    lookup.assert_awaited_once_with('owned-file', 'owner')
+    download.assert_not_awaited()
+    sandbox.file_upload.assert_not_awaited()
+    assert 'attachments' not in result.data
+    if case in {'valid', 'without-sandbox'}:
+        assert result.success and result.data['files_downloaded']
+        assert result.data['files'][0]['file_id'] == 'owned-file'
+        saved.assert_awaited_once()
+        assert info.file_path is None
+        assert 'artifact_sha256' not in (info.metadata or {})
+    else:
+        assert not result.success and result.data['reason'] == 'download_integrity_failed'
+        saved.assert_not_awaited()

@@ -301,4 +301,4 @@ Cordis 负责受信插件的注册、生命周期、校验和不可变目录快�
 - 本地登记保留用户指定的默认目录；旧临时 `tds_` 提交的 TTL/配额语义不变。归档不删除原始数据。
 - 真实文件验证推动了 CSV 分隔符、数值误判日期、TIFF 发现与预览范围、XRDML 坐标与有限值检查等兼容修复，未变更 AgentLoop 或 SSE。
 
-完整清单、许可说明与接口见：[数据集管理文档](dataset-management.md)。
+以上为原 DataSeek 的历史交付记录；DataLab 已移除机构数据目录、登记及专用探查功能。当前范围见 [DataLab 架构说明](docs/architecture-scope.md)。

@@ -11,6 +11,8 @@ import json
 from app.domain.models.search import SearchResultItem
 from app.domain.models.analysis_job import AnalysisJobView
 from app.domain.models.tool_approval import ToolApprovalView
+from app.domain.models.program_attempt import ProgramAttemptView
+from app.domain.models.skill_creation_progress import SkillCreationProgressView
 
 MAX_EVENT_SEQUENCE = 9_007_199_254_740_991
 
@@ -122,6 +124,10 @@ ToolContent = Union[
 
 class ToolEvent(BaseEvent):
     """Tool related events"""
+    # Attached only by the host after a verified successful program execution.
+    # Never part of history/SSE/model tool output; stored separately for private
+    # method extraction from this exact completed analysis turn.
+    _program_method_evidence: Optional[Dict[str, Any]] = PrivateAttr(default=None)
     type: Literal["tool"] = "tool"
     tool_call_id: str
     tool_name: str
@@ -134,6 +140,12 @@ class ToolEvent(BaseEvent):
     presentation: Optional[Dict[str, Any]] = None
     analysis_job: Optional[AnalysisJobView] = None
     tool_approval: Optional[ToolApprovalView] = None
+    # First-party execution ledger projection, not derived from tool text.
+    program_attempt: Optional[ProgramAttemptView] = None
+    skill_creation_progress: Optional[SkillCreationProgressView] = Field(default=None, exclude_if=lambda value: value is None)
+    # Host dispatcher only: a rejected invocation never reached the tool.
+    # Display metadata, not permission to replay a previously unknown call.
+    dispatch_status: Optional[Literal["not_started"]] = None
 
 class TitleEvent(BaseEvent):
     """Title event"""

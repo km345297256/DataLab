@@ -17,6 +17,7 @@ import { computed, onMounted, onScopeDispose, ref } from 'vue';
 import type { FileInfo } from '../../api/file';
 import type { VisualizationPlugin } from '../contract';
 import { apiClient, BASE_URL } from '../../api/client';
+import { authenticatedApiFetch } from '../../utils/authenticatedFetch';
 import { usePreviewLoad } from '../../composables/usePreviewLoad';
 import { readVisualizationResult, visualizationJobsPath } from '../runtime';
 const props = defineProps<{ file: FileInfo; plugin: VisualizationPlugin }>();
@@ -34,7 +35,7 @@ async function refresh() {
     if (!job.value) { const response = await apiClient.get(path, { signal: load.signal }); load.assertCurrent(); job.value = response.data.data[0]; }
     else { const response = await apiClient.get(`${path}/${job.value.job_id}`, { signal: load.signal }); load.assertCurrent(); job.value = response.data.data; }
     if (job.value?.status === 'succeeded') {
-      const response = await fetch(`${BASE_URL}${path}/${job.value.job_id}/result`, { signal: load.signal, credentials: 'same-origin' });
+      const response = await authenticatedApiFetch(BASE_URL, `${BASE_URL}${path}/${job.value.job_id}/result`, { signal: load.signal, credentials: 'same-origin' });
       if (!response.ok) { await response.body?.cancel(); throw new Error('质控结果已过期、文件已变化或插件已停用。'); }
       const result = await readVisualizationResult(response, props.plugin, load.signal); load.assertCurrent();
       const data = result.payload;
@@ -65,6 +66,6 @@ async function cancel() {
 onMounted(refresh);
 onScopeDispose(() => {
   if (timer) clearTimeout(timer);
-  if (active.value && job.value) void fetch(`${BASE_URL}${path}/${job.value.job_id}/cancel`, { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'X-Analysis-Job-Action': 'cancel' } }).catch(() => undefined);
+  if (active.value && job.value) void authenticatedApiFetch(BASE_URL, `${BASE_URL}${path}/${job.value.job_id}/cancel`, { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'X-Analysis-Job-Action': 'cancel' } }).catch(() => undefined);
 });
 </script>

@@ -3,6 +3,8 @@ from typing import List, Optional, Union
 from app.domain.services.tools.base import BaseToolkit
 from app.domain.models.tool_result import ToolResult
 from langchain.tools import tool
+from pydantic import ValidationError
+from app.domain.models.request_intent import ClarificationQuestion
 
 
 class MessageToolkit(BaseToolkit):
@@ -33,15 +35,23 @@ class MessageToolkit(BaseToolkit):
         self,
         text: str,
         attachments: Optional[Union[str, List[str]]] = None,
-        suggest_user_takeover: Optional[str] = None
+        suggest_user_takeover: Optional[str] = None,
+        reason: Optional[str] = None,
+        options: Optional[List[str]] = None,
     ) -> ToolResult:
-        """Ask user a question and wait for response. Use only when execution is blocked by missing required information, explicit user confirmation, authentication, verification codes, sensitive actions, or browser takeover. Do not use for optional preferences, non-blocking clarification, progress updates, or cases where you can make a reasonable assumption and continue.
+        """Ask user a question and wait for response. Use only when execution is blocked by important ambiguity, missing required information, explicit user confirmation, authentication, verification codes, sensitive actions, or browser takeover. First inspect the selected data and available evidence. If plausible interpretations would materially change the objective, scope, statistical meaning or result and evidence cannot resolve them, ask instead of guessing. Do not use for optional preferences, non-blocking details that tools can verify, or progress updates.
         
         Args:
             text: Question text to present to user
             attachments: (Optional) List of question-related files or reference materials
             suggest_user_takeover: (Optional) Suggested operation for user takeover (enum: "none" or "browser")
+            reason: (Optional) Brief explanation of why the answer changes the analysis
+            options: (Optional) Two to four concrete alternatives, or omit for a free-text answer
         """
             
-        # Return success result, actual UI interaction logic implemented by caller
+        try:
+            ClarificationQuestion(id="question", question=text, reason=reason or "", options=options or [])
+        except ValidationError:
+            return ToolResult(success=False, message="Question or options are invalid", data={"error_code": "invalid_user_question"})
+        # The execution boundary persists the question before pausing.
         return ToolResult(success=True)

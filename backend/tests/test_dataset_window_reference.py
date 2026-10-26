@@ -19,7 +19,7 @@ from app.application.services.file_service import FileService
 from app.application.services.visualization_catalog import VisualizationDisabledError
 from app.domain.models.dataset import DatasetFile, DatasetStorageType
 from app.infrastructure.external.file.datasetfile import DatasetPreviewFileStorage
-from app.interfaces.schemas.dataset import dataset_response
+from app.domain.services.dataset_file_paths import public_dataset_file_path
 from test_dataset_file_preview import env, prepare  # noqa: F401: shared fixture
 from test_window_visualization import payload
 
@@ -68,9 +68,9 @@ def configure(env, extension, *, host=True):
         }
 
     env.service.reader = reader
-    public = dataset_response(env.datasets.dataset)
-    assert public.locations == [] and public.files[0].path == path
-    return public.files[0].path
+    logical_path = public_dataset_file_path(inventory_path, env.datasets.dataset.locations)
+    assert str(logical_path) == path
+    return str(logical_path)
 
 
 def data_reads(env):

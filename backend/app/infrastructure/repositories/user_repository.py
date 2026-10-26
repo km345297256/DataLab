@@ -1,4 +1,8 @@
 from typing import List, Optional
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+import re
+from pymongo import ReturnDocument
 from beanie import WriteRules
 from app.domain.models.user import User
 from app.domain.repositories.user_repository import UserRepository
@@ -52,7 +56,7 @@ class MongoUserRepository(UserRepository):
         """Get user by email"""
         logger.debug(f"Getting user by email: {email}")
         
-        user_doc = await UserDocument.find_one(UserDocument.email == email.lower())
+        user_doc = await UserDocument.find_one(UserDocument.email == email.strip().lower())
         if not user_doc:
             logger.debug(f"User not found: {email}")
             return None
@@ -60,24 +64,68 @@ class MongoUserRepository(UserRepository):
         return user_doc.to_domain()
     
     async def update_user(self, user: User) -> User:
-        """Update user information"""
-        logger.info(f"Updating user: {user.id}")
-        
-        # Find existing document
-        user_doc = await UserDocument.find_one(UserDocument.user_id == user.id)
-        if not user_doc:
-            raise ValueError(f"User not found: {user.id}")
-        
-        # Update document from domain model
-        user_doc.update_from_domain(user)
-        
-        # Save to database
-        await user_doc.save()
-        
-        # Convert back to domain model
-        result = user_doc.to_domain()
-        logger.info(f"User updated successfully: {result.id}")
-        return result
+        """Persist preferences without overwriting concurrent security changes."""
+        preference_fields = {"auto_enabled_skills", "installed_skill_ids", "installed_mcp_names", "installed_renderer_ids"}
+        return await self.patch_user(user.id, user.model_dump(include=preference_fields), expected_auth_version=user.auth_version)
+
+    async def patch_user(self, user_id, changes, *, expected_auth_version=None, revoke_sessions=False):
+        from app.application.errors.exceptions import ConflictError, NotFoundError
+        query = {"user_id": user_id}
+        if expected_auth_version == 0:
+            query["$or"] = [{"auth_version": 0}, {"auth_version": {"$exists": False}}]
+        elif expected_auth_version is not None:
+            query["auth_version"] = expected_auth_version
+        values = {**changes, "updated_at": datetime.now(UTC)}
+        update = {"$set": values}
+        if revoke_sessions:
+            update["$inc"] = {"auth_version": 1}
+        raw = await UserDocument.get_pymongo_collection().find_one_and_update(
+            query, update, return_document=ReturnDocument.AFTER,
+        )
+        if raw is None:
+            if not await self.get_user_by_id(user_id):
+                raise NotFoundError("User not found")
+            raise ConflictError("Account changed; refresh and try again")
+        return UserDocument.model_validate(raw).to_domain()
+
+    @asynccontextmanager
+    async def account_management_lock(self):
+        # Re-read the acting administrator inside this cross-worker lock. Two
+        # administrators cannot concurrently disable/demote each other and leave
+        # the installation without an active administrator.
+        from app.infrastructure.storage.redis import get_redis
+        from app.application.errors.exceptions import AppException
+        store = get_redis()
+        try:
+            await store.initialize()
+            lock = store.client.lock("auth:account-management", timeout=30, blocking_timeout=5)
+            acquired = await lock.acquire()
+        except Exception:
+            raise AppException(503, "Account management is temporarily unavailable", 503) from None
+        if not acquired:
+            raise AppException(503, "Account management is busy; try again", 503)
+        try:
+            yield
+        finally:
+            await lock.release()
+
+    async def search_users(self, *, query=None, role=None, status=None, limit=50, offset=0):
+        filters = []
+        if query and query.strip():
+            pattern = {"$regex": re.escape(query.strip()), "$options": "i"}
+            filters.append({"$or": [{field: pattern} for field in ("user_id", "fullname", "email")]})
+        if role:
+            filters.append({"role": role})
+        if status in {"approved", "active", "inactive"}:
+            filters.append({"$or": [{"registration_status": "approved"}, {"registration_status": {"$exists": False}}]})
+            if status in {"active", "inactive"}:
+                filters.append({"is_active": status == "active"})
+        elif status:
+            filters.append({"registration_status": status})
+        criteria = {"$and": filters} if filters else {}
+        total = await UserDocument.find(criteria).count()
+        docs = await UserDocument.find(criteria).sort("-created_at", "user_id").skip(offset).limit(limit).to_list()
+        return [doc.to_domain() for doc in docs], total
     
     async def delete_user(self, user_id: str) -> bool:
         """Delete user by ID"""
@@ -115,7 +163,7 @@ class MongoUserRepository(UserRepository):
         """Check if email exists"""
         logger.debug(f"Checking if email exists: {email}")
         
-        user_doc = await UserDocument.find_one(UserDocument.email == email.lower())
+        user_doc = await UserDocument.find_one(UserDocument.email == email.strip().lower())
         exists = user_doc is not None
         logger.debug(f"Email exists: {exists}")
-        return exists 
+        return exists

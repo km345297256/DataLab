@@ -49,3 +49,11 @@ class MongoDataCandidateRepository:
         await self.collection.replace_one(
             {"_id": key, "owner_id": owner, "session_id": session},
             {"_id": key, "owner_id": owner, "session_id": session, "payload": payload}, upsert=True)
+
+    async def list_acquisitions(self, owner: str, session: str) -> list[dict]:
+        """Materialized download receipts only; candidates/jobs are not files."""
+        prefix = self.prefix(owner, session, "acquired_package")
+        rows = self.collection.find({"owner_id": owner, "session_id": session,
+                                     "_id": {"$gte": prefix, "$lt": prefix[:-1] + ";"}},
+                                    {"payload": 1})
+        return [row["payload"] async for row in rows]

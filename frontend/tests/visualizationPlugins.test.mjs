@@ -1,3 +1,4 @@
+import { viewModules } from './helpers/viewModules.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
@@ -11,6 +12,8 @@ import { usePreviewLoad } from '../src/composables/usePreviewLoad.ts';
 import { VISUALIZATION_ADAPTERS } from '../src/visualizations/adapters.generated.ts';
 import * as contentProfile from '../src/visualizations/contentProfile.ts';
 import * as previewIdentity from '../src/visualizations/previewIdentity.ts';
+import * as selection from '../src/visualizations/selection.ts';
+import { ApiError, normalizeApiError } from '../src/utils/apiError.ts';
 
 const descriptor = (overrides = {}) => { const spec = VISUALIZATION_ADAPTERS[overrides.adapter || 'tiff'] || VISUALIZATION_ADAPTERS.tiff; return ({ contract_version: 2, id: 'tiff', version: '1.0.0', name: 'TIFF', description: 'image', extensions: ['tif', 'tiff'], filenames: [], view_kind: spec.view_kind, adapter: 'tiff', reader: spec.readers[0], capabilities: spec.capabilities, default_enabled: true, enabled: true, priority: 20, permissions: ['file:read'], limits: { max_input_bytes: 64 * 1024 * 1024, max_output_bytes: 512 * 1024 }, ...overrides }); };
 const catalogOf = (...plugins) => ({ engine: 'cordis', revision: 'rev1', plugins });
@@ -46,17 +49,44 @@ test('matching is deterministic, basename-scoped and never falls through to unre
   assert.equal(selectVisualization([descriptor({ extensions: ['fastq.gz'] })], 'sample.fastq.gz', null).id, 'tiff');
 });
 
+test('default preview preserves product order while skipping whole-file and share restrictions', () => {
+  const whole = descriptor({ id: 'map', priority: 100, limits: { max_input_bytes: 64, max_output_bytes: 1024 } });
+  const window = descriptor({ id: 'window', adapter: 'array-window', priority: 10, limits: { max_input_bytes: 16, max_output_bytes: 1024 } });
+  const page = descriptor({ id: 'page', adapter: 'csv', limits: { max_input_bytes: 8, max_output_bytes: 1024 } });
+  assert.equal(selection.preferredVisualization([whole, window], { size: 32 }, false).id, 'map', 'small files keep the established default');
+  assert.equal(selection.preferredVisualization([whole, window], { size: 1000 }, false).id, 'window', 'the window budget is not a source size limit');
+  assert.equal(selection.preferredVisualization([whole, page], { size: 1000 }, false).id, 'page');
+  assert.equal(selection.preferredVisualization([whole, window], { size: 1000 }, false, 'map').id, 'map', 'manual unavailable choices remain inspectable');
+  assert.match(selection.visualizationBlockedReason(whole, { size: 1000 }, false), /上限/);
+  const privateView = { ...whole, capabilities: { ...whole.capabilities, shared: false } };
+  const sharedView = { ...whole, id: 'shared', capabilities: { ...whole.capabilities, shared: true } };
+  assert.equal(selection.preferredVisualization([privateView, sharedView], { size: 32 }, true).id, 'shared');
+  assert.equal(selection.preferredVisualization([privateView, sharedView], { size: 32 }, true, 'map').id, 'map');
+  assert.match(selection.visualizationBlockedReason(privateView, { size: 32 }, true), /共享/);
+  assert.equal(selection.preferredVisualization([], { size: 32 }, false), null);
+});
+
+test('content profile recommendations cannot override source-size eligibility or explicit user choice', () => {
+  const tiff = descriptor({ limits: { max_input_bytes: 64, max_output_bytes: 1024 } });
+  const geo = descriptor({ id: 'geotiff', adapter: 'openlayers', limits: { max_input_bytes: 32, max_output_bytes: 1024 } });
+  const candidates = contentProfile.profileCandidates([tiff, geo], { container: 'tiff', traits: ['geotiff'] });
+  assert.equal(candidates[0].id, 'geotiff');
+  assert.equal(selection.preferredVisualization(candidates, { size: 40 }, false).id, 'tiff');
+  assert.equal(selection.preferredVisualization(candidates, { size: 20 }, false).id, 'geotiff');
+  assert.equal(selection.preferredVisualization(candidates, { size: 20 }, false, 'tiff').id, 'tiff');
+});
+
 test('every checked-in Cordis manifest is accepted by the frontend contract without reinterpretation', () => {
   const directory = new URL('../../plugin-host/visualizations/', import.meta.url);
   const plugins = readdirSync(directory).filter((name) => name.endsWith('.json')).map((name) => {
     const plugin = JSON.parse(readFileSync(new URL(name, directory), 'utf8'));
     return { ...plugin, enabled: plugin.default_enabled };
   });
-  assert.equal(plugins.length, 83);
+  assert.equal(plugins.length, 84);
   for (const [filename,id] of [['sample.ibd','viz-mysql-sdi'],['sample.sst','viz-sst-records'],['sample.ldb','viz-sst-records']]) {
     assert.equal(selectVisualization(plugins, filename)?.id, id);
   }
-  assert.equal(plugins.filter(plugin => plugin.contract_version === 2).length, 83);
+  assert.equal(plugins.filter(plugin => plugin.contract_version === 2).length, 84);
   assert.ok(plugins.every(plugin => !Object.hasOwn(plugin, 'data_kind') && !plugin.adapter.startsWith('v2-')));
   assert.deepEqual(parseVisualizationCatalog(catalogOf(...plugins)).plugins, plugins);
 });
@@ -151,6 +181,7 @@ test('TIFF dimensions and unpacked bytes are checked before any decompression', 
 });
 
 function compileSfc(path, dependencies, inlineTemplate = false) {
+  dependencies={...viewModules, '../composables/useTaskData': { useTaskData: () => ({ active: vue.ref(false), locked: vue.ref(true), sessionId: vue.ref() }) }, '../utils/eventBus': { eventBus: { emit() {} } }, ...dependencies};
   const descriptor = parse(source(path)).descriptor;
   const code = compileScript(descriptor, { id: 'visualization-test', inlineTemplate }).content;
   const js = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -172,7 +203,7 @@ function mountScientific(t, getData, plugin = ncSeries()) {
   });
   const props = vue.reactive({ file: file('a'), plugin });
   const scope = vue.effectScope();
-  const state = scope.run(() => component.setup(props, { expose() {} }));
+  const state = scope.run(() => component.setup(props, { expose() {}, emit() {} }));
   t.after(() => scope.stop());
   return { props, state, unmount: () => scope.stop() };
 }
@@ -218,6 +249,7 @@ test('plugin host actually unmounts old adapters on view switch, disable, file s
   t.after(() => { if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow; });
   const catalog = vue.ref(catalogOf(ncMap(), ncSeries()));
   const error = vue.ref('');
+  const stale = vue.ref(false);
   let confirmRefresh = async () => true;
   const instances = [];
   const Adapter = vue.defineComponent({ props: ['file', 'plugin'], setup(props) {
@@ -226,11 +258,12 @@ test('plugin host actually unmounts old adapters on view switch, disable, file s
   } });
   const Host = compileSfc('../src/visualizations/VisualizationHost.vue', {
     'vue-router': { useRoute: () => ({ path: '/chat/1' }), RouterLink: { render: () => vue.h('a') } },
-    './catalog': { useVisualizationCatalog: () => ({ catalog, error, loading: vue.ref(false), refresh: () => confirmRefresh() }) },
+    './catalog': { useVisualizationCatalog: () => ({ catalog, error, stale, loading: vue.ref(false), refresh: () => confirmRefresh() }) },
     './contract': { matchingVisualizations, selectVisualization, viewKindLabel: (value) => value },
     './adapters': { getVisualizationAdapter: () => Adapter },
     './runtime': { requestVisualization: async () => { throw new Error('Unexpected profile request'); } },
     './contentProfile': contentProfile,
+    './selection': selection,
     './previewIdentity': previewIdentity,
   }, true);
   const renderer = vue.createRenderer({
@@ -247,6 +280,13 @@ test('plugin host actually unmounts old adapters on view switch, disable, file s
   function find(node, type) { if (node.type === type) return node; for (const child of node.children ?? []) { const found = find(child, type); if (found) return found; } }
   catalog.value = structuredClone(vue.toRaw(catalog.value)); await flush();
   assert.equal(instances.length, 1, 'equivalent polling objects keep the same scope');
+  stale.value = true; await flush();
+  assert.equal(instances.length, 1, 'temporary directory outages keep the displayed reader scope');
+  assert.equal(instances[0].disposed, false);
+  function allText(node) { return [node.text ?? '', ...(node.children ?? []).map(allText)].join(' '); }
+  assert.match(allText(container), /已保留当前预览/);
+  stale.value = false; await flush();
+  assert.equal(instances.length, 1, 'an unchanged recovery does not discard zoom/slice state');
   let active = instances.at(-1);
   await find(container, 'button').props.onClick(); await flush();
   assert.equal(active.disposed, true, 'manual refresh explicitly reloads an unchanged file');
@@ -277,13 +317,62 @@ test('plugin host actually unmounts old adapters on view switch, disable, file s
 function catalogStore(api) {
   const code = ts.transpileModule(source('../src/visualizations/catalog.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const module = { exports: {} };
-  const dependencies = { vue, '../api/visualization': api, './previewIdentity': previewIdentity };
+  const dependencies = { vue, '../api/visualization': api, './previewIdentity': previewIdentity, '../utils/apiError': { ApiError } };
   new Function('require', 'module', 'exports', code)((id) => {
     assert.ok(id in dependencies, `Unexpected catalog dependency ${id}`);
     return dependencies[id];
   }, module, module.exports);
   return module.exports.useVisualizationCatalog();
 }
+
+test('host profiles an eligible alternative and keeps a manual view when the profile resolves', async t => {
+  const originalWindow = globalThis.window;
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  let app;
+  t.after(() => { app?.unmount(); if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow; });
+  const tooSmall = descriptor({ id: 'too-small', priority: 30, limits: { max_input_bytes: 16, max_output_bytes: 1024 } });
+  const available = descriptor({ id: 'available', limits: { max_input_bytes: 64, max_output_bytes: 1024 } });
+  const geo = descriptor({ id: 'geo', adapter: 'openlayers', priority: 10, limits: { max_input_bytes: 64, max_output_bytes: 1024 } });
+  const catalog = vue.ref(catalogOf(tooSmall, available, geo));
+  const pending = deferred(), calls = [], instances = [];
+  const Host = compileSfc('../src/visualizations/VisualizationHost.vue', {
+    'vue-router': { useRoute: () => ({ path: '/chat/1' }) },
+    './catalog': { useVisualizationCatalog: () => ({ catalog, error: vue.ref(''), stale: vue.ref(false), loading: vue.ref(false), refresh: async () => true }) },
+    './contract': { matchingVisualizations, viewKindLabel: value => value },
+    './adapters': { getVisualizationAdapter: () => vue.defineComponent({ props: ['plugin'], setup(props) { instances.push(props.plugin.id); return () => vue.h('canvas'); } }) },
+    './runtime': { requestVisualization: (...args) => { calls.push(args); return pending.promise; } },
+    './contentProfile': contentProfile,
+    './selection': selection,
+    './previewIdentity': previewIdentity,
+  }, true);
+  const renderer = vue.createRenderer({
+    createElement: type => ({ type, children: [], props: {} }), createText: text => ({ text }), createComment: text => ({ text }),
+    insert: (node, parent) => { parent.children ??= []; parent.children.push(node); node.parent = parent; },
+    remove: node => { if (node.parent) node.parent.children = node.parent.children.filter(value => value !== node); },
+    setElementText: (node, text) => { node.text = text; }, setText: (node, text) => { node.text = text; },
+    parentNode: node => node.parent, nextSibling: () => null, patchProp: (node, key, _old, value) => { node.props[key] = value; },
+  });
+  const container = { children: [] };
+  app = renderer.createApp(Host, { file: { ...file('profile', 'tif'), size: 40 } });
+  app.mount(container);
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].id, 'available', 'an over-budget first profiler must not suppress an eligible one');
+  function find(node, type) { if (node.type === type) return node; for (const child of node.children ?? []) { const found = find(child, type); if (found) return found; } }
+  const chooser = find(container, 'select');
+  assert.equal(chooser.props.value, 'available');
+  assert.match(find(chooser, 'option').text, /暂不可用/);
+  chooser.props.onChange({ target: { value: 'available' } }); await flush();
+  pending.resolve({ kind: 'resources', revision: 'rev1', metadata: { purpose: 'content-profile' }, payload: { profile: {
+    profile_version: 1, container: 'tiff', dialect: 'tiff', traits: ['geotiff'], evidence: [], bytes_read: 40, truncated: false,
+  } } });
+  await flush();
+  assert.equal(find(container, 'select').props.value, 'available', 'a later profile recommendation must not override the manual view');
+  assert.deepEqual(instances, ['available']);
+  find(container, 'select').props.onChange({ target: { value: 'too-small' } }); await flush();
+  assert.equal(find(container, 'select').props.value, 'too-small');
+  assert.equal(instances.length, 1, 'manually chosen over-budget views show their reason without starting the renderer');
+});
 
 test('equal catalog confirmations preserve snapshot and descriptor references', async () => {
   const effective = catalogOf(descriptor(), ncSeries());
@@ -338,6 +427,60 @@ test('catalog revision, removal and recovery from failed confirmation remain aut
   assert.notEqual(store.catalog.value.plugins[0], first.plugins[0], 'recovery must not reuse an invalidated preview scope');
 });
 
+for (const [label, failure] of [
+  ['network disconnect', normalizeApiError({ request: {}, message: 'Network Error' })],
+  ['timeout', normalizeApiError({ request: {}, code: 'ECONNABORTED' })],
+  ['HTTP 503', new ApiError('service unavailable', { status: 503 })],
+]) test(`a ${label} preserves confirmed content until authoritative recovery`, async () => {
+  let effective = catalogOf(ncMap(), ncSeries()), outage = false;
+  const store = catalogStore({ getVisualizationCatalog: async () => {
+    if (outage) throw failure;
+    return structuredClone(effective);
+  } });
+  await store.refresh(); const confirmed = store.catalog.value;
+  outage = true;
+  assert.equal(await store.refresh(), false);
+  assert.equal(store.catalog.value, confirmed);
+  assert.equal(store.stale.value, true);
+  assert.equal(store.error.value, '');
+  outage = false; await store.refresh();
+  assert.equal(store.catalog.value, confirmed);
+  assert.equal(store.stale.value, false);
+  outage = true; await store.refresh();
+  effective.plugins[0].enabled = false;
+  outage = false; await store.refresh();
+  assert.equal(store.catalog.value.plugins[0].enabled, false, 'reconnection must apply revocation');
+  assert.equal(store.stale.value, false);
+});
+
+for (const [label, failure] of [
+  ['unauthenticated', new ApiError('login required', { status: 401 })],
+  ['forbidden', new ApiError('forbidden', { status: 403 })],
+  ['account changed', new ApiError('account changed', { status: 409 })],
+  ['invalid contract', new Error('invalid contract')],
+]) test(`${label} clears even a previously stale catalog`, async () => {
+  let rejected;
+  const store = catalogStore({ getVisualizationCatalog: async () => {
+    if (rejected) throw rejected;
+    return catalogOf(descriptor());
+  } });
+  await store.refresh();
+  rejected = new ApiError('offline', { status: 503 }); await store.refresh();
+  assert.equal(store.stale.value, true);
+  rejected = failure; await store.refresh();
+  assert.equal(store.catalog.value, null);
+  assert.equal(store.stale.value, false);
+  assert.match(store.error.value, /暂停/);
+});
+
+test('an outage without prior confirmation never invents a stale catalog', async () => {
+  const store = catalogStore({ getVisualizationCatalog: async () => { throw new ApiError('offline', { status: 503 }); } });
+  await store.refresh();
+  assert.equal(store.catalog.value, null);
+  assert.equal(store.stale.value, false);
+  assert.match(store.error.value, /暂停/);
+});
+
 test('overlapping page, preview and focus polls share one authoritative request', async () => {
   const response = deferred(); let reads = 0;
   const store = catalogStore({ getVisualizationCatalog: () => { reads++; return response.promise; } });
@@ -371,10 +514,11 @@ test('authoritative plugin state survives a late pre-toggle poll and network fai
 });
 
 test('a failed state confirmation never leaves a previously active renderer running', async () => {
-  const store = catalogStore({ getVisualizationCatalog: async () => catalogOf(descriptor()), setVisualizationEnabled: async () => { throw new Error('unknown'); } });
+  const store = catalogStore({ getVisualizationCatalog: async () => catalogOf(descriptor()), setVisualizationEnabled: async () => { throw new ApiError('offline', { status: 503 }); } });
   await store.refresh(); assert.equal(store.catalog.value.plugins[0].enabled, true);
   await store.toggle('tiff', false);
   assert.equal(store.catalog.value, null); assert.match(store.error.value, /未能确认/);
+  assert.equal(store.stale.value, false, 'an uncertain mutation cannot use stale authority');
 });
 
 test('file preview host is destroyed when hidden, and signed share scientific readers stay closed', () => {
@@ -382,10 +526,35 @@ test('file preview host is destroyed when hidden, and signed share scientific re
   assert.match(panel, /v-if="isShow && visible && fileInfo && fileType"/);
   assert.match(panel, /<VisualizationHost :key="fileInfo.file_id"/);
   const host = source('../src/visualizations/VisualizationHost.vue');
-  assert.match(host, /shared.value && !plugin.capabilities.shared/);
-  assert.match(host, /props.file.size > plugin.limits.max_input_bytes/);
-  assert.match(host, /plugin.capabilities.input_mode === 'whole'/);
+  assert.match(host, /visualizationBlockedReason\(selectedPlugin.value/);
   assert.doesNotMatch(host, /data_kind|startsWith\('v2-'/);
   assert.match(host, /catalog.value\?\.revision/);
   assert.doesNotMatch(host, /localStorage|sessionStorage|window\.open\(.*plugin|fileType.preview/);
+});
+
+test('host sends only the current loaded view to a private unlocked analysis and invalidates replacements', async t => {
+  const plugin = ncSeries(), catalog = vue.ref(catalogOf(plugin)), events = [];
+  const task = { active: vue.ref(true), locked: vue.ref(false), sessionId: vue.ref('session') };
+  const route = vue.reactive({ path: '/chat/session' });
+  const Host = compileSfc('../src/visualizations/VisualizationHost.vue', {
+    'vue-router': { useRoute: () => route },
+    './catalog': { useVisualizationCatalog: () => ({ catalog, error: vue.ref(''), stale: vue.ref(false), loading: vue.ref(false), refresh: async () => true }) },
+    './contract': { matchingVisualizations, viewKindLabel: String }, './adapters': { getVisualizationAdapter: () => ({}) },
+    './runtime': { requestVisualization: async () => { throw new Error('not expected'); } },
+    './contentProfile': contentProfile, './selection': selection, './previewIdentity': previewIdentity,
+    '../composables/useTaskData': { useTaskData: () => task }, '../utils/eventBus': { eventBus: { emit: (...args) => events.push(args) } },
+  });
+  const scope = vue.effectScope(), props = vue.reactive({ file: file('a') });
+  const state = scope.run(() => Host.setup(props, { expose() {} })); t.after(() => scope.stop());
+  const context = { schemaVersion: 1, fileId: 'a', version: 'a'.repeat(64), pluginId: plugin.id, pluginVersion: plugin.version, adapter: plugin.adapter, family: 'scientific',
+    request: { operation: 'preview', params: { variable: 'temperature', x_dimension: 'time' } }, view: { kind: 'series', valueSemantics: 'physical', sampled: true } };
+  state.receiveViewContext(context); state.addViewToAnalysis();
+  assert.equal(events.length, 1); assert.equal(events[0][0], 'visualization-analysis-draft');
+  assert.deepEqual(events[0][1].context, context);
+  task.locked.value = true; state.addViewToAnalysis(); assert.equal(events.length, 1);
+  task.locked.value = false; route.path = '/share/token'; state.addViewToAnalysis(); assert.equal(events.length, 1);
+  route.path = '/chat/session'; catalog.value = { ...catalog.value, revision: 'new' }; await flush();
+  assert.equal(state.viewContext.value, null);
+  state.receiveViewContext({ ...context, fileId: 'foreign' }); assert.equal(state.viewContext.value, null);
+  state.receiveViewContext(context); props.file = file('b'); await flush(); assert.equal(state.viewContext.value, null);
 });

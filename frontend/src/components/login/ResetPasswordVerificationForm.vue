@@ -16,8 +16,8 @@
                 </div>
                 <div class="w-full relative">
                   <input v-model="formData.verificationCode"
-                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] pr-[128px]"
-                    :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.verificationCode }"
+                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pb-1 pl-3 pr-[128px]"
+                    :aria-invalid="Boolean(validationErrors.verificationCode)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.verificationCode }"
                     :placeholder="t('Enter 6-digit verification code')" id="verifyCode" type="text" maxlength="6" pattern="[0-9]{6}"
                     inputmode="numeric"
                     :disabled="isLoading"
@@ -58,8 +58,8 @@
                 </div>
                 <div class="relative w-full">
                   <input v-model="formData.newPassword"
-                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-10 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] w-full"
-                    :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.newPassword }" id="new-password"
+                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-10 pb-1 pl-3 w-full"
+                    :aria-invalid="Boolean(validationErrors.newPassword)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.newPassword }" id="new-password"
                     :placeholder="t('Enter your new password')" :type="showNewPassword ? 'text' : 'password'"
                     :disabled="isLoading" @input="validateField('newPassword')" @blur="validateField('newPassword')">
                   <button type="button" @click="showNewPassword = !showNewPassword"
@@ -85,8 +85,8 @@
                 </div>
                 <div class="relative w-full">
                   <input v-model="formData.confirmPassword"
-                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-10 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] w-full"
-                    :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.confirmPassword }"
+                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-10 pb-1 pl-3 w-full"
+                    :aria-invalid="Boolean(validationErrors.confirmPassword)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.confirmPassword }"
                     id="confirm-password" :placeholder="t('Confirm your new password')"
                     :type="showConfirmPassword ? 'text' : 'password'" :disabled="isLoading"
                     @input="validateField('confirmPassword')" @blur="validateField('confirmPassword')">
@@ -290,10 +290,8 @@ const handleResendCode = async () => {
     // Call the real API to send verification code
     sendVerificationCode({ email: props.email }).then(() => {
       showSuccessToast(t('Verification code sent again'))
-      console.log('Resend verification code to:', props.email)
     }).catch((error: any) => {
-      console.error('Resend verification code failed:', error)
-      showErrorToast(t('Failed to resend verification code. Please try again.') + ': ' + error.response?.data?.message || error.message || 'Unknown error')
+      showErrorToast(error instanceof Error ? error.message : t('Failed to resend verification code. Please try again.'))
     })
     startResendCooldown()
 }
@@ -318,7 +316,6 @@ const handleSubmit = async () => {
     isPasswordUpdated.value = true
     showSuccessToast(t('Password updated successfully'))
 
-    console.log('Password reset completed for:', props.email)
 
     // Auto redirect to login after 3 seconds
     setTimeout(() => {
@@ -328,7 +325,6 @@ const handleSubmit = async () => {
     }, 500)
 
   } catch (error: any) {
-    console.error('Password reset verification failed:', error)
     const errorMessage = error.response?.data?.message || error.message || 'Unknown error'
     
     // Handle specific error cases

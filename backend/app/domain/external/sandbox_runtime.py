@@ -2,6 +2,7 @@ from typing import Optional, Protocol, Sequence
 
 from app.domain.external.sandbox import Sandbox
 from app.domain.models.session import Session
+from app.domain.models.file import FileInfo
 
 
 class SandboxNotFoundError(RuntimeError):
@@ -9,7 +10,8 @@ class SandboxNotFoundError(RuntimeError):
 
 
 class SandboxRuntime(Protocol):
-    async def allocate(self, session: Optional[Session] = None, dataset_ids: Sequence[str] | None = None) -> Sandbox:
+    async def allocate(self, session: Optional[Session] = None, dataset_ids: Sequence[str] | None = None,
+                       input_files: Sequence[FileInfo] | None = None) -> Sandbox:
         """Allocate a sandbox for a session or warm pool."""
         ...
 

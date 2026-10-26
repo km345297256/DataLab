@@ -92,16 +92,16 @@ async def _create_or_update(args: argparse.Namespace) -> tuple[str, str]:
         now = datetime.now(UTC)
         existing = await UserDocument.find_one(UserDocument.email == args.email)
         if existing:
-            existing.fullname = args.fullname
-            existing.password_hash = password_hash
-            existing.role = UserRole.ADMIN
-            existing.is_active = True
-            existing.registration_status = RegistrationStatus.APPROVED
-            existing.registration_reviewed_by = existing.user_id
-            existing.registration_reviewed_at = now
-            existing.registration_review_note = "Initialized by create_admin.py"
-            existing.updated_at = now
-            await existing.save()
+            await repository.patch_user(existing.user_id, {
+                "fullname": args.fullname,
+                "password_hash": password_hash,
+                "role": UserRole.ADMIN,
+                "is_active": True,
+                "registration_status": RegistrationStatus.APPROVED,
+                "registration_reviewed_by": existing.user_id,
+                "registration_reviewed_at": now,
+                "registration_review_note": "Initialized by create_admin.py",
+            }, expected_auth_version=existing.auth_version, revoke_sessions=True)
             await TokenQuotaService().apply_daily_refill(existing)
             return "updated", existing.user_id
 
@@ -120,10 +120,11 @@ async def _create_or_update(args: argparse.Namespace) -> tuple[str, str]:
         created_doc = await UserDocument.find_one(UserDocument.user_id == created.id)
         if created_doc is None:
             raise RuntimeError("Administrator was created but could not be reloaded")
-        created_doc.registration_reviewed_by = created_doc.user_id
-        created_doc.registration_reviewed_at = now
-        created_doc.registration_review_note = "Initialized by create_admin.py"
-        await created_doc.save()
+        await created_doc.set({
+            "registration_reviewed_by": created_doc.user_id,
+            "registration_reviewed_at": now,
+            "registration_review_note": "Initialized by create_admin.py",
+        })
         await TokenQuotaService().initialize_user_quota(created_doc)
         return "created", created.id
     finally:

@@ -52,6 +52,23 @@ def npy_bytes(array):
     return stream.getvalue()
 
 
+@pytest.mark.parametrize("value", [2**53, 2**53 + 1, -(2**53 + 1), 2**63 - 1])
+def test_tabular_large_integers_keep_exact_text_and_array_plots_fail_closed(value):
+    data = npy_bytes(np.array([value], dtype=np.int64))
+    table = request(data, format="npy")
+    assert table["ok"] is True
+    assert table["data"]["table"]["rows"] == [[str(value)]]
+    graph = request(data, format="npy", kind="series")
+    assert graph["ok"] is False
+
+
+def test_numeric_array_values_keep_float64_precision():
+    values = [1.00000000001, 1.00000000002, 10000000001.0]
+    result = request(npy_bytes(np.array(values)), format="npy", kind="series")
+    assert result["ok"] is True and result["data"]["array"]["values"] == values
+    assert result["data"]["metadata"]["value_semantics"] == "raw"
+
+
 def hdf_bytes(tmp_path, setup):
     h5py = optional("h5py")
     path = tmp_path / "fixture.h5"
@@ -120,6 +137,33 @@ def test_csv_window_is_bounded_and_does_not_claim_unknown_total():
     assert result["table"]["rows"][0] == ["10", "11"]
     assert result["table"]["total_rows"] is None
     assert result["sampled"] is True
+
+
+def test_csv_last_window_remains_partial_and_reports_exact_row_and_column_ranges():
+    data = (",".join(f"c{column}" for column in range(103)) + "\n" +
+            "\n".join(",".join(str(row * 1000 + column) for column in range(103)) for row in range(205))).encode()
+    first = request(data)["data"]
+    assert len(first["table"]["rows"]) == 200 and len(first["table"]["columns"]) == 100
+    assert first["table"]["total_rows"] is None and first["table"]["total_columns"] == 103
+    tail = request(data, options={"row_offset": 200, "column_offset": 100})["data"]
+    assert tail["table"] == {"columns": ["c100", "c101", "c102"],
+        "rows": [[str(row * 1000 + column) for column in range(100, 103)] for row in range(200, 205)],
+        "row_offset": 200, "column_offset": 100, "total_rows": 205, "total_columns": 103}
+    assert tail["sampled"] is True and tail["warnings"]
+    # Even a narrow file's final row page is a subset of the source.
+    narrow = ("v\n" + "\n".join(str(row) for row in range(205))).encode()
+    last = request(narrow, options={"row_offset": 200})["data"]
+    assert last["sampled"] is True and last["table"]["total_rows"] == 205
+    assert last["metadata"]["row_limit"] == 200 and last["metadata"]["column_limit"] == 100
+
+
+def test_csv_complete_empty_and_exact_page_do_not_claim_truncation():
+    for count in (0, 3, 200):
+        data = ("v\n" + "\n".join(str(row) for row in range(count))).encode()
+        result = request(data)["data"]
+        assert result["sampled"] is False and not result["warnings"]
+        assert result["table"]["total_rows"] == count
+        assert len(result["table"]["rows"]) == count
 
 
 def test_tsv_and_host_path_text_are_safe():

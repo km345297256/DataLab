@@ -1,0 +1,51 @@
+{
+  "scenario": "Artificial complex-vip6lu1v; original frozen plan plus all oracle review fragments, including four unchanged adverse responses. No user analysis data.",
+  "request": "057-synthetic_plan_review-request.json",
+  "request_sha256": "f845623727a79f3867e13863a2664d63b842b50a5ce177e39bae981b1cd2d95b",
+  "parts": [
+    {
+      "file": "060-synthetic_plan_review-response.json",
+      "sha256": "4100c94269a209bacdb977b3e541e747577419dbf2db4612c78b3caafbf107d6"
+    },
+    {
+      "file": "065-synthetic_plan_review-response.json",
+      "sha256": "2d59139fc31e3c66dbb76bea7e88879bd047ce30c477d44eef54cc831ea16afa"
+    },
+    {
+      "file": "070-synthetic_plan_review-response.json",
+      "sha256": "a34a92f6b07d854806d4a72e9b4a78e9f1e92aa3b5afdbdfab144dda7b583b90"
+    },
+    {
+      "file": "075-synthetic_plan_review-response.json",
+      "sha256": "93346aff2b51bf1fd20337f08141f31e75888dfb4295f70290d9d4389d01659d"
+    },
+    {
+      "file": "080-synthetic_plan_review-response.json",
+      "sha256": "87ebbdfd3482cf9f0cd3981887b9a4f9c2b6d9ddf2c0438a2f9042ae2fdacaed"
+    },
+    {
+      "file": "085-synthetic_plan_review-response.json",
+      "sha256": "7c35a19a5f854ee9ce409ae62ee8cf972dd411c0dc5a68dc91197ed4ee1224db"
+    },
+    {
+      "file": "091-synthetic_plan_review-response.json",
+      "sha256": "a35ba05dae4e1857c8b97663786282ff65baf5e6432fedb9310c4bfff6bda3bb"
+    },
+    {
+      "file": "097-synthetic_plan_review-response.json",
+      "sha256": "5bab5cfa5a572c748973e16c5208f9ccfdf007f9307474bb0fb42ee58f264b35"
+    },
+    {
+      "file": "103-synthetic_plan_review-response.json",
+      "sha256": "f28075ee9930d40046fa3dc3f6f5db07fab23d156350af4a72ed7bd8a3b72bb9"
+    },
+    {
+      "file": "109-synthetic_plan_review-response.json",
+      "sha256": "04a8eae167756a2e7021bff3513ce6a36c866051586d59023044259961492ee9"
+    },
+    {
+      "file": "114-synthetic_plan_review-response.json",
+      "sha256": "bef13763f1a4e642980c35e59edf259a84a5923be37582cbb94d66de358ba10c"
+    }
+  ]
+}

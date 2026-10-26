@@ -5,6 +5,20 @@ set -Eeuo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root_dir"
 
+if [[ "${1:-}" == production ]]; then
+  case "$root_dir" in
+    /root/DataLab|/root/DataLab/*|/root/datalab-releases|/root/datalab-releases/*|/root/datalab-current)
+      echo "Legacy production entry is retired; use the configured DataLab release directory" >&2
+      exit 1
+      ;;
+  esac
+  shift
+  exec python3 "$root_dir/deploy/production/deploy.py" "$@"
+fi
+if [[ -f "$root_dir/.datalab-release" || -L "${DATALAB_DEPLOY_ROOT:-$root_dir/.local/production}/current" ]]; then
+  python3 "$root_dir/deploy/production/deploy.py" --check-compose-entry "$root_dir" "$@"
+fi
+
 # Generated locally, never sourced as shell code and never printed. The normal
 # stack remains usable when the optional Office profile has not been prepared.
 office_secrets_file="$root_dir/.local/office-viewer.env"
@@ -16,6 +30,9 @@ if [[ -f "$office_secrets_file" ]]; then
   done < "$office_secrets_file"
 fi
 
+if [[ -f "$root_dir/.datalab-release" && "$(command -v docker)" == /snap/bin/docker && -x /snap/docker/current/usr/libexec/docker/cli-plugins/docker-compose ]]; then
+  exec /snap/docker/current/usr/libexec/docker/cli-plugins/docker-compose -f docker-compose.yml "$@"
+fi
 if docker compose version >/dev/null 2>&1; then
   exec docker compose -f docker-compose.yml "$@"
 fi

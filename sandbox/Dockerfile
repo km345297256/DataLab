@@ -177,7 +177,7 @@ WORKDIR /app
 
 # Copy dependency files first to leverage the Docker layer cache.
 COPY sandbox/pyproject.toml sandbox/uv.lock ./
-COPY sandbox/scripts/install_noto_cjk_sc.py sandbox/scripts/verify_matplotlib_cjk.py sandbox/scripts/verify_geoscience_stack.py sandbox/scripts/recursive_unpack.py sandbox/scripts/dataset_quicklook.py sandbox/scripts/dataset_analysis_runner.py sandbox/scripts/scientific_data_ops.py sandbox/scripts/scientific_recipe_ops.py sandbox/scripts/tool_plugin_runner.py /usr/local/lib/ai-dataseek/
+COPY sandbox/scripts/install_noto_cjk_sc.py sandbox/scripts/verify_matplotlib_cjk.py sandbox/scripts/verify_geoscience_stack.py sandbox/scripts/recursive_unpack.py sandbox/scripts/dataset_quicklook.py sandbox/scripts/dataset_analysis_runner.py sandbox/scripts/datalab_json.py sandbox/scripts/datalab_analysis.py sandbox/scripts/scientific_data_ops.py sandbox/scripts/scientific_recipe_ops.py sandbox/scripts/tool_plugin_runner.py /usr/local/lib/ai-dataseek/
 COPY sandbox/scientific_operators /usr/local/lib/ai-dataseek/scientific_operators
 
 # Install the exact locked runtime, including the common Excel and plotting
@@ -193,8 +193,15 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
         uv sync --frozen --no-dev --no-install-project --no-cache; \
     fi
 
+# Statistical methods are installed at build time, never opportunistically during a user analysis.
+COPY sandbox/scripts/verify_statistics_stack.py /usr/local/lib/ai-dataseek/verify_statistics_stack.py
+RUN /app/.venv/bin/python /usr/local/lib/ai-dataseek/verify_statistics_stack.py
+
 # Verify the sandbox-only SQLite wrapper exposes the public resource controls.
 RUN /app/.venv/bin/python -c "import apsw; assert apsw.apswversion() == '3.53.4.0'; c=apsw.Connection(':memory:'); c.limit(apsw.SQLITE_LIMIT_ATTACHED,0); assert c.limit(apsw.SQLITE_LIMIT_ATTACHED)==0; assert hasattr(c,'set_authorizer') and hasattr(c,'set_progress_handler'); c.close()"
+
+# Verify binary compatibility using the same interpreter as program execution.
+RUN /app/.venv/bin/python -c "import sklearn; from sklearn.linear_model import LinearRegression; assert sklearn.__version__ == '1.7.2'; model=LinearRegression().fit([[0.0],[1.0],[2.0]],[1.0,3.0,5.0]); assert abs(model.predict([[3.0]])[0]-7.0)<1e-10; from datalab_json import normalize_json; assert abs(normalize_json(model.coef_)[0]-2.0)<1e-10"
 
 COPY --from=database-reader-build /opt/dataseek-access-reader /usr/local/bin/dataseek-access-reader
 COPY --from=database-reader-build /opt/dataseek-database/lib/libmdb.so* /opt/dataseek-database/lib/

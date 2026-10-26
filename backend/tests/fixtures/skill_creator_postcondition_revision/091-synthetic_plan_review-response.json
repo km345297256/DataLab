@@ -1,0 +1,5 @@
+{
+  "kind": "response",
+  "stage": "synthetic_plan_review",
+  "content": "{\"scripts\":[{\"script_path\":\"scripts/longitudinal_report.py\",\"support\":{\"status\":\"accepted\",\"explanation\":\"该脚本是单文件、仅使用标准库的命令行工具，--input 与 --output 足以承载该无效输入；无效用例主要观察非零退出和输入文件不变，公开接口能够支持这一检查。\"},\"cases\":[{\"case_id\":\"invalid_unknown_unit_null\",\"input_validity\":{\"status\":\"accepted\",\"explanation\":\"该用例属于无效输入：observations 行的 unit=kg 不在默认 units 映射 {mg,ug} 中，且 value=null，正好对应 R007 中“未知单位即使 value 为 null 也须拒绝”的校验点；其余四张表在类型和最小配对数上满足解析条件。\"},\"exit_behavior\":{\"status\":\"accepted\",\"explanation\":\"方法要求未知单位必须整体拒绝；验证计划使用 nonzero，不猜测具体退出码；参考记录 actual_exit_code=2 且 input_unchanged=true，与拒绝语义一致。\"},\"method_coverage\":{\"status\":\"rejected\",\"explanation\":\"该用例确实覆盖了“value 为 null 时未知单位仍须拒绝”（R007），但其 requirement_ids 包含 R018 的“任一表无效则拒绝整个任务且不产生部分输出”，而计划没有断言输出目录不存在，或 report.json/wide.csv 未被创建；仅凭非零退出无法排除脚本先写出部分产物再报错，因此该关键验证要求未落实。\"},\"assertions\":[]}]}]}"
+}

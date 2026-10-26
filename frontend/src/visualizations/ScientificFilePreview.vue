@@ -35,10 +35,13 @@
         <span v-if="data.kind === 'map'">经纬度坐标 · 不进行空间插值</span>
         <span v-if="data.kind === 'quality'">Phred+33 · 各位置平均质量分数</span>
       </div>
-      <div class="overflow-x-auto rounded-lg border border-[var(--border-main)] bg-white p-2">
-        <canvas ref="canvas" width="760" height="460" class="h-auto w-full min-w-[420px]" role="img" :aria-label="chartDescription" />
+      <ViewToolbar :context="viewContext" :image-formats="['png']" :color="data.kind === 'map' || data.kind === 'image'" :extent="finiteExtent(data.values)" @image="exportImage" @restore="restoreView" @color-range="setColorRange" @reset="resetView" />
+      <div class="mb-2 flex gap-3 text-xs"><label><input v-model="pointerMode" type="radio" value="select" />框选范围</label><label><input v-model="pointerMode" type="radio" value="zoom" />框选放大</label><span>{{ hoverText || '移动指针查看坐标和值；拖动选择范围。' }}</span></div>
+      <div class="shrink-0 overflow-x-auto rounded-lg border border-[var(--border-main)] bg-white p-2">
+        <canvas ref="canvas" width="760" height="460" class="h-auto w-full min-w-[420px] touch-none" role="img" :aria-label="chartDescription" @pointerdown="startDrag" @pointermove="movePointer" @pointerup="finishDrag" @pointercancel="dragStart = null" @pointerleave="hoverText = ''" />
       </div>
       <p class="mt-2 text-xs leading-5 text-[var(--text-tertiary)]">{{ chartDescription }}。灰白栅格或曲线断点表示缺失值，不按零值处理。</p>
+      <p v-if="typeof data.metadata.calendar === 'string' && data.metadata.calendar" class="mt-1 text-xs">时间日历：{{ data.metadata.calendar }}；时间轴保留文件数值和单位，未转换为公历日期。</p>
       <p v-if="appliedIndices" class="mt-1 text-xs text-[var(--text-tertiary)]">当前切片：{{ appliedIndices }}</p>
       <p v-if="data.kind === 'map' && showBasemap" class="mt-1 text-[10px] text-[var(--text-tertiary)]">底图：Natural Earth 1:110m 公共领域轮廓，简化示意，不表示边界立场。</p>
       <ul v-if="data.warnings.length" class="mt-3 list-disc space-y-1 pl-5 text-xs text-amber-700"><li v-for="(warning, index) in data.warnings" :key="index">{{ warning }}</li></ul>
@@ -53,10 +56,30 @@ import type { FileInfo } from '../api/file';
 import { getScientificVisualization, type ScientificVisualization, type ScientificVariable } from '../api/visualization';
 import { usePreviewLoad } from '../composables/usePreviewLoad';
 import type { VisualizationPlugin } from './contract';
-import { coordinateEdges, finiteExtent, heatColor, seriesSegments, tickLabel } from './plot';
+import { clampRange, nearestCoordinate, coordinateEdges, finiteExtent, heatColor, seriesSegments, tickLabel } from './plot';
+import ViewToolbar from './ViewToolbar.vue';
+import { assertViewExtent, viewSemantics, saveViewDataUrl, type NumericRange, type ViewSelection, type VisualizationViewContext } from './viewContext';
 import worldOutline from './assets/world-outline.json';
 
 const props = defineProps<{ file: FileInfo; plugin: VisualizationPlugin }>();
+const emit = defineEmits<{ (e: 'view-context', value: VisualizationViewContext | null): void }>();
+const viewContext = ref<VisualizationViewContext | null>(null), colorRange = ref<NumericRange>(), hoverText=ref(''), pointerMode=ref('select');
+const viewport=ref<{x:NumericRange;y:NumericRange}>(), selection=ref<ViewSelection>(), dragStart=ref<[number,number]|null>(null);
+let appliedParams:Record<string,unknown>={}, plotBounds:{x:NumericRange;y:NumericRange;fullX:NumericRange;fullY:NumericRange}|undefined;
+function publishContext(){
+  const result=data.value;if(!result)return;
+  viewContext.value={schemaVersion:1,fileId:props.file.file_id,version:result.version,pluginId:props.plugin.id,pluginVersion:props.plugin.version,adapter:props.plugin.adapter,family:'scientific',request:{operation:'preview',params:JSON.parse(JSON.stringify(appliedParams))},view:{kind:result.kind,title:result.selected_variable??props.plugin.name,xLabel:result.x_label,yLabel:result.y_label,...viewSemantics(result.metadata),sampled:result.sampled,...(colorRange.value?{colorRange:[...colorRange.value] as NumericRange}:{}),...(viewport.value?{xRange:[...viewport.value.x] as NumericRange,yRange:[...viewport.value.y].sort((a,b)=>a-b) as NumericRange}:{})},...(selection.value?{selection:JSON.parse(JSON.stringify(selection.value))}:{})};emit('view-context',viewContext.value);
+}
+function clearContext(){viewContext.value=null;emit('view-context',null);}
+function resetView(){viewport.value=undefined;selection.value=undefined;draw();publishContext();}
+function setColorRange(range:NumericRange|undefined){colorRange.value=range;draw();publishContext();}
+function exportImage(){if(canvas.value&&viewContext.value)saveViewDataUrl(canvas.value.toDataURL('image/png'),'scientific-view.png');}
+async function restoreView(context:VisualizationViewContext){colorRange.value=context.view.colorRange;await load(false,context);if(!data.value||data.value.version!==context.version)return;try{if(plotBounds)assertViewExtent(context,plotBounds.fullX,plotBounds.fullY);}catch(reason){error.value=reason instanceof Error?reason.message:'恢复范围无效。';return;}selection.value=context.selection;if(context.view.xRange&&context.view.yRange)viewport.value={x:context.view.xRange,y:data.value.kind==='image'?[context.view.yRange[1],context.view.yRange[0]]:context.view.yRange};draw();publishContext();}
+function pointerPosition(event:PointerEvent):[number,number]{const r=canvas.value!.getBoundingClientRect();return [(event.clientX-r.left)*760/r.width,(event.clientY-r.top)*460/r.height];}
+function positionValue(p:[number,number]):[number,number]{const b=plotBounds!;return [b.x[0]+Math.max(0,Math.min(1,(p[0]-78)/600))*(b.x[1]-b.x[0]),b.y[0]+Math.max(0,Math.min(1,1-(p[1]-26)/340))*(b.y[1]-b.y[0])];}
+function startDrag(event:PointerEvent){if(event.button!==0||!plotBounds)return;const p=pointerPosition(event);if(p[0]<78||p[0]>678||p[1]<26||p[1]>366)return;dragStart.value=p;canvas.value?.setPointerCapture?.(event.pointerId);}
+function movePointer(event:PointerEvent){const result=data.value;if(!result||!plotBounds)return;const [x,y]=positionValue(pointerPosition(event));const xi=nearestCoordinate(result.x,x);if(result.kind==='series'||result.kind==='quality'){hoverText.value=xi<0?'':`${result.x_label}: ${tickLabel(result.x[xi]!)} · ${result.y_label}: ${result.y[xi]===null?'缺失':tickLabel(result.y[xi]!)}`;}else{const xs=result.x.length?result.x:Array.from({length:result.width},(_,i)=>i),ys=result.y.length?result.y as number[]:Array.from({length:result.height},(_,i)=>i),col=nearestCoordinate(xs,x),row=nearestCoordinate(ys,y),value=result.values[row*result.width+col];hoverText.value=`${result.x_label}: ${tickLabel(xs[col]!)} · ${result.y_label}: ${tickLabel(ys[row]!)} · 值: ${value==null?'缺失':tickLabel(value)} ${viewContext.value?.view.units??''}`;}}
+function finishDrag(event:PointerEvent){if(!dragStart.value||!plotBounds||!data.value)return;const a=positionValue(dragStart.value),b=positionValue(pointerPosition(event));dragStart.value=null;const x=clampRange([a[0],b[0]],plotBounds.fullX),y=clampRange([a[1],b[1]],plotBounds.fullY),lines=data.value.kind==='series'||data.value.kind==='quality';selection.value={kind:'range',bounds:'inclusive',coordinateSystem:data.value.kind==='image'?'source-index':'axis-values',x,...(!lines?{y}:{})};if(pointerMode.value==='zoom'&&x[0]<x[1]&&y[0]<y[1])viewport.value={x,y:plotBounds.y[0]>plotBounds.y[1]?[y[1],y[0]]:y};draw();publishContext();}
 const scope = usePreviewLoad();
 const data = ref<ScientificVisualization | null>(null);
 const variables = ref<ScientificVariable[]>([]);
@@ -94,7 +117,8 @@ const appliedIndices = computed(() => {
 const metadataItems = computed(() => Object.entries(data.value?.metadata ?? {}).filter(([, value]) => value !== null && ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => [key, String(value).slice(0, 500)]));
 const chartDescription = computed(() => !data.value ? '' : `${data.value.x_label || '横轴'} / ${data.value.y_label || '纵轴'}；${data.value.kind === 'series' || data.value.kind === 'quality' ? `${data.value.x.length} 个采样点` : `${data.value.width} × ${data.value.height} 栅格`}`);
 
-const load = async (resetVersion = false) => {
+const load = async (resetVersion = false, restored?: VisualizationViewContext) => {
+  clearContext(); viewport.value=undefined; selection.value=undefined;
   const request = scope.begin();
   loading.value = true;
   error.value = '';
@@ -109,13 +133,20 @@ const load = async (resetVersion = false) => {
       ...(Object.keys(selectedIndices).length ? { indices: selectedIndices } : {}),
       ...(props.plugin.reader === 'fits' && hdu.value !== undefined ? { hdu: hdu.value } : {}),
       ...(!resetVersion && version.value ? { version: version.value } : {}),
+      ...(restored?.request.params ?? {}),
     }, request.signal);
     if (!request.isCurrent()) return;
     const expectedKind = props.plugin.adapter === 'scientific-quality' ? 'quality' : props.plugin.view_kind;
     if (result.kind !== expectedKind) throw new Error('读取结果与所选插件视图不匹配。');
     data.value = result;
+    appliedParams={...(props.plugin.reader==='netcdf'&&result.selected_variable?{variable:result.selected_variable}:{}),...(typeof result.metadata.x_dimension==='string'?{x_dimension:result.metadata.x_dimension}:{}),...(result.metadata.indices&&typeof result.metadata.indices==='object'?{indices:result.metadata.indices}:{}),...(typeof result.metadata.hdu==='number'?{hdu:result.metadata.hdu}:{})};
     version.value = result.version;
     variables.value = result.variables;
+    if (restored) {
+      variable.value = result.selected_variable ?? '';
+      xDimension.value = typeof result.metadata.x_dimension === 'string' ? result.metadata.x_dimension : '';
+      indices.value = result.metadata.indices && typeof result.metadata.indices === 'object' ? { ...result.metadata.indices as Record<string, number> } : {};
+    }
     if (!variable.value) {
       variable.value = result.selected_variable ?? '';
       resetDimensions();
@@ -127,7 +158,7 @@ const load = async (resetVersion = false) => {
     }
     loading.value = false;
     await nextTick();
-    if (request.isCurrent()) draw();
+    if (request.isCurrent()) { draw(); publishContext(); }
   } catch (reason) {
     if (!request.isCurrent()) return;
     error.value = reason instanceof Error ? reason.message : '数据读取失败，请重试。';
@@ -147,13 +178,17 @@ function draw() {
   // bottom row or pretend this is a WCS-aware astronomical projection.
   let yExtent: [number, number] = [Math.max(.5, result.height - .5), -.5];
   const lines = result.kind === 'series' || result.kind === 'quality';
-  const xEdges = result.kind === 'map' ? coordinateEdges(result.x, -180, 180) : [];
-  const yEdges = result.kind === 'map' ? coordinateEdges(result.y as number[], -90, 90) : [];
+  const xEdges = result.kind === 'map' ? coordinateEdges(result.x, -180, 180) : result.kind==='image'?coordinateEdges(result.x):[];
+  const yEdges = result.kind === 'map' ? coordinateEdges(result.y as number[], -90, 90) : result.kind==='image'?coordinateEdges(result.y as number[]):[];
   if (lines) { xExtent = finiteExtent(result.x) ?? [0, 1]; yExtent = finiteExtent(result.y) ?? [0, 1]; }
   else if (result.kind === 'map' && xEdges.length === result.width + 1 && yEdges.length === result.height + 1) {
     xExtent = [Math.min(...xEdges), Math.max(...xEdges)];
     yExtent = [Math.min(...yEdges), Math.max(...yEdges)];
   }
+  if(result.kind==='image'&&xEdges.length&&yEdges.length){xExtent=[Math.min(...xEdges),Math.max(...xEdges)];yExtent=[Math.max(...yEdges),Math.min(...yEdges)];}
+  const fullX=(lines&&result.x.length?[Math.min(...result.x),Math.max(...result.x)]:[...xExtent]) as NumericRange,fullY=[...yExtent] as NumericRange;
+  if(viewport.value){xExtent=viewport.value.x;yExtent=viewport.value.y;}
+  plotBounds={x:xExtent,y:yExtent,fullX,fullY};
   const px = (x: number) => left + (x - xExtent[0]) / (xExtent[1] - xExtent[0] || 1) * width;
   const py = (y: number) => top + height - (y - yExtent[0]) / (yExtent[1] - yExtent[0] || 1) * height;
   context.save(); context.beginPath(); context.rect(left, top, width, height); context.clip();
@@ -164,10 +199,10 @@ function draw() {
       context.beginPath(); segment.forEach(([x, y], index) => index ? context.lineTo(px(x), py(y)) : context.moveTo(px(x), py(y))); context.stroke();
     }
   } else {
-    const colors = finiteExtent(result.values);
+    const colors = colorRange.value ?? finiteExtent(result.values);
     for (let row = 0; row < result.height; row++) for (let column = 0; column < result.width; column++) {
       context.fillStyle = heatColor(result.values[row * result.width + column] ?? null, colors);
-      if (result.kind === 'map' && xEdges.length && yEdges.length) {
+      if ((result.kind === 'map' || result.kind === 'image') && xEdges.length && yEdges.length) {
         const x1 = px(xEdges[column]!), x2 = px(xEdges[column + 1]!), y1 = py(yEdges[row]!), y2 = py(yEdges[row + 1]!);
         context.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1) + .2, Math.abs(y2 - y1) + .2);
       } else context.fillRect(left + column / result.width * width, top + row / result.height * height, width / result.width + .2, height / result.height + .2);
@@ -184,6 +219,7 @@ function draw() {
     const units = result.variables.find((item) => item.name === result.selected_variable)?.units;
     context.fillText(`${colors ? tickLabel(colors[0]) : '无有效数值'} ← ${units || '数值色阶'} → ${colors ? tickLabel(colors[1]) : ''}`, left + 310, 433);
   }
+  if(selection.value){const s=selection.value;context.strokeStyle='#b45309';context.setLineDash([5,3]);const x1=px(s.x[0]),x2=px(s.x[1]),y1=s.y?py(s.y[1]):top,y2=s.y?py(s.y[0]):top+height;context.strokeRect(x1,Math.min(y1,y2),x2-x1,Math.abs(y2-y1));context.setLineDash([]);}
   context.restore(); context.strokeStyle = '#6b7280'; context.lineWidth = 1; context.strokeRect(left, top, width, height);
   context.fillStyle = '#374151'; context.font = '11px sans-serif';
   for (let index = 0; index <= 4; index++) {
@@ -196,6 +232,7 @@ function draw() {
 }
 watch(showBasemap, draw);
 watch([() => props.file.file_id, () => props.plugin.id], () => {
+  colorRange.value=undefined;hoverText.value='';
   variable.value = ''; variables.value = []; indices.value = {}; xDimension.value = ''; hdu.value = undefined; hdus.value = []; version.value = undefined;
   void load(true);
 }, { immediate: true });

@@ -31,7 +31,7 @@ class ModelCapabilities(BaseModel):
     native_streaming: bool = False
 
 
-PreparedModelInvoke = Callable[[list[BaseMessage], int], Awaitable[AIMessage]]
+PreparedModelInvoke = Callable[[list[BaseMessage], int | None], Awaitable[AIMessage]]
 
 
 class ModelRequestMiddleware(Protocol):
@@ -41,7 +41,7 @@ class ModelRequestMiddleware(Protocol):
         messages: Sequence[BaseMessage],
         tool_schemas: Sequence[dict[str, Any]] = (),
         response_format: dict[str, Any] | None = None,
-        max_output_tokens: int,
+        max_output_tokens: int | None,
         provider: str,
         model_name: str,
         driver_version: str = MODEL_DRIVER_VERSION,

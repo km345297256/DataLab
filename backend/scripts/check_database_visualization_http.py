@@ -93,7 +93,7 @@ def decode_fixtures(chunks):
 
 def fixtures():
     client, container = docker.from_env(timeout=30), None
-    name = "ai-dataseek-database-fixtures-" + uuid.uuid4().hex
+    name = "datalab-database-fixtures-" + uuid.uuid4().hex
     try:
         container = client.containers.create(image=get_settings().sandbox_image, name=name,
             entrypoint=["/usr/bin/timeout"], command=["--signal=KILL", "55s", "/app/.venv/bin/python", "-c", NATIVE_CODE],
@@ -102,7 +102,7 @@ def fixtures():
             nano_cpus=1_000_000_000, pids_limit=96, tmpfs={"/tmp": "rw,noexec,nosuid,size=32m,mode=1777"},
             environment={"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "PYTHONDONTWRITEBYTECODE": "1"},
             log_config={"type": "json-file", "config": {"max-size": "4m", "max-file": "1"}},
-            labels={"ai-dataseek.component": "visualization-http-fixture", "ai-dataseek.fixture-run": name})
+            labels={"datalab.component": "visualization-http-fixture", "datalab.fixture-run": name})
         container.reload()
         config = container.attrs["HostConfig"]
         assert config["NetworkMode"] == "none" and config["ReadonlyRootfs"] is True
@@ -122,8 +122,8 @@ def fixtures():
                 # authority by itself (for example, a pre-existing name clash).
                 container.reload()
                 labels = container.attrs.get("Config", {}).get("Labels", {})
-                assert labels.get("ai-dataseek.component") == "visualization-http-fixture"
-                assert labels.get("ai-dataseek.fixture-run") == name, "Fixture container ownership changed; refusing removal"
+                assert labels.get("datalab.component") == "visualization-http-fixture"
+                assert labels.get("datalab.fixture-run") == name, "Fixture container ownership changed; refusing removal"
                 _remove_worker(container)
         finally: client.close()
 
@@ -227,8 +227,8 @@ async def run_acceptance(database, client, data, versions, user_id, run):
 
     try:
         catalog = await request("GET", "/api/v1/visualizations")
-        assert catalog["engine"] == "cordis" and len(catalog["plugins"]) == 83
-        by_id = {p["id"]: p for p in catalog["plugins"]}; assert len(by_id) == 83
+        assert catalog["engine"] == "cordis" and len(catalog["plugins"]) == 84
+        by_id = {p["id"]: p for p in catalog["plugins"]}; assert len(by_id) == 84
         for plugin in PLUGINS:
             item = by_id[plugin]
             assert item["reader"] == item["adapter"] == "database-table" and item["contract_version"] == 2

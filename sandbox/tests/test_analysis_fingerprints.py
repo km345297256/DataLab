@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import threading
-import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,18 +64,39 @@ def test_snapshot_batch_budget_rejects_not_samples_large_input(tmp_path, monkeyp
     assert result["errors"] == [{"path": str(paths[1]), "code": "snapshot_size_limit"}]
 
 
-@pytest.mark.parametrize("condition", ["cancelled", "expired"])
-def test_snapshot_stops_before_open_when_cancelled(tmp_path, monkeypatch, condition):
+def test_snapshot_stops_before_open_when_cancelled(tmp_path, monkeypatch):
     def unexpected_open(*args):
         raise AssertionError("must not open a cancelled snapshot")
     monkeypatch.setattr(snapshot, "_open_output", unexpected_open)
     cancelled = threading.Event()
-    if condition == "cancelled":
-        cancelled.set()
-    result = snapshot.fingerprint_analysis_files([str(tmp_path / "source")], roots=(tmp_path,), cancelled=cancelled,
-        deadline=time.monotonic() - 1 if condition == "expired" else time.monotonic() + 10)
+    cancelled.set()
+    result = snapshot.fingerprint_analysis_files([str(tmp_path / "source")], roots=(tmp_path,), cancelled=cancelled)
     assert result["files"] == []
-    assert result["errors"][0]["code"] == "snapshot_deadline"
+    assert result["errors"][0]["code"] == "snapshot_cancelled"
+
+
+def test_slow_snapshot_hashes_all_chunks_and_all_files_without_elapsed_limit(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(snapshot, "time", SimpleNamespace(monotonic=lambda: clock[0]), raising=False)
+    monkeypatch.setattr(snapshot, "CHUNK_BYTES", 2)
+    real_sha = hashlib.sha256
+    class SlowHash:
+        def __init__(self):
+            self.digest = real_sha()
+        def update(self, data):
+            clock[0] += 3600
+            self.digest.update(data)
+        def hexdigest(self):
+            return self.digest.hexdigest()
+    monkeypatch.setattr(snapshot.hashlib, "sha256", SlowHash)
+    paths = [tmp_path / name for name in ("source.csv", "output.csv")]
+    for path in paths:
+        path.write_bytes(b"a,b\n1,2\n")
+    result = snapshot.fingerprint_analysis_files([str(path) for path in paths], roots=(tmp_path,))
+    assert result["errors"] == []
+    assert len(result["files"]) == 2
+    assert {item["sha256"] for item in result["files"]} == {real_sha(b"a,b\n1,2\n").hexdigest()}
+    assert clock[0] == 8 * 3600
 
 
 def test_snapshot_detects_source_changed_during_hash(tmp_path, monkeypatch):
@@ -117,3 +138,63 @@ def test_snapshot_api_is_separate_from_legacy_output_fingerprints(client, tmp_pa
     assert response.status_code == 200
     assert response.json()["data"]["files"][0]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert client.post(f"{BASE_URL}/api/v1/file/analysis-fingerprints", json={"paths": []}).status_code == 422
+
+
+def test_upload_snapshots_require_exact_authorization_without_widening_roots(tmp_path):
+    inputs = tmp_path / "inputs"
+    group = inputs / ("a" * 24)
+    group.mkdir(parents=True)
+    allowed, unrelated = group / "source.csv", group / "private.csv"
+    allowed.write_text("a,b\n1,2\n")
+    unrelated.write_text("not-authorized")
+    kwargs = {"roots": (), "upload_root": inputs}
+    result = snapshot.fingerprint_analysis_files([str(allowed)], **kwargs)
+    assert result["files"] == []
+    result = snapshot.fingerprint_analysis_files(
+        [str(allowed), str(unrelated)], approved_upload_paths=[str(allowed)], **kwargs,
+    )
+    assert [item["path"] for item in result["files"]] == [str(allowed)]
+    assert result["files"][0]["sha256"] == hashlib.sha256(allowed.read_bytes()).hexdigest()
+    assert result["errors"] == [{"path": str(unrelated), "code": "unavailable_or_unsafe_path"}]
+    assert "not-authorized" not in json.dumps(result)
+
+
+def test_upload_authorization_never_allows_other_roots_links_or_noncanonical_paths(tmp_path):
+    inputs = tmp_path / "inputs"
+    group = inputs / ("a" * 24)
+    group.mkdir(parents=True)
+    secret = tmp_path / "secret"
+    secret.write_text("private")
+    (group / "link").symlink_to(secret)
+    linked_group = inputs / ("b" * 24)
+    linked_group.symlink_to(tmp_path, target_is_directory=True)
+    (inputs / "flat").write_text("old-layout")
+    os.mkfifo(group / "pipe")
+    paths = [str(secret), str(group / "link"), str(linked_group / "secret"),
+             str(inputs / "flat"), str(group / "pipe"), str(group / "../flat"),
+             str(group) + "//file", str(group / "missing")]
+    result = snapshot.fingerprint_analysis_files(
+        paths, roots=(), upload_root=inputs, approved_upload_paths=paths,
+    )
+    assert result["files"] == []
+    assert len(result["errors"]) == len(paths)
+    assert {item["code"] for item in result["errors"]} == {"unavailable_or_unsafe_path"}
+
+
+def test_upload_authorization_is_private_exact_paths_not_a_dynamic_root(client, monkeypatch):
+    from conftest import BASE_URL
+    from app.api.v1 import file as file_api
+    calls = []
+    path = "/home/ubuntu/inputs/group/source.csv"
+    def record(paths, **kwargs):
+        calls.append((paths, kwargs["approved_upload_paths"]))
+        return {"version": 1, "files": [], "errors": []}
+    monkeypatch.setattr(file_api, "fingerprint_analysis_files", record)
+    response = client.post(f"{BASE_URL}/api/v1/file/analysis-fingerprints", json={
+        "paths": [path], "approved_upload_paths": [path],
+    })
+    assert response.status_code == 200
+    assert calls == [([path], [path])]
+    assert client.post(f"{BASE_URL}/api/v1/file/analysis-fingerprints", json={
+        "paths": [path], "roots": ["/home/ubuntu"],
+    }).status_code == 422

@@ -1,0 +1,13 @@
+{
+  "purpose": "Artificial benchmark original coverage amendment and projected request-owned domain inputs; no user analysis data.",
+  "response_sha256": "b95f652f3fec947aa89353da5477bd6ed5cd24d60c582a47d9499fd5e7e693dd",
+  "request_sha256": "e54892e08625a003667537777d67f2e3f9c54d00e929bedb9d1698db279b1b02",
+  "retained_request_fields": [
+    "previous_validation_plan",
+    "method_contract",
+    "sources",
+    "script_interfaces",
+    "required_cases",
+    "eligible_cases"
+  ]
+}

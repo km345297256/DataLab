@@ -60,6 +60,18 @@ def receipts(collection):
 
 
 @pytest.mark.asyncio
+async def test_delivery_only_receipt_accepts_empty_and_unknown_format_without_content_verdict():
+    collection = Collection()
+    await AnalysisDeliveryAuditStore(collection).record(**request(records=[receipt(
+        path="/home/ubuntu/output/result.custom", kind="data", valid=True, size=0,
+        metadata={"validation_scope": "file_integrity", "content_validation": "not_performed"},
+    )]))
+    row = receipts(collection)[0]
+    assert row["valid"] and row["reason"] == "delivery_ready"
+    assert row["validation_scope"] == "file_integrity" and row["content_assessment"] == "user_evaluated"
+
+
+@pytest.mark.asyncio
 async def test_each_attempt_and_receipt_has_the_complete_private_identity():
     collection = Collection()
     await AnalysisDeliveryAuditStore(collection).record(**request())

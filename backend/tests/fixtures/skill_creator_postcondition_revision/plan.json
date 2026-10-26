@@ -1,0 +1,3777 @@
+{
+  "version": 1,
+  "status": "not_run",
+  "scripts": [
+    {
+      "script_path": "scripts/longitudinal_report.py",
+      "support": "supported",
+      "reason": "该脚本为单个标准库实现，公开 CLI 以 --input 读取 JSON、以 --output 指定输出目录；可用全新合成 JSON/CSV 声明式核验六类方法、参数覆盖、输出文件与路径保护。",
+      "cases": [
+        {
+          "id": "normal_full_methods",
+          "kind": "normal",
+          "description": "五表齐全并含字段映射、量纲换算、缺失、零值、极端值、并列秩、校正家族、置换检验与长宽转换的正常合成用例。",
+          "requirement_ids": [
+            "R002",
+            "R003",
+            "R004",
+            "R005",
+            "R006",
+            "R007",
+            "R008",
+            "R009",
+            "R010",
+            "R011",
+            "R012",
+            "R013",
+            "R014",
+            "R015",
+            "R016",
+            "R017",
+            "R018",
+            "R019"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "独立按方法契约推导：observations 共 14 行；A/f1 非空值 [10,20,0] 经 mg 因子 1 后 n=3、sum=30、mean=10、median=10、q1=5、q3=15、sample_sd=10、SE=10/sqrt(3)=5.7735026919，MAD=10、IQR=10，无严格超栅栏点；A/f2 为 100*0.5=50，n=1 故 sample_sd 与 SE 为 null；B/f1 值 [10,20,30,1000] 经 mg 后 n=4、sum=1060、mean=265、median=25、q1=17.5、q3=272.5、MAD=10、IQR=255，1000 对中位数 25 的修改 Z=65.76275>3.5 且大于上栅栏 655，故仅标记 1 个 MAD 异常与 1 个 IQR 异常，但不删除且均值含 1000；B/f2 为 [2,4,6]*0.5=[1,2,3]，n=3、sum=6、mean=2、sample_sd=1、SE=0.5773502692；C/f1 两行全 null，n=0、sum=0、其余位置统计量为 null。profiles 按 group、feature 排序为 A/f1、A/f2、B/f1、B/f2、C/f1，共 5 组。pairs：A 完整差值 [2,3,1]，n=3、sum=6、mean=2、median=2、q1=1.5、q3=2.5、sample_sd=1、SE=0.5773502692，2^3=8 个符号组合中仅全正与全负满足 |翻转均值|>=2-1e-12，p=2/8=0.25；B 完整差值 [5,5,3,1]，n=4、sum=14、mean=3.5、median=4、q1=2.5、q3=5、sample_sd=sqrt(11/3)=1.9148542155、SE=0.9574271078，2^4=16 个组合中仅全正与全负满足 |翻转均值|>=3.5-1e-12，p=2/16=0.125；两组 direction 均为 after-minus-before，excluded 各 1。组间比较用 A 的 3 个与 B 的 4 个完整差值，mean_a=2、mean_b=3.5、difference=1.5；permutations=C(7,3)=35，标签组合中 B 侧和 S>=14 或 S<=8 共 10 个，p=10/35=0.285714285714；va=1、vb=11/3，SE=sqrt(1/3+11/12)=sqrt(5/4)=1.1180339887，Welch df=(5/4)^2/((1/3)^2/2+(11/12)^2/3)=135/29=4.6551724138，Welch t=1.5/1.1180339887=1.3416407865，pooled_sd=sqrt((2*1+3*11/3)/5)=sqrt(13/5)=1.6124515497，d=1.5/pooled_sd=0.9302605094，J=1-3/(4*5-1)=16/19=0.8421052632，g=J*d=0.7833772711。associations 完整 4 行、排除 2 行：mean_x=2、mean_y=3、Sxy=4、Sxx=2、Syy=10，cov=4/3=1.3333333333，pearson=4/sqrt(20)=0.8944271910；x 并列秩为 [1,2.5,2.5,4]、y 秩为 [1,2,3,4]，spearman=4.5/sqrt(22.5)=0.9486832981；slope=4/2=2、intercept=3-2*2=-1、SSE=2、residual_df=2、R2=1-2/10=0.8、slope_se=sqrt(2/2/2)=0.7071067812。hypotheses：famA 有效 m=2，按 p 排序 h1=0.01、h2=0.04，BH=[0.02,0.04]、BY=[0.03,0.06]、Holm=[0.02,0.04]、Bonferroni=[0.02,0.08]，alpha=0.05 下 h1 四种拒绝均 true，h2 仅 BH 与 Holm 拒绝；famB 有效 m=1，h3 p=0.2 的四种校正均为 0.2 且拒绝 false，h4 p=null 校正与拒绝均为 null 但 family_size=1；adjustments 共 4 行并按 (family,id) 排序。long_rows 源行 3、输出行 2、observed_missing=1、absent_cells=2*2-3=1；CLI --scale 2 使 r1 的 f1=1*2=2、f2=2*2=4，r2 的 f1 null 与 f2 不存在均写空。quality 汇总 observation_rows=14、profile_count=5、complete_pairs=7、excluded_pairs=2、association_complete=4、association_excluded=2、hypotheses=4。顶层键集合的否定式检查无法由当前声明式断言表达，以下断言覆盖七个键的内容与数组长度；CSV 列结构由 output_contract 规定，csv_rows 仅核对数据行与单元格值。",
+          "argv": [
+            "--input",
+            "{input:normal.json}",
+            "--output",
+            "{output}",
+            "--scale",
+            "2",
+            "--report-name",
+            "out.json",
+            "--wide-name",
+            "out.csv"
+          ],
+          "input_files": [
+            {
+              "path": "normal.json",
+              "format": "json",
+              "data": {
+                "fields": {
+                  "id": "sid",
+                  "group": "grp",
+                  "feature": "feat",
+                  "value": "val",
+                  "unit": "u",
+                  "before": "b",
+                  "after": "a",
+                  "x": "xx",
+                  "y": "yy",
+                  "family": "fam",
+                  "p": "pv"
+                },
+                "units": {
+                  "mg": 1,
+                  "ug": 0.5
+                },
+                "observations": [
+                  {
+                    "sid": "o1",
+                    "grp": "A",
+                    "feat": "f1",
+                    "val": 10,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o2",
+                    "grp": "A",
+                    "feat": "f1",
+                    "val": 20,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o3",
+                    "grp": "A",
+                    "feat": "f1",
+                    "val": 0,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o4",
+                    "grp": "A",
+                    "feat": "f1",
+                    "val": null,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o5",
+                    "grp": "A",
+                    "feat": "f2",
+                    "val": 100,
+                    "u": "ug"
+                  },
+                  {
+                    "sid": "o6",
+                    "grp": "B",
+                    "feat": "f1",
+                    "val": 10,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o7",
+                    "grp": "B",
+                    "feat": "f1",
+                    "val": 20,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o8",
+                    "grp": "B",
+                    "feat": "f1",
+                    "val": 30,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o9",
+                    "grp": "B",
+                    "feat": "f1",
+                    "val": 1000,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o10",
+                    "grp": "B",
+                    "feat": "f2",
+                    "val": 2,
+                    "u": "ug"
+                  },
+                  {
+                    "sid": "o11",
+                    "grp": "B",
+                    "feat": "f2",
+                    "val": 4,
+                    "u": "ug"
+                  },
+                  {
+                    "sid": "o12",
+                    "grp": "B",
+                    "feat": "f2",
+                    "val": 6,
+                    "u": "ug"
+                  },
+                  {
+                    "sid": "o13",
+                    "grp": "C",
+                    "feat": "f1",
+                    "val": null,
+                    "u": "mg"
+                  },
+                  {
+                    "sid": "o14",
+                    "grp": "C",
+                    "feat": "f1",
+                    "val": null,
+                    "u": "mg"
+                  }
+                ],
+                "pairs": [
+                  {
+                    "sid": "p1",
+                    "grp": "A",
+                    "b": 1,
+                    "a": 3
+                  },
+                  {
+                    "sid": "p2",
+                    "grp": "A",
+                    "b": 2,
+                    "a": 5
+                  },
+                  {
+                    "sid": "p3",
+                    "grp": "A",
+                    "b": 3,
+                    "a": 4
+                  },
+                  {
+                    "sid": "p4",
+                    "grp": "A",
+                    "b": 10,
+                    "a": null
+                  },
+                  {
+                    "sid": "p5",
+                    "grp": "B",
+                    "b": 10,
+                    "a": 15
+                  },
+                  {
+                    "sid": "p6",
+                    "grp": "B",
+                    "b": 20,
+                    "a": 25
+                  },
+                  {
+                    "sid": "p7",
+                    "grp": "B",
+                    "b": 30,
+                    "a": 33
+                  },
+                  {
+                    "sid": "p8",
+                    "grp": "B",
+                    "b": 5,
+                    "a": 6
+                  },
+                  {
+                    "sid": "p9",
+                    "grp": "B",
+                    "b": null,
+                    "a": 7
+                  }
+                ],
+                "associations": [
+                  {
+                    "sid": "a1",
+                    "xx": 1,
+                    "yy": 1
+                  },
+                  {
+                    "sid": "a2",
+                    "xx": 2,
+                    "yy": 2
+                  },
+                  {
+                    "sid": "a3",
+                    "xx": 2,
+                    "yy": 4
+                  },
+                  {
+                    "sid": "a4",
+                    "xx": 3,
+                    "yy": 5
+                  },
+                  {
+                    "sid": "a5",
+                    "xx": 4,
+                    "yy": null
+                  },
+                  {
+                    "sid": "a6",
+                    "xx": null,
+                    "yy": 10
+                  }
+                ],
+                "hypotheses": [
+                  {
+                    "sid": "h1",
+                    "fam": "famA",
+                    "pv": 0.01
+                  },
+                  {
+                    "sid": "h2",
+                    "fam": "famA",
+                    "pv": 0.04
+                  },
+                  {
+                    "sid": "h3",
+                    "fam": "famB",
+                    "pv": 0.2
+                  },
+                  {
+                    "sid": "h4",
+                    "fam": "famB",
+                    "pv": null
+                  }
+                ],
+                "long_rows": [
+                  {
+                    "sid": "r1",
+                    "feat": "f1",
+                    "val": 1
+                  },
+                  {
+                    "sid": "r1",
+                    "feat": "f2",
+                    "val": 2
+                  },
+                  {
+                    "sid": "r2",
+                    "feat": "f1",
+                    "val": null
+                  }
+                ]
+              }
+            }
+          ],
+          "expected_exit_code": 0,
+          "input_unchanged": true,
+          "assertions": [
+            {
+              "path": "out.json",
+              "pointer": "/quality/observation_rows",
+              "type": "json_value",
+              "expected": {
+                "value": 14,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/quality/profile_count",
+              "type": "json_value",
+              "expected": {
+                "value": 5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/quality/complete_pairs",
+              "type": "json_value",
+              "expected": {
+                "value": 7,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/quality/excluded_pairs",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/quality/association_complete",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/quality/association_excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/quality/hypotheses",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles",
+              "type": "json_array_length",
+              "length": 5
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/group",
+              "type": "json_value",
+              "expected": {
+                "value": "A",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/feature",
+              "type": "json_value",
+              "expected": {
+                "value": "f1",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/rows",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/missing",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/zeros",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/n",
+              "type": "json_value",
+              "expected": {
+                "value": 3,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 30,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/median",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/q1",
+              "type": "json_value",
+              "expected": {
+                "value": 5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/q3",
+              "type": "json_value",
+              "expected": {
+                "value": 15,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/minimum",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/maximum",
+              "type": "json_value",
+              "expected": {
+                "value": 20,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": 5.7735026919,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/mad",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/iqr",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/mad_outliers",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/0/iqr_outliers",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/1/group",
+              "type": "json_value",
+              "expected": {
+                "value": "A",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/1/feature",
+              "type": "json_value",
+              "expected": {
+                "value": "f2",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/1/n",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/1/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 50,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/1/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 50,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/1/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/1/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/group",
+              "type": "json_value",
+              "expected": {
+                "value": "B",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/feature",
+              "type": "json_value",
+              "expected": {
+                "value": "f1",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/rows",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/n",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 1060,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 265,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/median",
+              "type": "json_value",
+              "expected": {
+                "value": 25,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/q1",
+              "type": "json_value",
+              "expected": {
+                "value": 17.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/q3",
+              "type": "json_value",
+              "expected": {
+                "value": 272.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/minimum",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/maximum",
+              "type": "json_value",
+              "expected": {
+                "value": 1000,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/mad",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/iqr",
+              "type": "json_value",
+              "expected": {
+                "value": 255,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/mad_outliers",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/2/iqr_outliers",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/3/group",
+              "type": "json_value",
+              "expected": {
+                "value": "B",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/3/feature",
+              "type": "json_value",
+              "expected": {
+                "value": "f2",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/3/n",
+              "type": "json_value",
+              "expected": {
+                "value": 3,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/3/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 6,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/3/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/3/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/3/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": 0.5773502692,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/group",
+              "type": "json_value",
+              "expected": {
+                "value": "C",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/feature",
+              "type": "json_value",
+              "expected": {
+                "value": "f1",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/rows",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/missing",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/n",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/mean",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/mad",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/profiles/4/iqr",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired",
+              "type": "json_array_length",
+              "length": 2
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/group",
+              "type": "json_value",
+              "expected": {
+                "value": "A",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/n",
+              "type": "json_value",
+              "expected": {
+                "value": 3,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 6,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/median",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/q1",
+              "type": "json_value",
+              "expected": {
+                "value": 1.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/q3",
+              "type": "json_value",
+              "expected": {
+                "value": 2.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": 0.5773502692,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/permutations",
+              "type": "json_value",
+              "expected": {
+                "value": 8,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/p_value",
+              "type": "json_value",
+              "expected": {
+                "value": 0.25,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/0/direction",
+              "type": "json_value",
+              "expected": {
+                "value": "after-minus-before",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/group",
+              "type": "json_value",
+              "expected": {
+                "value": "B",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/n",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 14,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 3.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/median",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/q1",
+              "type": "json_value",
+              "expected": {
+                "value": 2.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/q3",
+              "type": "json_value",
+              "expected": {
+                "value": 5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": 1.9148542155,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": 0.9574271078,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/permutations",
+              "type": "json_value",
+              "expected": {
+                "value": 16,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/p_value",
+              "type": "json_value",
+              "expected": {
+                "value": 0.125,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/paired/1/direction",
+              "type": "json_value",
+              "expected": {
+                "value": "after-minus-before",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/group_a",
+              "type": "json_value",
+              "expected": {
+                "value": "A",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/group_b",
+              "type": "json_value",
+              "expected": {
+                "value": "B",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/n_a",
+              "type": "json_value",
+              "expected": {
+                "value": 3,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/n_b",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/mean_a",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/mean_b",
+              "type": "json_value",
+              "expected": {
+                "value": 3.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/difference_b_minus_a",
+              "type": "json_value",
+              "expected": {
+                "value": 1.5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/permutations",
+              "type": "json_value",
+              "expected": {
+                "value": 35,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/p_value",
+              "type": "json_value",
+              "expected": {
+                "value": 0.285714285714,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": 1.1180339887,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/welch_t",
+              "type": "json_value",
+              "expected": {
+                "value": 1.3416407865,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/welch_df",
+              "type": "json_value",
+              "expected": {
+                "value": 4.6551724138,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/pooled_sd",
+              "type": "json_value",
+              "expected": {
+                "value": 1.6124515497,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/cohen_d",
+              "type": "json_value",
+              "expected": {
+                "value": 0.9302605094,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/hedges_correction",
+              "type": "json_value",
+              "expected": {
+                "value": 0.8421052632,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/comparison/hedges_g",
+              "type": "json_value",
+              "expected": {
+                "value": 0.7833772711,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/n",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/mean_x",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/mean_y",
+              "type": "json_value",
+              "expected": {
+                "value": 3,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/covariance",
+              "type": "json_value",
+              "expected": {
+                "value": 1.3333333333,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/pearson",
+              "type": "json_value",
+              "expected": {
+                "value": 0.894427191,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/spearman",
+              "type": "json_value",
+              "expected": {
+                "value": 0.9486832981,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/slope",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/intercept",
+              "type": "json_value",
+              "expected": {
+                "value": -1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/residual_df",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/sse",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/r_squared",
+              "type": "json_value",
+              "expected": {
+                "value": 0.8,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/association/slope_se",
+              "type": "json_value",
+              "expected": {
+                "value": 0.7071067812,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments",
+              "type": "json_array_length",
+              "length": 4
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/family",
+              "type": "json_value",
+              "expected": {
+                "value": "famA",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/id",
+              "type": "json_value",
+              "expected": {
+                "value": "h1",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/family_size",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/bh",
+              "type": "json_value",
+              "expected": {
+                "value": 0.02,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/by",
+              "type": "json_value",
+              "expected": {
+                "value": 0.03,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/holm",
+              "type": "json_value",
+              "expected": {
+                "value": 0.02,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": 0.02,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/reject_bh",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/reject_by",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/reject_holm",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/0/reject_bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/id",
+              "type": "json_value",
+              "expected": {
+                "value": "h2",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/family_size",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/bh",
+              "type": "json_value",
+              "expected": {
+                "value": 0.04,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/by",
+              "type": "json_value",
+              "expected": {
+                "value": 0.06,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/holm",
+              "type": "json_value",
+              "expected": {
+                "value": 0.04,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": 0.08,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/reject_bh",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/reject_by",
+              "type": "json_value",
+              "expected": {
+                "value": false,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/reject_holm",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/1/reject_bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": false,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/family",
+              "type": "json_value",
+              "expected": {
+                "value": "famB",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/id",
+              "type": "json_value",
+              "expected": {
+                "value": "h3",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/family_size",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/bh",
+              "type": "json_value",
+              "expected": {
+                "value": 0.2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/by",
+              "type": "json_value",
+              "expected": {
+                "value": 0.2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/holm",
+              "type": "json_value",
+              "expected": {
+                "value": 0.2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": 0.2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/reject_bh",
+              "type": "json_value",
+              "expected": {
+                "value": false,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/reject_by",
+              "type": "json_value",
+              "expected": {
+                "value": false,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/reject_holm",
+              "type": "json_value",
+              "expected": {
+                "value": false,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/2/reject_bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": false,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/id",
+              "type": "json_value",
+              "expected": {
+                "value": "h4",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/p",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/family_size",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/bh",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/by",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/holm",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/reject_bh",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/reject_by",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/reject_holm",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/adjustments/3/reject_bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/pivot/quality/source_rows",
+              "type": "json_value",
+              "expected": {
+                "value": 3,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/pivot/quality/output_rows",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/pivot/quality/observed_missing",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "out.json",
+              "pointer": "/pivot/quality/absent_cells",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "type": "csv_rows",
+              "path": "out.csv",
+              "match": {},
+              "count": 2,
+              "fields": {}
+            },
+            {
+              "type": "csv_rows",
+              "path": "out.csv",
+              "match": {
+                "id": "r1"
+              },
+              "count": 1,
+              "fields": {
+                "f1": {
+                  "value": 2,
+                  "atol": 0.0,
+                  "rtol": 0.0
+                },
+                "f2": {
+                  "value": 4,
+                  "atol": 0.0,
+                  "rtol": 0.0
+                }
+              }
+            },
+            {
+              "type": "csv_rows",
+              "path": "out.csv",
+              "match": {
+                "id": "r2"
+              },
+              "count": 1,
+              "fields": {
+                "f1": {
+                  "value": null,
+                  "atol": 0.0,
+                  "rtol": 0.0
+                },
+                "f2": {
+                  "value": null,
+                  "atol": 0.0,
+                  "rtol": 0.0
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "boundary_edges_and_overrides",
+          "kind": "boundary",
+          "description": "覆盖全缺失组、常量组、零差值配对、零方差组间比较、x 常量回归、全 null 校正家族、空长表以及 CLI 覆盖 JSON 参数配置的边界合成用例。",
+          "requirement_ids": [
+            "R002",
+            "R004",
+            "R005",
+            "R006",
+            "R007",
+            "R008",
+            "R009",
+            "R010",
+            "R011",
+            "R012",
+            "R013",
+            "R014",
+            "R015",
+            "R016",
+            "R017",
+            "R018",
+            "R019"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "独立推导：JSON 中 fields 为无效于数据的自定义键，CLI --fields-json 整体覆盖为默认角色名，数据使用默认列名；若 CLI 未覆盖则脚本会因找不到 j_id 等列而失败，故成功本身检验字段映射优先级。JSON units={\"mg\":1}，CLI --units-json={\"mg\":2} 整体覆盖；observations 的 B/f1 原值 [5,5] 换算后为 [10,10]，n=2、sum=20、mean=10、median=10、q1=10、q3=10、sample_sd=0、SE=0、MAD=0、IQR=0，MAD=0 时不标记任何点，故 mad_outliers=0、iqr_outliers=0；A/f1 两行全 null，n=0、sum=0、mean/median/q1/q3/min/max/sample_sd/SE/MAD/IQR 均为 null，全缺失组保留。profiles 按 group、feature 排序为 A/f1、B/f1，共 2 组。pairs 中 A 与 B 各 2 个完整配对且差值均为 0：A n=2、sum=0、mean=0、2^2=4 个符号组合全部满足 |翻转均值|>=0-1e-12，p=4/4=1；B 同理 n=2、p=1、permutations=4；两组 excluded 均为 0，direction 为 after-minus-before。组间比较 n_a=2、n_b=2、mean_a=0、mean_b=0、difference=0，permutations=C(4,2)=6，全部标签组合的均值差为 0，p=6/6=1；va=vb=0，SE=sqrt(0/2+0/2)=0，Welch t=0/0 为 null，Welch df=0/0 为 null，pooled_sd=sqrt((1*0+1*0)/(4-2))=0，cohen_d=0/0 为 null，J=1-3/(4*(4-2)-1)=1-3/7=4/7=0.5714285714，g=J*d 为 null，两组保留。associations 完整行 x=[5,5]、y=[1,3]，n=2、excluded=1、mean_x=5、mean_y=2，Sxy=0、covariance=0/(2-1)=0；x 零方差故 pearson=null、spearman=null；x 常量故 slope/intercept/sse/r_squared/slope_se 均为 null，不返回 NaN。hypotheses：famX 两行 p 均为 null，有效 m=0，family_size=0、校正与拒绝均为 null；famY 仅 h3 p=0.08，有效 m=1，BH=BY=Holm=Bonferroni=0.08；JSON alpha=0.05 被 CLI --alpha 0.1 覆盖，0.08<=0.1 故四种 reject 均为 true；adjustments 按 (family,id) 排序为 famX/h1、famX/h2、famY/h3。long_rows 为空，pivot.quality 的 source_rows/output_rows/observed_missing/absent_cells 均为 0；wide.csv 为仅有表头的有效空表，csv_rows 只能断言零数据行，表头 id 的列结构由 output_contract 规定，未在 csv_rows 中断言列名。quality 汇总 observation_rows=4、profile_count=2、complete_pairs=4、excluded_pairs=0、association_complete=2、association_excluded=1、hypotheses=3。",
+          "argv": [
+            "--input",
+            "{input:boundary.json}",
+            "--output",
+            "{output}",
+            "--fields-json",
+            "{\"id\":\"id\",\"group\":\"group\",\"feature\":\"feature\",\"value\":\"value\",\"unit\":\"unit\",\"before\":\"before\",\"after\":\"after\",\"x\":\"x\",\"y\":\"y\",\"family\":\"family\",\"p\":\"p\"}",
+            "--units-json",
+            "{\"mg\":2}",
+            "--alpha",
+            "0.1"
+          ],
+          "input_files": [
+            {
+              "path": "boundary.json",
+              "format": "json",
+              "data": {
+                "fields": {
+                  "id": "j_id",
+                  "group": "j_group",
+                  "feature": "j_feature",
+                  "value": "j_value",
+                  "unit": "j_unit",
+                  "before": "j_before",
+                  "after": "j_after",
+                  "x": "j_x",
+                  "y": "j_y",
+                  "family": "j_family",
+                  "p": "j_p"
+                },
+                "units": {
+                  "mg": 1
+                },
+                "alpha": 0.05,
+                "observations": [
+                  {
+                    "id": "o1",
+                    "group": "A",
+                    "feature": "f1",
+                    "value": null,
+                    "unit": "mg"
+                  },
+                  {
+                    "id": "o2",
+                    "group": "A",
+                    "feature": "f1",
+                    "value": null,
+                    "unit": "mg"
+                  },
+                  {
+                    "id": "o3",
+                    "group": "B",
+                    "feature": "f1",
+                    "value": 5,
+                    "unit": "mg"
+                  },
+                  {
+                    "id": "o4",
+                    "group": "B",
+                    "feature": "f1",
+                    "value": 5,
+                    "unit": "mg"
+                  }
+                ],
+                "pairs": [
+                  {
+                    "id": "p1",
+                    "group": "A",
+                    "before": 1,
+                    "after": 1
+                  },
+                  {
+                    "id": "p2",
+                    "group": "A",
+                    "before": 2,
+                    "after": 2
+                  },
+                  {
+                    "id": "p3",
+                    "group": "B",
+                    "before": 3,
+                    "after": 3
+                  },
+                  {
+                    "id": "p4",
+                    "group": "B",
+                    "before": 4,
+                    "after": 4
+                  }
+                ],
+                "associations": [
+                  {
+                    "id": "a1",
+                    "x": 5,
+                    "y": 1
+                  },
+                  {
+                    "id": "a2",
+                    "x": 5,
+                    "y": 3
+                  },
+                  {
+                    "id": "a3",
+                    "x": null,
+                    "y": 10
+                  }
+                ],
+                "hypotheses": [
+                  {
+                    "id": "h1",
+                    "family": "famX",
+                    "p": null
+                  },
+                  {
+                    "id": "h2",
+                    "family": "famX",
+                    "p": null
+                  },
+                  {
+                    "id": "h3",
+                    "family": "famY",
+                    "p": 0.08
+                  }
+                ],
+                "long_rows": []
+              }
+            }
+          ],
+          "expected_exit_code": 0,
+          "input_unchanged": true,
+          "assertions": [
+            {
+              "path": "report.json",
+              "pointer": "/quality/observation_rows",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/quality/profile_count",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/quality/complete_pairs",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/quality/excluded_pairs",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/quality/association_complete",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/quality/association_excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/quality/hypotheses",
+              "type": "json_value",
+              "expected": {
+                "value": 3,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles",
+              "type": "json_array_length",
+              "length": 2
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/group",
+              "type": "json_value",
+              "expected": {
+                "value": "A",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/feature",
+              "type": "json_value",
+              "expected": {
+                "value": "f1",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/rows",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/missing",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/n",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/mean",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/median",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/mad",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/0/iqr",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/group",
+              "type": "json_value",
+              "expected": {
+                "value": "B",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/feature",
+              "type": "json_value",
+              "expected": {
+                "value": "f1",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/rows",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/missing",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/zeros",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/n",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 20,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/median",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/q1",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/q3",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/minimum",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/maximum",
+              "type": "json_value",
+              "expected": {
+                "value": 10,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/sample_sd",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/mad",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/iqr",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/mad_outliers",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/profiles/1/iqr_outliers",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired",
+              "type": "json_array_length",
+              "length": 2
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/group",
+              "type": "json_value",
+              "expected": {
+                "value": "A",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/n",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/permutations",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/p_value",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/0/direction",
+              "type": "json_value",
+              "expected": {
+                "value": "after-minus-before",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/group",
+              "type": "json_value",
+              "expected": {
+                "value": "B",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/n",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/sum",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/mean",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/permutations",
+              "type": "json_value",
+              "expected": {
+                "value": 4,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/p_value",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/paired/1/direction",
+              "type": "json_value",
+              "expected": {
+                "value": "after-minus-before",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/n_a",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/n_b",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/mean_a",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/mean_b",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/difference_b_minus_a",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/permutations",
+              "type": "json_value",
+              "expected": {
+                "value": 6,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/p_value",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/standard_error",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/welch_t",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/welch_df",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/pooled_sd",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/cohen_d",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/hedges_correction",
+              "type": "json_value",
+              "expected": {
+                "value": 0.5714285714,
+                "atol": 1e-09,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/comparison/hedges_g",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/n",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/excluded",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/mean_x",
+              "type": "json_value",
+              "expected": {
+                "value": 5,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/mean_y",
+              "type": "json_value",
+              "expected": {
+                "value": 2,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/covariance",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/pearson",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/spearman",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/slope",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/intercept",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/sse",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/r_squared",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/association/slope_se",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments",
+              "type": "json_array_length",
+              "length": 3
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/0/family",
+              "type": "json_value",
+              "expected": {
+                "value": "famX",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/0/id",
+              "type": "json_value",
+              "expected": {
+                "value": "h1",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/0/p",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/0/family_size",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/0/bh",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/0/reject_bh",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/1/id",
+              "type": "json_value",
+              "expected": {
+                "value": "h2",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/1/family_size",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/1/bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": null,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/family",
+              "type": "json_value",
+              "expected": {
+                "value": "famY",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/id",
+              "type": "json_value",
+              "expected": {
+                "value": "h3",
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/p",
+              "type": "json_value",
+              "expected": {
+                "value": 0.08,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/family_size",
+              "type": "json_value",
+              "expected": {
+                "value": 1,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/bh",
+              "type": "json_value",
+              "expected": {
+                "value": 0.08,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/by",
+              "type": "json_value",
+              "expected": {
+                "value": 0.08,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/holm",
+              "type": "json_value",
+              "expected": {
+                "value": 0.08,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": 0.08,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/reject_bh",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/reject_by",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/reject_holm",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/adjustments/2/reject_bonferroni",
+              "type": "json_value",
+              "expected": {
+                "value": true,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/pivot/quality/source_rows",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/pivot/quality/output_rows",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/pivot/quality/observed_missing",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "path": "report.json",
+              "pointer": "/pivot/quality/absent_cells",
+              "type": "json_value",
+              "expected": {
+                "value": 0,
+                "atol": 0.0,
+                "rtol": 0.0
+              }
+            },
+            {
+              "type": "csv_rows",
+              "path": "wide.csv",
+              "match": {},
+              "count": 0,
+              "fields": {}
+            }
+          ]
+        },
+        {
+          "id": "invalid_missing_table",
+          "kind": "invalid",
+          "description": "缺少必需 observations 表的合成输入应被整体拒绝。",
+          "requirement_ids": [
+            "R003",
+            "R018"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "方法契约要求 observations、pairs、associations、hypotheses、long_rows 五张对象数组全部存在；该输入仅有四张表，缺少 observations，必须在写出任何文件前拒绝整个任务，预期非零退出且不作产物断言。",
+          "argv": [
+            "--input",
+            "{input:missing_observations.json}",
+            "--output",
+            "{output}"
+          ],
+          "input_files": [
+            {
+              "path": "missing_observations.json",
+              "format": "json",
+              "data": {
+                "pairs": [
+                  {
+                    "id": "p1",
+                    "group": "A",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p2",
+                    "group": "A",
+                    "before": 2,
+                    "after": 3
+                  },
+                  {
+                    "id": "p3",
+                    "group": "B",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p4",
+                    "group": "B",
+                    "before": 2,
+                    "after": 3
+                  }
+                ],
+                "associations": [
+                  {
+                    "id": "a1",
+                    "x": 1,
+                    "y": 2
+                  },
+                  {
+                    "id": "a2",
+                    "x": 2,
+                    "y": 3
+                  }
+                ],
+                "hypotheses": [],
+                "long_rows": []
+              }
+            }
+          ],
+          "expected_exit_code": "nonzero",
+          "input_unchanged": true,
+          "assertions": []
+        },
+        {
+          "id": "invalid_unknown_unit_null",
+          "kind": "invalid",
+          "description": "value 为 null 但 unit 不在 units 映射中的观测行应被拒绝。",
+          "requirement_ids": [
+            "R005",
+            "R007",
+            "R018"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "方法契约规定 unit 必须存在于 units 映射，即使 value 为 null 也要校验；默认 units 仅含 mg 与 ug，输入行 unit=kg 且 value=null，故必须非零退出且不产生部分输出。",
+          "argv": [
+            "--input",
+            "{input:unknown_unit.json}",
+            "--output",
+            "{output}"
+          ],
+          "input_files": [
+            {
+              "path": "unknown_unit.json",
+              "format": "json",
+              "data": {
+                "observations": [
+                  {
+                    "id": "o1",
+                    "group": "A",
+                    "feature": "f1",
+                    "value": null,
+                    "unit": "kg"
+                  }
+                ],
+                "pairs": [
+                  {
+                    "id": "p1",
+                    "group": "A",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p2",
+                    "group": "A",
+                    "before": 2,
+                    "after": 3
+                  },
+                  {
+                    "id": "p3",
+                    "group": "B",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p4",
+                    "group": "B",
+                    "before": 2,
+                    "after": 3
+                  }
+                ],
+                "associations": [
+                  {
+                    "id": "a1",
+                    "x": 1,
+                    "y": 2
+                  },
+                  {
+                    "id": "a2",
+                    "x": 2,
+                    "y": 3
+                  }
+                ],
+                "hypotheses": [],
+                "long_rows": []
+              }
+            }
+          ],
+          "expected_exit_code": "nonzero",
+          "input_unchanged": true,
+          "assertions": []
+        },
+        {
+          "id": "invalid_string_number",
+          "kind": "invalid",
+          "description": "观测值用字符串形式表示数字的输入应被拒绝。",
+          "requirement_ids": [
+            "R005",
+            "R018"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "方法契约要求所有非 null 数值必须为有限数值且非布尔，明确拒绝字符串形式的数字；该 observations 行 value=\"5\" 为字符串，故必须非零退出且不产生输出文件。",
+          "argv": [
+            "--input",
+            "{input:string_number.json}",
+            "--output",
+            "{output}"
+          ],
+          "input_files": [
+            {
+              "path": "string_number.json",
+              "format": "json",
+              "data": {
+                "observations": [
+                  {
+                    "id": "o1",
+                    "group": "A",
+                    "feature": "f1",
+                    "value": "5",
+                    "unit": "mg"
+                  }
+                ],
+                "pairs": [
+                  {
+                    "id": "p1",
+                    "group": "A",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p2",
+                    "group": "A",
+                    "before": 2,
+                    "after": 3
+                  },
+                  {
+                    "id": "p3",
+                    "group": "B",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p4",
+                    "group": "B",
+                    "before": 2,
+                    "after": 3
+                  }
+                ],
+                "associations": [
+                  {
+                    "id": "a1",
+                    "x": 1,
+                    "y": 2
+                  },
+                  {
+                    "id": "a2",
+                    "x": 2,
+                    "y": 3
+                  }
+                ],
+                "hypotheses": [],
+                "long_rows": []
+              }
+            }
+          ],
+          "expected_exit_code": "nonzero",
+          "input_unchanged": true,
+          "assertions": []
+        },
+        {
+          "id": "invalid_duplicate_long",
+          "kind": "invalid",
+          "description": "long_rows 中重复 (id,feature) 组合的输入应被拒绝。",
+          "requirement_ids": [
+            "R016",
+            "R018"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "方法契约要求 long_rows 的 (id,feature) 不得重复；该输入在 r1/f1 上出现两行，违反转换唯一性约束，必须在写出 wide.csv 与 report.json 前拒绝整个任务，预期非零退出。",
+          "argv": [
+            "--input",
+            "{input:duplicate_long.json}",
+            "--output",
+            "{output}"
+          ],
+          "input_files": [
+            {
+              "path": "duplicate_long.json",
+              "format": "json",
+              "data": {
+                "observations": [
+                  {
+                    "id": "o1",
+                    "group": "A",
+                    "feature": "f1",
+                    "value": 1,
+                    "unit": "mg"
+                  }
+                ],
+                "pairs": [
+                  {
+                    "id": "p1",
+                    "group": "A",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p2",
+                    "group": "A",
+                    "before": 2,
+                    "after": 3
+                  },
+                  {
+                    "id": "p3",
+                    "group": "B",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p4",
+                    "group": "B",
+                    "before": 2,
+                    "after": 3
+                  }
+                ],
+                "associations": [
+                  {
+                    "id": "a1",
+                    "x": 1,
+                    "y": 2
+                  },
+                  {
+                    "id": "a2",
+                    "x": 2,
+                    "y": 3
+                  }
+                ],
+                "hypotheses": [],
+                "long_rows": [
+                  {
+                    "id": "r1",
+                    "feature": "f1",
+                    "value": 1
+                  },
+                  {
+                    "id": "r1",
+                    "feature": "f1",
+                    "value": 2
+                  }
+                ]
+              }
+            }
+          ],
+          "expected_exit_code": "nonzero",
+          "input_unchanged": true,
+          "assertions": []
+        },
+        {
+          "id": "invalid_group_same",
+          "kind": "invalid",
+          "description": "group_a 与 group_b 取相同值的输入应被拒绝。",
+          "requirement_ids": [
+            "R006",
+            "R018"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "方法契约规定 group_a 与 group_b 可参数化但必须不同；该输入将二者均设为 A，尽管五张表本身可解析，仍应在组间比较前以非零状态拒绝，且不写出 report.json 或 wide.csv。",
+          "argv": [
+            "--input",
+            "{input:group_same.json}",
+            "--output",
+            "{output}"
+          ],
+          "input_files": [
+            {
+              "path": "group_same.json",
+              "format": "json",
+              "data": {
+                "group_a": "A",
+                "group_b": "A",
+                "observations": [
+                  {
+                    "id": "o1",
+                    "group": "A",
+                    "feature": "f1",
+                    "value": 1,
+                    "unit": "mg"
+                  }
+                ],
+                "pairs": [
+                  {
+                    "id": "p1",
+                    "group": "A",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p2",
+                    "group": "A",
+                    "before": 2,
+                    "after": 3
+                  },
+                  {
+                    "id": "p3",
+                    "group": "B",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p4",
+                    "group": "B",
+                    "before": 2,
+                    "after": 3
+                  }
+                ],
+                "associations": [
+                  {
+                    "id": "a1",
+                    "x": 1,
+                    "y": 2
+                  },
+                  {
+                    "id": "a2",
+                    "x": 2,
+                    "y": 3
+                  }
+                ],
+                "hypotheses": [],
+                "long_rows": []
+              }
+            }
+          ],
+          "expected_exit_code": "nonzero",
+          "input_unchanged": true,
+          "assertions": []
+        },
+        {
+          "id": "invalid_same_path",
+          "kind": "invalid",
+          "description": "--input 与 --output 解析为同一实际路径时应在任何写操作前拒绝。",
+          "requirement_ids": [
+            "R002",
+            "R018",
+            "R019",
+            "R020"
+          ],
+          "source_ids": [
+            "S001",
+            "S002",
+            "S003"
+          ],
+          "oracle_explanation": "该用例把 --output 绑定到已声明的输入文件本身，使两条路径解析后相同；方法契约要求输入输出实际路径不同并在任何写操作前拒绝，预期非零退出且无产物断言，宿主同时核对输入文件哈希不变。",
+          "argv": [
+            "--input",
+            "{input:same_path.json}",
+            "--output",
+            "{input:same_path.json}"
+          ],
+          "input_files": [
+            {
+              "path": "same_path.json",
+              "format": "json",
+              "data": {
+                "observations": [
+                  {
+                    "id": "o1",
+                    "group": "A",
+                    "feature": "f1",
+                    "value": 1,
+                    "unit": "mg"
+                  }
+                ],
+                "pairs": [
+                  {
+                    "id": "p1",
+                    "group": "A",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p2",
+                    "group": "A",
+                    "before": 2,
+                    "after": 3
+                  },
+                  {
+                    "id": "p3",
+                    "group": "B",
+                    "before": 1,
+                    "after": 2
+                  },
+                  {
+                    "id": "p4",
+                    "group": "B",
+                    "before": 2,
+                    "after": 3
+                  }
+                ],
+                "associations": [
+                  {
+                    "id": "a1",
+                    "x": 1,
+                    "y": 2
+                  },
+                  {
+                    "id": "a2",
+                    "x": 2,
+                    "y": 3
+                  }
+                ],
+                "hypotheses": [],
+                "long_rows": []
+              }
+            }
+          ],
+          "expected_exit_code": "nonzero",
+          "input_unchanged": true,
+          "assertions": []
+        }
+      ]
+    }
+  ]
+}

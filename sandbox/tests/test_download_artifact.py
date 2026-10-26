@@ -3,24 +3,24 @@ import zipfile
 from app.services.artifact_validation import validate_artifacts
 
 
-def test_zip_data_delivery_requires_valid_bounded_archive(tmp_path):
+def test_explicit_zip_content_inspection_requires_valid_bounded_archive(tmp_path):
     file = tmp_path / 'genome.zip'
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as z:
         z.writestr('data/sequence.fna', '>sequence\nACGT\n')
     file.write_bytes(buffer.getvalue())
-    result = validate_artifacts([{'path': str(file), 'kind': 'data'}], root=tmp_path)['files'][0]
+    result = validate_artifacts([{'path': str(file), 'kind': 'data'}], root=tmp_path, purpose="content")['files'][0]
     assert result['valid'] and result['metadata']['format'] == 'ZIP'
     assert result['sha256'] and result['size'] == len(buffer.getvalue())
     file.write_bytes(b'<html>download failed</html>')
-    assert not validate_artifacts([{'path': str(file), 'kind': 'data'}], root=tmp_path)['files'][0]['valid']
+    assert not validate_artifacts([{'path': str(file), 'kind': 'data'}], root=tmp_path, purpose="content")['files'][0]['valid']
 
 
-def test_archive_traversal_is_not_a_downloadable_result(tmp_path):
+def test_explicit_archive_content_inspection_rejects_traversal(tmp_path):
     file = tmp_path / 'bad.zip'
     with zipfile.ZipFile(file, 'w') as z:
         z.writestr('../escape', 'bad')
-    result = validate_artifacts([{'path': str(file), 'kind': 'data'}], root=tmp_path)['files'][0]
+    result = validate_artifacts([{'path': str(file), 'kind': 'data'}], root=tmp_path, purpose="content")['files'][0]
     assert not result['valid']
 
 

@@ -27,6 +27,14 @@ class Cache(Protocol):
             Any: The stored value (JSON deserialized), None if not found or expired
         """
         ...
+
+    async def set_if_absent(self, key: str, value: Any, ttl: int) -> bool:
+        """Atomically reserve a key; storage failures must raise."""
+        ...
+
+    async def verify_one_time_code(self, key: str, digest: str, legacy_code: str) -> bool:
+        """Atomically count an attempt and consume a matching, unexpired code."""
+        ...
     
     async def delete(self, key: str) -> bool:
         """Delete a value from cache

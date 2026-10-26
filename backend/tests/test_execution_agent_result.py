@@ -336,6 +336,7 @@ async def test_execution_result_accepts_substantive_text_containing_placeholder_
 ])
 async def test_non_substantive_ask_user_is_not_invoked_or_emitted(ask_text):
     agent = object.__new__(ExecutionAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent._dataset_fast_path_mode = True
     agent._dataset_intent = ExecutionAgent.DATASET_INTENT_ANALYSIS
@@ -505,6 +506,7 @@ async def test_execute_step_emits_valid_ask_only_after_success_then_waits():
 @pytest.mark.asyncio
 async def test_explicit_stdout_request_finishes_after_one_successful_shell_batch():
     agent = object.__new__(ExecutionAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 4
     agent._dataset_fast_path_mode = True
     agent._dataset_intent = ExecutionAgent.DATASET_INTENT_ANALYSIS
@@ -543,7 +545,7 @@ async def test_explicit_stdout_request_finishes_after_one_successful_shell_batch
     agent.ask_with_messages.assert_awaited_once()
     call = agent.ask_with_messages.await_args
     assert call.kwargs["allow_tools"] is False
-    assert call.kwargs["max_tokens"] == agent.TOOL_FREE_COMPLETION_MAX_TOKENS
+    assert call.kwargs.get("max_tokens") is None
     assert "50 JPG" in call.args[0][-1].content
     assert all("50 JPG" not in item.content for item in call.args[0][:-1])
 
@@ -642,6 +644,7 @@ def test_mixed_shell_deliverables_do_not_terminate_at_first_output(query):
 @pytest.mark.asyncio
 async def test_invalid_raw_stdout_synthesis_falls_back_to_natural_summary_once():
     agent = object.__new__(ExecutionAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 4
     agent._dataset_fast_path_mode = False
     agent._current_plan = Plan(language="zh")
@@ -704,6 +707,7 @@ def test_shell_summary_validation_rejects_sensitive_values_paths_and_attachments
 @pytest.mark.asyncio
 async def test_stdout_summary_timeout_returns_local_summary_without_error():
     agent = object.__new__(ExecutionAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 4
     agent.TOOL_FREE_COMPLETION_TIMEOUT_SECONDS = 0.01
     agent._dataset_fast_path_mode = False
@@ -902,6 +906,7 @@ def _agent_with_model_chain(side_effect, *, retry_attempts: int = 3):
     runnable = MagicMock()
     chain = MagicMock()
     chain.ainvoke = AsyncMock(side_effect=side_effect)
+    runnable.ainvoke = chain.ainvoke
     runnable.bind_tools.return_value = runnable
     runnable.__or__.return_value = chain
     model.bind.return_value = runnable
@@ -1006,6 +1011,7 @@ async def test_single_call_max_tokens_override_does_not_change_default_model_cal
 @pytest.mark.asyncio
 async def test_unknown_tool_call_receives_tool_message_before_next_model_turn():
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent.max_retries = 0
     agent.retry_interval = 0
@@ -1042,6 +1048,7 @@ async def test_unknown_tool_call_receives_tool_message_before_next_model_turn():
 @pytest.mark.asyncio
 async def test_common_shell_write_alias_resolves_without_user_error():
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent.max_retries = 0
     agent.retry_interval = 0
@@ -1067,6 +1074,7 @@ async def test_common_shell_write_alias_resolves_without_user_error():
 @pytest.mark.asyncio
 async def test_tool_result_is_bound_to_the_active_tool_call_id():
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent.max_retries = 0
     agent.retry_interval = 0
@@ -1102,6 +1110,7 @@ async def test_tool_result_is_bound_to_the_active_tool_call_id():
 @pytest.mark.asyncio
 async def test_large_tool_result_is_bounded_before_agent_memory_is_saved():
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent.max_retries = 0
     agent.retry_interval = 0
@@ -1145,6 +1154,7 @@ async def test_large_tool_result_is_bounded_before_agent_memory_is_saved():
 @pytest.mark.asyncio
 async def test_successful_file_write_content_is_not_replayed_to_the_model():
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent.max_retries = 0
     agent.retry_interval = 0
@@ -1190,6 +1200,7 @@ async def test_successful_file_write_content_is_not_replayed_to_the_model():
 @pytest.mark.asyncio
 async def test_successful_shell_run_command_is_compacted_before_next_model_turn():
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent.max_retries = 0
     agent.retry_interval = 0

@@ -103,15 +103,15 @@ async def test_valid_authorization_exposes_verified_uid(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_submission_body_token_route_bypasses_header_authentication():
+async def test_retired_submission_path_no_longer_bypasses_header_authentication():
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=_app()),
         base_url="http://test",
     ) as client:
         response = await client.post("/api/v1/datasets/submissions", json={})
 
-    assert response.status_code == 200
-    assert response.json() == {"accepted": True}
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://space.4fair.cn"
 
 
 @pytest.mark.asyncio

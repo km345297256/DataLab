@@ -48,6 +48,9 @@
         </div>
       </div>
     </div>
+    <AnalysisClarificationCard v-else-if="clarification" :clarification="clarification"
+      :pending="clarificationPending && !isShare" :disabled="!canAnswerClarification || isShare"
+      @answer="$emit('answerClarification', $event)" />
     <template v-else>
       <div
         class="max-w-none p-0 m-0 prose prose-sm sm:prose-base dark:prose-invert [&_pre:not(.shiki)]:!bg-[var(--fill-tsp-white-light)] [&_pre:not(.shiki)]:text-[var(--text-primary)] text-base text-[var(--text-primary)]"
@@ -101,8 +104,9 @@
       </div>
     </template>
     <AnalysisOutcomeNotice
-      v-if="analysisOutcome && analysisOutcome.status !== 'succeeded'"
+      v-if="analysisOutcome && (analysisOutcome.status !== 'succeeded' || analysisOutcome.missing.length || analysisOutcome.issues?.length)"
       :outcome="analysisOutcome"
+      :has-delivered-files="hasDeliveredAnalysisFiles(message)"
       :allow-resume="allowAnalysisResume && !isShare && !safetyReview"
       @resume="$emit('resumeAnalysis')"
     />
@@ -114,9 +118,9 @@
             <button type="button" class="flex size-8 items-center justify-center rounded text-zinc-300 hover:bg-white/10 hover:text-white" aria-label="关闭" @click="closeFeedbackDialog"><X :size="18" /></button>
           </div>
           <div class="mt-4 flex flex-wrap gap-2">
-            <button v-for="reason in dislikeReasonOptions" :key="reason" type="button" class="rounded-full border px-3 py-1.5 text-sm transition-colors" :class="selectedDislikeReasons.includes(reason) ? 'border-[#3b82f6] bg-[#1d4f91]/40 text-white' : 'border-zinc-600 text-zinc-100 hover:bg-white/10'" @click="toggleDislikeReason(reason)">{{ reason }}</button>
+            <button v-for="reason in dislikeReasonOptions" :key="reason" type="button" class="rounded-full border px-3 py-1.5 text-sm transition-colors" :class="selectedDislikeReasons.includes(reason) ? 'border-[#a9cbbb] bg-[#2b7659]/40 text-white' : 'border-zinc-600 text-zinc-100 hover:bg-white/10'" @click="toggleDislikeReason(reason)">{{ reason }}</button>
           </div>
-          <textarea v-model="dislikeDetail" rows="4" maxlength="2000" class="mt-4 w-full resize-none rounded-lg border border-[#3b82f6] bg-[#1d1d1d] px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-400 focus:ring-1 focus:ring-[#60a5fa]" placeholder="分享详细信息（可选）" />
+          <textarea v-model="dislikeDetail" rows="4" maxlength="2000" class="mt-4 w-full resize-none rounded-lg border border-zinc-600 bg-[#1d1d1d] px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-400 focus:ring-1 focus:ring-[var(--control-focus-color)]" placeholder="分享详细信息（可选）" />
           <p class="mt-3 rounded-md bg-zinc-700 px-3 py-2 text-xs leading-5 text-zinc-200">你的对话内容将随反馈一并提交，以帮助改进 DataLab。</p>
           <div class="mt-4 flex justify-end gap-2">
             <button type="button" class="rounded-md px-3 py-2 text-sm text-zinc-200 hover:bg-white/10" @click="closeFeedbackDialog">取消</button>
@@ -127,14 +131,14 @@
     </Teleport>
   </div>
   <div v-else-if="message.type === 'tool'" class="flex min-w-0 flex-col">
-    <ToolUse :session-id="sessionId" :is-share="isShare" :tool="toolContent" @click="handleToolClick(toolContent)" />
+    <ToolUse :session-id="sessionId" :is-share="isShare" :suppress-skill-creation="suppressSkillCreation" :tool="toolContent" @click="handleToolClick(toolContent)" />
     <ToolApprovalCard v-if="toolContent.tool_approval" :initial="toolContent.tool_approval" :session-id="sessionId" :is-share="isShare" />
     <DeclarativeToolCard v-if="toolContent.status === 'called'" :tool="toolContent" />
   </div>
   <div v-else-if="message.type === 'step'" class="flex flex-col">
     <div v-if="stepContent.status === 'running'" class="mb-2 flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-      <span class="size-3.5 animate-spin rounded-full border-2 border-[var(--border-dark)] border-t-transparent" aria-hidden="true" />
-      <span>思考中...</span>
+      <span v-if="!waitingForUser" class="size-3.5 animate-spin rounded-full border-2 border-[var(--border-dark)] border-t-transparent" aria-hidden="true" />
+      <span>{{ waitingForUser ? '等待你的确认' : '思考中...' }}</span>
     </div>
     <p v-if="stepContent.status === 'unknown'" class="mb-2 text-xs text-[var(--text-secondary)]" role="status">本轮响应已结束，此阶段的执行结果尚未确认。</p>
     <div class="flex">
@@ -143,18 +147,26 @@
           style="height: calc(100% + 14px);"></div>
       </div>
       <div class="flex flex-col gap-3 flex-1 min-w-0 overflow-hidden pt-2">
-        <div v-for="(item, index) in displayTools" :key="`${item.tool.tool_call_id}-${index}`" class="flex flex-col gap-2">
-          <ToolUse :session-id="sessionId" :is-share="isShare"
+        <div v-for="item in displayTools" :key="item.key" class="flex flex-col gap-2">
+          <ToolUse :session-id="sessionId" :is-share="isShare" :suppress-skill-creation="suppressSkillCreation"
             :tool="item.tool"
+            :label="item.label"
             :summary="item.summary"
             :collapsed-count="item.count"
+            :recovered-by-call-id="item.recoveredByCallId"
             @click="handleToolClick(item.panelTool)"
           />
           <DeclarativeToolCard v-if="item.tool.status === 'called'" :tool="item.tool" />
           <ToolApprovalCard v-if="item.tool.tool_approval" :initial="item.tool.tool_approval" :session-id="sessionId" :is-share="isShare" />
-          <div v-if="item.count > 1" class="ml-2 text-[12px] text-[var(--text-tertiary)]">
-            已折叠 {{ item.count }} 次连续文件写入，点击可查看最后一次写入详情。
-          </div>
+          <details v-if="item.count > 1" class="ml-2 text-[12px] text-[var(--text-tertiary)]">
+            <summary class="cursor-pointer">展开 {{ item.count }} 次保存请求及对应运行记录</summary>
+            <div class="mt-2 flex flex-col gap-2">
+              <div v-for="revision in item.activities" :key="revision.tool_call_id" class="flex flex-col gap-1">
+                <span>{{ toolOperationLabel(revision) }} · {{ toolOperationState(revision) }} · {{ new Date(revision.timestamp * 1000).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) }}</span>
+                <ToolUse :session-id="sessionId" :is-share="isShare" :suppress-skill-creation="suppressSkillCreation" :tool="revision" @click="handleToolClick(revision)" />
+              </div>
+            </div>
+          </details>
         </div>
       </div>
     </div>
@@ -183,19 +195,24 @@ import { ToolContent, StepContent } from '../types/message';
 import { useRelativeTime } from '../composables/useTime';
 import AttachmentsMessage from './AttachmentsMessage.vue';
 import TaskExecutionSummary from './TaskExecutionSummary.vue';
+import { buildToolTimeline, toolOperationLabel, toolOperationState } from '../utils/toolTimeline';
+import { createAnalysisMarkdown } from '../utils/analysisMarkdown';
 import AnalysisOutcomeNotice from './AnalysisOutcomeNotice.vue';
-import { readAnalysisOutcome } from '../utils/analysisOutcome';
+import { hasDeliveredAnalysisFiles, readAnalysisOutcome } from '../utils/analysisOutcome';
 import { copyToClipboard } from '../utils/dom';
 import ToolApprovalCard from './ToolApprovalCard.vue';
-import { stripHiddenDatasetResultNotices } from '../utils/datasetResultPresentation';
 import { showErrorToast, showSuccessToast } from '../utils/toast';
 import { deleteTaskFeedback, getTaskFeedback, openJupyterNotebook, saveTaskFeedback, shareSession, type TaskFeedbackPreference } from '../api/agent';
+import AnalysisClarificationCard from './AnalysisClarificationCard.vue';
+import { readAnalysisClarification } from '../utils/analysisClarification';
+import type { ClarificationAnswer } from '../types/clarification';
 
 
 const props = defineProps<{
   message: Message;
   sessionId?: string;
   isShare?: boolean;
+  suppressSkillCreation?: boolean;
   assistantIcon?: Component;
   assistantName?: string;
   hideAllFilesButton?: boolean;
@@ -204,6 +221,9 @@ const props = defineProps<{
   showProductButton?: boolean;
   taskSummaryExpanded?: boolean;
   allowAnalysisResume?: boolean;
+  clarificationPending?: boolean;
+  canAnswerClarification?: boolean;
+  waitingForUser?: boolean;
 }>();
 
 const hideAssistantHeader = computed(() => props.hideHeader ?? false);
@@ -214,6 +234,7 @@ const emit = defineEmits<{
   (e: 'jupyterOpened', tool: ToolContent): void;
   (e: 'showProduct'): void;
   (e: 'resumeAnalysis'): void;
+  (e: 'answerClarification', answer: ClarificationAnswer): void;
 }>();
 
 const handleToolClick = (tool: ToolContent) => {
@@ -381,8 +402,9 @@ onUnmounted(() => {
 // For backward compatibility, provide the original computed properties
 const stepContent = computed(() => props.message.content as StepContent);
 const messageContent = computed(() => props.message.content as MessageContent);
-const visibleAssistantContent = computed(() => stripHiddenDatasetResultNotices(messageContent.value.content));
+const visibleAssistantContent = computed(() => messageContent.value.content);
 const safetyReview = computed(() => messageContent.value.metadata?.safety_review);
+const clarification = computed(() => readAnalysisClarification(messageContent.value.metadata?.clarification));
 const analysisOutcome = computed(() => readAnalysisOutcome(messageContent.value.metadata?.analysis_outcome));
 const safetyUnavailable = computed(() => safetyReview.value?.categories.includes('safety_review_unavailable') ?? false);
 
@@ -402,74 +424,13 @@ const toolContent = computed(() => props.message.content as ToolContent);
 const attachmentsContent = computed(() => props.message.content as AttachmentsContent);
 const taskSummaryContent = computed(() => props.message.content as TaskSummaryContent);
 
-type DisplayToolItem = {
-  tool: ToolContent;
-  panelTool: ToolContent;
-  count: number;
-  summary?: string;
-};
-
-const fileMutationFunctions = new Set(['file_write', 'file_str_replace']);
-
-const getToolFilePath = (tool: ToolContent): string => {
-  return tool.args?.file || '';
-};
-
-const shouldGroupFileMutation = (previous: ToolContent, current: ToolContent): boolean => {
-  if (previous.name !== 'file' || current.name !== 'file') return false;
-  if (!fileMutationFunctions.has(previous.function) || !fileMutationFunctions.has(current.function)) return false;
-  const previousFile = getToolFilePath(previous);
-  return !!previousFile && previousFile === getToolFilePath(current);
-};
-
-const createGroupedTool = (tools: ToolContent[]): DisplayToolItem => {
-  const latest = tools[tools.length - 1];
-  const first = tools[0];
-  const filePath = getToolFilePath(latest);
-  return {
-    tool: {
-      ...latest,
-      tool_call_id: `${first.tool_call_id}-group-${tools.length}`,
-      function: 'file_write',
-      args: { ...latest.args, file: filePath },
-      timestamp: latest.timestamp,
-    },
-    panelTool: latest,
-    count: tools.length,
-    summary: `连续写入 ${tools.length} 次`,
-  };
-};
-
-const displayTools = computed<DisplayToolItem[]>(() => {
-  const items: DisplayToolItem[] = [];
-  let group: ToolContent[] = [];
-
-  const flushGroup = () => {
-    if (group.length === 0) return;
-    items.push(group.length > 1 ? createGroupedTool(group) : { tool: group[0], panelTool: group[0], count: 1 });
-    group = [];
-  };
-
-  for (const tool of stepContent.value.tools || []) {
-    if (group.length === 0) {
-      group.push(tool);
-      continue;
-    }
-    if (shouldGroupFileMutation(group[group.length - 1], tool)) {
-      group.push(tool);
-    } else {
-      flushGroup();
-      group.push(tool);
-    }
-  }
-  flushGroup();
-  return items;
-});
+const displayTools = computed(() => buildToolTimeline(stepContent.value.tools || []));
 
 // Control content expand/collapse state
 const { relativeTime } = useRelativeTime();
 
 const renderer = new marked.Renderer();
+const analysisMarkdown = createAnalysisMarkdown();
 renderer.link = ({ href, title, text }: { href: string; title?: string | null; text: string }) => {
   const titleAttr = title ? ` title="${title}"` : '';
   return `<a href="${href}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`;
@@ -549,7 +510,7 @@ async function handleMarkdownClick(event: MouseEvent) {
 
 const renderMarkdown = (text: string) => {
   if (typeof text !== 'string') return '';
-  const html = marked(text, { renderer }) as string;
+  const html = analysisMarkdown.parse(text, { renderer }) as string;
   return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
 };
 </script>

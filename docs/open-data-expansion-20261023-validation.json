@@ -1,0 +1,1630 @@
+{
+  "project": "DataLab",
+  "date": "2026-10-23",
+  "branch": "datalab",
+  "status": "implemented_container_verified_pending_release",
+  "new_enabled_sources": 20,
+  "newly_implemented_sources": 14,
+  "previously_implemented_now_enabled": [
+    "ena",
+    "metabolights",
+    "metabolomics-workbench",
+    "pride",
+    "rcsb-pdb",
+    "uniprot"
+  ],
+  "previous_automatic_sources": 68,
+  "automatic_sources_total": 88,
+  "connector_picker_total": 89,
+  "acceptance_standard": [
+    "官方来源与稳定实体标识；无需登录或填写访客问卷的公开文件。",
+    "每个来源使用公开示例实际检索、解析并完整获取至少一个实体数据文件；可读性样本不等于整库验收。",
+    "完整文件计算SHA-256；源站提供摘要时核对源摘要；保留文件格式、许可、版本与覆盖范围。",
+    "WHO分页读取全部指标观测；SSB全维度大表按源站单次请求限制无重叠分片；不将预览、首批记录或元数据页当作完整数据。",
+    "没有新增实体文件大小限制；接入复用流式获取及现有对象存储交付，不改变只读分析输入边界。"
+  ],
+  "sources": [
+    {
+      "number": 1,
+      "source_id": "who-gho",
+      "title": "WHO 全球卫生观测数据",
+      "connector_title": "WHO GHO",
+      "homepage": "https://www.who.int/data/gho",
+      "country": "国际",
+      "documentation": "https://www.who.int/data/gho/info/gho-odata-api",
+      "enablement": "new_adapter",
+      "description": "检索世界卫生组织公开卫生指标，获取所有公开国家、时期及细分维度的完整 JSON 数据快照。",
+      "scope": "按英文指标名称或指标代码检索，分页取得完整指标而非首批记录，保留缺失值和所有原始字段。范围为该指标全部公开观测；关键词不筛选国家或时期。按 WHO 数据使用条款署名并用于公共卫生目的；第三方数据遵循各自条款。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 8038667,
+        "sha256": "fe666a0cd5782d327214c06352ea239df04a2536fef7ed1bc133eaa509e0709d",
+        "evidence": {
+          "source_id": "who-gho",
+          "query": "WHOSIS_000001",
+          "external_id": "WHOSIS_000001",
+          "title": "Life expectancy at birth (years)",
+          "filename": "who_WHOSIS_000001.json",
+          "bytes": 8038667,
+          "sha256": "fe666a0cd5782d327214c06352ea239df04a2536fef7ed1bc133eaa509e0709d",
+          "entity_records": 14112,
+          "license": "https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions",
+          "source_url": "https://ghoapi.azureedge.net/api/WHOSIS_000001",
+          "source_version": null,
+          "snapshot_page_count": 15,
+          "resolved_files": 1,
+          "elapsed_seconds": 62.87,
+          "checked_at": "2026-10-23T00:27:22.140374+00:00",
+          "status": "passed"
+        }
+      }
+    },
+    {
+      "number": 2,
+      "source_id": "malaysia-data-gov",
+      "title": "data.gov.my 马来西亚政府开放数据",
+      "connector_title": "data.gov.my",
+      "homepage": "https://data.gov.my/",
+      "country": "马来西亚",
+      "documentation": "https://developer.data.gov.my/static-api/data-catalogue",
+      "enablement": "new_adapter",
+      "description": "检索马来西亚官方人口、经济、教育、卫生和公共服务数据，获取完整 CSV 或 Parquet。",
+      "scope": "按英文、马来文名称或数据集编号检索官方目录，仅获取详情页提供的完整 CSV/Parquet；不把网页的最新一期预览当作完整数据。按源站 CC BY 4.0 署名；各表的地区、时间及统计口径以源说明为准。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 677857,
+        "sha256": "ed287ef3277e96e74d27fd65f2dc4ab88b37817780e265e11b0d478e6bc9fe04",
+        "evidence": {
+          "source_id": "malaysia-data-gov",
+          "query": "population_malaysia",
+          "external_id": "population_malaysia",
+          "title": "Population Table: Malaysia",
+          "filename": "population_malaysia.csv",
+          "bytes": 677857,
+          "sha256": "ed287ef3277e96e74d27fd65f2dc4ab88b37817780e265e11b0d478e6bc9fe04",
+          "entity_records": 17814,
+          "license": "https://creativecommons.org/licenses/by/4.0/",
+          "source_url": "https://data.gov.my/data-catalogue/population_malaysia",
+          "source_version": "2026-07-31 12:00",
+          "snapshot_page_count": null,
+          "resolved_files": 2,
+          "elapsed_seconds": 10.62,
+          "checked_at": "2026-10-23T00:26:05.847404+00:00",
+          "status": "passed"
+        }
+      }
+    },
+    {
+      "number": 3,
+      "source_id": "norway-ssb",
+      "title": "SSB 挪威国家统计局",
+      "connector_title": "Statistics Norway",
+      "homepage": "https://www.ssb.no/en/statbank/",
+      "country": "挪威",
+      "documentation": "https://www.ssb.no/en/api/pxwebapiv2",
+      "enablement": "new_adapter",
+      "description": "检索挪威官方人口、经济、教育、社会和环境统计表，获取全维度完整 CSV。",
+      "scope": "按英文关键词或表号检索。默认获取表中全部时期和维度；超过源站每次 800000 个单元格的限制时分为互不重叠的文件，须获取全部分片才是全表。关键词不筛选地区或年份，源站会修订数据。CC BY 4.0。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 21462,
+        "sha256": "e0bfac2031bd5fe5e96e804913171ed712e391b9548726276a2467b1dc7047fc",
+        "evidence": {
+          "source_id": "norway-ssb",
+          "query": "life expectancy",
+          "external_id": "07682",
+          "title": "07682: Sami statistics. Life expectancy - remaining years for selected ages. All of Norway and Norway north of Saltfjellet (2006-2008)-(2022-2024)",
+          "filename": "ssb_07682.csv",
+          "bytes": 21462,
+          "sha256": "e0bfac2031bd5fe5e96e804913171ed712e391b9548726276a2467b1dc7047fc",
+          "entity_records": 396,
+          "license": "https://creativecommons.org/licenses/by/4.0/",
+          "source_url": "https://www.ssb.no/en/statbank/table/07682",
+          "source_version": "2025-03-31T06:00:00Z",
+          "snapshot_page_count": null,
+          "resolved_files": 1,
+          "elapsed_seconds": 13.42,
+          "checked_at": "2026-10-23T00:26:19.265850+00:00",
+          "status": "passed"
+        }
+      }
+    },
+    {
+      "number": 4,
+      "source_id": "noaa-ghcn-daily",
+      "title": "NOAA NCEI 全球逐日气候台站",
+      "connector_title": "NOAA GHCN-D",
+      "homepage": "https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily",
+      "country": "美国 / 全球",
+      "documentation": "https://www.ncei.noaa.gov/pub/data/ghcn/daily/readme.txt",
+      "enablement": "new_adapter",
+      "description": "按英文国家、台站名称或台站编号检索全球陆地气候站，获取完整单站逐日原始记录。",
+      "scope": "完整获取指定台站全部现有月份和要素的官方.dly文件，保留原始定宽格式、缺测值与质量/测量/来源标志；不同台站与要素的覆盖期不同，不等于全国完整覆盖。部分站只有降水，温度以0.1°C、降水以0.1mm保存，其他要素单位见源站格式说明。数据会修订，保存官方发布版本与获取哈希。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 3985740,
+        "sha256": "f99d25fda6beffcd4b2ad4ba4d90050f28dc13540ae16a7f15e998d557e4103f",
+        "evidence": {
+          "source_id": "noaa-ghcn-daily",
+          "query": "Phoenix",
+          "network": "datalab-backend-1",
+          "verification": "real facade search -> resolve -> verify -> download",
+          "search_total": 81,
+          "candidate": {
+            "external_id": "USW00023183",
+            "title": "PHOENIX AP · United States · USW00023183",
+            "source_url": "https://www.ncei.noaa.gov/pub/data/ghcn/daily/readme.txt",
+            "license": "公开使用，按NOAA与原始提供方要求引用 — https://www.ncei.noaa.gov/access/metadata/landing-page/bin/iso?id=gov.noaa.ncdc:C00861",
+            "coverage": {
+              "country": "United States",
+              "country_code": "US",
+              "station_id": "USW00023183",
+              "latitude": 33.4278,
+              "longitude": -112.0036,
+              "elevation_m": 339.2,
+              "scope": "该台站源站完整历史记录；各要素起止时间不同，实际时间与缺测以文件为准"
+            },
+            "metadata": {
+              "version": "3.35-upd-2026101917"
+            }
+          },
+          "resolved_files": 1,
+          "verified_files": 1,
+          "filename": "USW00023183.dly",
+          "content_type": "text/plain",
+          "bytes": 3985740,
+          "sha256": "f99d25fda6beffcd4b2ad4ba4d90050f28dc13540ae16a7f15e998d557e4103f",
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "noaa-ghcn-daily",
+            "external_id": "USW00023183",
+            "discovery_source_id": "noaa-ghcn-daily",
+            "source_url": "https://www.ncei.noaa.gov/pub/data/ghcn/daily/readme.txt",
+            "sha256": "f99d25fda6beffcd4b2ad4ba4d90050f28dc13540ae16a7f15e998d557e4103f",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "公开使用，按NOAA与原始提供方要求引用 — https://www.ncei.noaa.gov/access/metadata/landing-page/bin/iso?id=gov.noaa.ncdc:C00861",
+            "source_version": "3.35-upd-2026101917",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:37:47.914347+00:00"
+          },
+          "url": "https://www.ncei.noaa.gov/pub/data/ghcn/daily/all/USW00023183.dly",
+          "scope": {
+            "country": "United States",
+            "country_code": "US",
+            "station_id": "USW00023183",
+            "latitude": 33.4278,
+            "longitude": -112.0036,
+            "elevation_m": 339.2,
+            "scope": "该台站源站完整历史记录；各要素起止时间不同，实际时间与缺测以文件为准"
+          },
+          "monthly_element_records": 14762,
+          "first_month": "193306",
+          "last_month": "202610",
+          "elements": [
+            "ACMC",
+            "ACMH",
+            "ACSC",
+            "ACSH",
+            "ADPT",
+            "ASLP",
+            "ASTP",
+            "AWBT",
+            "AWND",
+            "FMTM",
+            "FRGT",
+            "GAHT",
+            "PGTM",
+            "PRCP",
+            "PSUN",
+            "RHAV",
+            "RHMN",
+            "RHMX",
+            "SNOW",
+            "SNWD",
+            "TAVG",
+            "THIC",
+            "TMAX",
+            "TMIN",
+            "TOBS",
+            "TSUN",
+            "WDF1",
+            "WDF2",
+            "WDF5",
+            "WDFG",
+            "WDFI",
+            "WDFM",
+            "WESD",
+            "WSF1",
+            "WSF2",
+            "WSF5",
+            "WSFG",
+            "WSFI",
+            "WSFM",
+            "WT01",
+            "WT02",
+            "WT03",
+            "WT04",
+            "WT05",
+            "WT06",
+            "WT07",
+            "WT08",
+            "WT09",
+            "WT10",
+            "WT11",
+            "WT13",
+            "WT14",
+            "WT16",
+            "WT18",
+            "WT21",
+            "WV03",
+            "WV07",
+            "WV20"
+          ],
+          "observation_values": 376146,
+          "passed": true,
+          "official_logo_url": "https://gml.noaa.gov/favicon.ico",
+          "logo_note": null,
+          "official_homepage": "https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily",
+          "catalog_stations": 133039,
+          "sample_scope": "Complete Phoenix airport station, 1933-06 through 2026-10. 14762 monthly element records, 376146 non-missing values. Original quality/source flags retained; not nationwide coverage."
+        }
+      }
+    },
+    {
+      "number": 5,
+      "source_id": "heasarc",
+      "title": "NASA HEASARC 天文观测目录",
+      "connector_title": "HEASARC",
+      "homepage": "https://heasarc.gsfc.nasa.gov/",
+      "country": "美国 / 全球",
+      "documentation": "https://heasarc.gsfc.nasa.gov/FTP/heasarc/dbase/tdat_files/README",
+      "enablement": "new_adapter",
+      "description": "按天文目录名称或英文主题检索 NASA HEASARC，获取官方完整 TDAT 压缩数据表。",
+      "scope": "仅返回官方整表下载目录中存在的公开目录；完整 TDAT.gz 保留观测列、单位和原始格式。天文目录或观测索引表不等于原始望远镜图像、光谱或事件文件；文件由源站周期更新，保存获取时哈希。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 4834,
+        "sha256": "2c03a6bfa0ac7edad0b885327a54d9cd0ef77ef71a814b4a7e2c9f7da62f6da6",
+        "evidence": {
+          "source_id": "heasarc",
+          "query": "a1point",
+          "network": "datalab-backend-1",
+          "verification": "real facade search -> resolve -> verify -> download",
+          "search_total": 1,
+          "candidate": {
+            "external_id": "a1point",
+            "title": "HEAO 1 A1 Lightcurves",
+            "source_url": "https://heasarc.gsfc.nasa.gov/W3Browse/all/a1point.html",
+            "license": "免费使用并按任务要求署名 — https://heasarc.gsfc.nasa.gov/docs/heasarc/data_policy.html",
+            "coverage": {
+              "scope": "HEASARC · a1point · 官方完整天文目录数据表"
+            },
+            "metadata": {
+              "version": "2025-10-23 16:46"
+            }
+          },
+          "resolved_files": 1,
+          "verified_files": 1,
+          "filename": "heasarc_a1point.tdat.gz",
+          "content_type": "application/gzip",
+          "bytes": 4834,
+          "sha256": "2c03a6bfa0ac7edad0b885327a54d9cd0ef77ef71a814b4a7e2c9f7da62f6da6",
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "heasarc",
+            "external_id": "a1point",
+            "discovery_source_id": "heasarc",
+            "source_url": "https://heasarc.gsfc.nasa.gov/W3Browse/all/a1point.html",
+            "sha256": "2c03a6bfa0ac7edad0b885327a54d9cd0ef77ef71a814b4a7e2c9f7da62f6da6",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "免费使用并按任务要求署名 — https://heasarc.gsfc.nasa.gov/docs/heasarc/data_policy.html",
+            "source_version": "2025-10-23 16:46",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:31:42.465869+00:00"
+          },
+          "url": "https://heasarc.gsfc.nasa.gov/FTP/heasarc/dbase/tdat_files/heasarc_a1point.tdat.gz",
+          "scope": {
+            "scope": "HEASARC · a1point · 官方完整天文目录数据表"
+          },
+          "uncompressed_bytes": 10291,
+          "tdat_data_marker": true,
+          "rows": 63,
+          "passed": true,
+          "official_logo_url": "https://heasarc.gsfc.nasa.gov/docs/images/nasa-logo.svg",
+          "logo_note": null,
+          "official_homepage": "https://heasarc.gsfc.nasa.gov/",
+          "sample_scope": "Complete HEAO 1 A1 Lightcurves catalog table (63 rows), not the original lightcurve files."
+        }
+      }
+    },
+    {
+      "number": 6,
+      "source_id": "natural-earth",
+      "title": "Natural Earth 全球地理底图",
+      "connector_title": "Natural Earth",
+      "homepage": "https://www.naturalearthdata.com/",
+      "country": "国际",
+      "documentation": "https://www.naturalearthdata.com/about/terms-of-use/",
+      "enablement": "new_adapter",
+      "description": "检索 Natural Earth 官方三个比例尺的文化与自然地理矢量目录，获取完整 Shapefile ZIP。",
+      "scope": "支持 10m、50m、110m 三个制图比例尺和文化/自然地理矢量图层；10m指1:1000万，并非10米分辨率。每条结果明确比例尺、图层和版本，获取完整ZIP。数据经过制图概括，边界采用源站描述的事实管辖表达，不代替测量级或法定边界数据。许可为Public Domain。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 214976,
+        "sha256": "0f243aeac8ac6cf26f0417285b0bd33ac47f1b5bdb719fd3e0df37d03ea37110",
+        "evidence": {
+          "source_id": "natural-earth",
+          "query": "110m countries",
+          "network": "datalab-backend-1",
+          "verification": "real facade search -> resolve -> verify -> download",
+          "search_total": 3,
+          "candidate": {
+            "external_id": "110m/cultural/ne_110m_admin_0_countries",
+            "title": "Admin 0 – Countries · Download countries · 110m",
+            "source_url": "https://www.naturalearthdata.com/downloads/110m-cultural-vectors/",
+            "license": "Public Domain — https://www.naturalearthdata.com/about/terms-of-use/",
+            "coverage": {
+              "scope": "cultural · ne 110m admin 0 countries · 制图比例尺 1:110,000,000"
+            },
+            "metadata": {
+              "version": "5.1.1"
+            }
+          },
+          "resolved_files": 1,
+          "verified_files": 1,
+          "filename": "ne_110m_admin_0_countries.zip",
+          "content_type": "application/zip",
+          "bytes": 214976,
+          "sha256": "0f243aeac8ac6cf26f0417285b0bd33ac47f1b5bdb719fd3e0df37d03ea37110",
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "natural-earth",
+            "external_id": "110m/cultural/ne_110m_admin_0_countries",
+            "discovery_source_id": "natural-earth",
+            "source_url": "https://www.naturalearthdata.com/downloads/110m-cultural-vectors/",
+            "sha256": "0f243aeac8ac6cf26f0417285b0bd33ac47f1b5bdb719fd3e0df37d03ea37110",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "Public Domain — https://www.naturalearthdata.com/about/terms-of-use/",
+            "source_version": "5.1.1",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:31:56.582397+00:00"
+          },
+          "url": "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip",
+          "scope": {
+            "scope": "cultural · ne 110m admin 0 countries · 制图比例尺 1:110,000,000"
+          },
+          "members": [
+            "ne_110m_admin_0_countries.README.html",
+            "ne_110m_admin_0_countries.VERSION.txt",
+            "ne_110m_admin_0_countries.cpg",
+            "ne_110m_admin_0_countries.dbf",
+            "ne_110m_admin_0_countries.prj",
+            "ne_110m_admin_0_countries.shp",
+            "ne_110m_admin_0_countries.shx"
+          ],
+          "crc_error": null,
+          "feature_count": 177,
+          "passed": true,
+          "official_logo_url": "https://www.naturalearthdata.com/favicon.ico",
+          "logo_note": "Official icon request returned HTTP 406; retain neutral icon.",
+          "official_homepage": "https://www.naturalearthdata.com/",
+          "sample_scope": "Complete 1:110,000,000 countries layer ZIP (177 features); dynamic catalogs cover three scales and cultural/physical vector themes."
+        }
+      }
+    },
+    {
+      "number": 7,
+      "source_id": "worldclim",
+      "title": "WorldClim 全球气候栅格",
+      "connector_title": "WorldClim",
+      "homepage": "https://www.worldclim.org/",
+      "country": "国际 / 全球",
+      "documentation": "https://www.worldclim.org/data/worldclim21.html",
+      "enablement": "new_adapter",
+      "description": "按气候变量和空间分辨率检索 WorldClim 2.1，获取官方完整 GeoTIFF ZIP。",
+      "scope": "接入2.1版历史气候常年值（1970–2000）与其SRTM派生高程；支持10/5/2.5角分与30角秒，气候变量每包12个月，生物气候每包19变量，高程每包1图层。不是逐年原始观测或未来情景。学术及其他非商业使用免费；商业使用或再分发须源站事先许可。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 1332437,
+        "sha256": "6a9f4e9a37f289d594ed1567b63be344a4dacf247f0b69756e81df031087e3bd",
+        "evidence": {
+          "source_id": "worldclim",
+          "query": "10m elev",
+          "network": "datalab-backend-1",
+          "verification": "real facade search -> resolve -> verify -> download",
+          "search_total": 1,
+          "candidate": {
+            "external_id": "wc2.1_10m_elev",
+            "title": "WorldClim 2.1 · elevation 高程 (m) · 10m",
+            "source_url": "https://www.worldclim.org/data/worldclim21.html",
+            "license": "学术及非商业使用；再分发或商业使用须事先许可 — https://worldclim.org/about.html",
+            "coverage": {
+              "scope": "1970–2000 气候常年值；全球陆地；完整高程栅格（SRTM派生）；分辨率 10m（角分m/角秒s，不是米）"
+            },
+            "metadata": {
+              "version": "2.1"
+            }
+          },
+          "resolved_files": 1,
+          "verified_files": 1,
+          "filename": "wc2.1_10m_elev.zip",
+          "content_type": "application/zip",
+          "bytes": 1332437,
+          "sha256": "6a9f4e9a37f289d594ed1567b63be344a4dacf247f0b69756e81df031087e3bd",
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "worldclim",
+            "external_id": "wc2.1_10m_elev",
+            "discovery_source_id": "worldclim",
+            "source_url": "https://www.worldclim.org/data/worldclim21.html",
+            "sha256": "6a9f4e9a37f289d594ed1567b63be344a4dacf247f0b69756e81df031087e3bd",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "学术及非商业使用；再分发或商业使用须事先许可 — https://worldclim.org/about.html",
+            "source_version": "2.1",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:32:03.426987+00:00"
+          },
+          "url": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_elev.zip",
+          "scope": {
+            "scope": "1970–2000 气候常年值；全球陆地；完整高程栅格（SRTM派生）；分辨率 10m（角分m/角秒s，不是米）"
+          },
+          "members": [
+            "wc2.1_10m_elev.tif"
+          ],
+          "crc_error": null,
+          "tiff_magic": "49492a0008000000",
+          "passed": true,
+          "official_logo_url": "https://www.worldclim.org/img/favicon.ico",
+          "logo_note": null,
+          "official_homepage": "https://www.worldclim.org/",
+          "sample_scope": "Complete version 2.1, 10 arc-minute SRTM-derived elevation GeoTIFF ZIP; all historical variables and four resolutions read from the official catalog. No future scenarios.",
+          "license_note": "Academic and other non-commercial use only. Redistribution or commercial use requires prior permission.",
+          "documentation": "https://www.worldclim.org/data/worldclim21.html"
+        }
+      }
+    },
+    {
+      "number": 8,
+      "source_id": "asu-research-data",
+      "title": "ASU Research Data 亚利桑那州立大学",
+      "connector_title": "ASU Research Data",
+      "homepage": "https://dataverse.asu.edu/",
+      "country": "美国",
+      "documentation": "https://guides.dataverse.org/en/latest/api/dataaccess.html",
+      "enablement": "new_adapter",
+      "description": "检索ASU Research Data 亚利桑那州立大学正式发布的研究数据，获取公开的原始数据表、观测、标注和归档文件。",
+      "scope": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 278748,
+        "sha256": "5778711faf5721a711aded8dbd5a3b35c2243f66da3f471b50b053cb3382b83f",
+        "evidence": {
+          "source_id": "asu-research-data",
+          "title": "ASU Research Data 亚利桑那州立大学",
+          "connector_title": "ASU Research Data",
+          "country": "美国",
+          "homepage": "https://dataverse.asu.edu/",
+          "official_documentation": [
+            "https://lib.asu.edu/research/research-data-repository",
+            "https://guides.dataverse.org/en/latest/api/dataaccess.html"
+          ],
+          "scope": {
+            "subjects": [
+              "all disciplines",
+              "human behavior",
+              "artificial intelligence",
+              "education"
+            ],
+            "doi_prefixes": [
+              "10.48349/asu/"
+            ],
+            "availability": "Published, publicly readable entity files only; no embargo, restricted access, guestbook or registration. Full resolved manifest, no per-file download-size cap.",
+            "limitation": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。"
+          },
+          "verified_at": "2026-10-23T00:34:36.993162+00:00",
+          "container": "datalab-backend-1",
+          "pipeline": "Unmodified current OpenDataSources facade loaded in a temporary Python process inside the existing container: search, resolve, shared bounded content probe, download with fresh manifest and shared streaming transfer. Running service not changed.",
+          "search_query": "Artificial Social Intelligence",
+          "search_total": 4,
+          "external_id": "doi:10.48349/ASU/1CY5AR",
+          "record_title": "Artificial Social Intelligence for Successful Teams (ASIST) Study 1 Falcon Testbed Dataset",
+          "record_url": "https://doi.org/10.48349/ASU/1CY5AR",
+          "version": "1.0",
+          "resolved_entity_file_count": 1569,
+          "filename": "HSRData_SurveysNumeric_CondBtwn-na_CondWin-na_Trial-na_Team-na_Member-na_Vers-1.csv",
+          "file_url": "https://dataverse.asu.edu/api/access/datafile/35446?format=original",
+          "content_type": "text/comma-separated-values",
+          "downloaded_size": 278748,
+          "sha256": "5778711faf5721a711aded8dbd5a3b35c2243f66da3f471b50b053cb3382b83f",
+          "provider_checksum": "md5:776910eb3bbc1c664c4b086bed47f935",
+          "provider_checksum_verified": true,
+          "license": "CC0 1.0",
+          "entity_validation": {
+            "header": "StartDate,EndDate,Status,IPAddress,Progress,Duration (in seconds),Finished,RecordedDate,ResponseId,RecipientLastName,RecipientFirstName,RecipientEmail,ExternalReference,LocationLatitude,LocationLongitude,DistributionChannel,UserLanguage,Q3,Q5,Q6,Q",
+            "line_count": 207
+          },
+          "official_logo": {
+            "status": "neutral_fallback",
+            "reason": "Official ASU pages denied image retrieval; no invented or third-party logo used."
+          }
+        }
+      }
+    },
+    {
+      "number": 9,
+      "source_id": "juelich-data",
+      "title": "Jülich DATA 于利希研究中心",
+      "connector_title": "Jülich DATA",
+      "homepage": "https://data.fz-juelich.de/",
+      "country": "德国",
+      "documentation": "https://guides.dataverse.org/en/latest/api/dataaccess.html",
+      "enablement": "new_adapter",
+      "description": "检索Jülich DATA 于利希研究中心正式发布的研究数据，获取公开的原始数据表、观测、标注和归档文件。",
+      "scope": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 666,
+        "sha256": "0beb82718b0597febd091081a83ca571a8b42e40f83c9de0f029f55688d40a94",
+        "evidence": {
+          "source_id": "juelich-data",
+          "title": "Jülich DATA 于利希研究中心",
+          "connector_title": "Jülich DATA",
+          "country": "德国",
+          "homepage": "https://data.fz-juelich.de/",
+          "official_documentation": [
+            "https://data.fz-juelich.de/",
+            "https://guides.dataverse.org/en/latest/api/dataaccess.html"
+          ],
+          "scope": {
+            "subjects": [
+              "physics",
+              "energy",
+              "chemistry",
+              "neuroscience",
+              "environment",
+              "engineering"
+            ],
+            "doi_prefixes": [
+              "10.26165/juelich-data/"
+            ],
+            "availability": "Published, publicly readable entity files only; no embargo, restricted access, guestbook or registration. Full resolved manifest, no per-file download-size cap.",
+            "limitation": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。"
+          },
+          "verified_at": "2026-10-23T00:34:32.149139+00:00",
+          "container": "datalab-backend-1",
+          "pipeline": "Unmodified current OpenDataSources facade loaded in a temporary Python process inside the existing container: search, resolve, shared bounded content probe, download with fresh manifest and shared streaming transfer. Running service not changed.",
+          "search_query": "Open Access Publizieren",
+          "search_total": 1,
+          "external_id": "doi:10.26165/JUELICH-DATA/WLCJ4X",
+          "record_title": "Replication Data for: Auf dem Weg zur Open Access-Transformation: Eine datenbasierte Analyse des DFG-Förderprogramms „Open Access Publizieren“",
+          "record_url": "https://doi.org/10.26165/JUELICH-DATA/WLCJ4X",
+          "version": "4.2",
+          "resolved_entity_file_count": 11,
+          "filename": "Abb_1-3_Artikelanzahl_und_Gesamtsummen_APCs_pro_Verlag_Top15.csv",
+          "file_url": "https://data.fz-juelich.de/api/access/datafile/7",
+          "content_type": "text/comma-separated-values",
+          "downloaded_size": 666,
+          "sha256": "0beb82718b0597febd091081a83ca571a8b42e40f83c9de0f029f55688d40a94",
+          "provider_checksum": "sha256:0beb82718b0597febd091081a83ca571a8b42e40f83c9de0f029f55688d40a94",
+          "provider_checksum_verified": true,
+          "license": "CCBY",
+          "entity_validation": {
+            "header": "Verteilung der Artikelanzahl und damit verbundenen verausgabten Summen auf Verlage (sortiert nach Artikelanzahl) (Top 15);;\r\nVerlag;Anzahl ArtikeI; Summe von APC brutto \r\nSpringer Nature;3812;5.688.419,52 �\r\nPublic Library of Science;2263;3.129.340,2",
+            "line_count": 17
+          },
+          "official_logo": {
+            "file": "oct23/juelich-data.png",
+            "source_id": "juelich-data",
+            "owner": "Forschungszentrum Jülich",
+            "official_page": "https://data.fz-juelich.de/",
+            "asset_url": "https://data.fz-juelich.de/branding/files/dataverse/img/logo.png",
+            "sha256": "6cd02f8dcef1d6c0e6d7d813cbfdc8a63cb1d10244ab4cc9eb6c4f2459708070",
+            "retrieved_on": "2026-10-23",
+            "bytes": 4242,
+            "note": "Official navigation brand mark; session suffix omitted."
+          }
+        }
+      }
+    },
+    {
+      "number": 10,
+      "source_id": "repod",
+      "title": "RepOD 波兰开放研究数据",
+      "connector_title": "RepOD",
+      "homepage": "https://repod.icm.edu.pl/",
+      "country": "波兰",
+      "documentation": "https://guides.dataverse.org/en/latest/api/dataaccess.html",
+      "enablement": "new_adapter",
+      "description": "检索RepOD 波兰开放研究数据正式发布的研究数据，获取公开的原始数据表、观测、标注和归档文件。",
+      "scope": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 8787,
+        "sha256": "eaba0302eec3393658b1dbbb94bfb504d5abfccfb9ffb92fe08eaf4f2a917644",
+        "evidence": {
+          "source_id": "repod",
+          "title": "RepOD 波兰开放研究数据",
+          "connector_title": "RepOD",
+          "country": "波兰",
+          "homepage": "https://repod.icm.edu.pl/",
+          "official_documentation": [
+            "https://repod.icm.edu.pl/",
+            "https://guides.dataverse.org/en/latest/api/dataaccess.html"
+          ],
+          "scope": {
+            "subjects": [
+              "all disciplines",
+              "materials",
+              "chemistry",
+              "linguistics",
+              "social sciences"
+            ],
+            "doi_prefixes": [
+              "10.18150/"
+            ],
+            "availability": "Published, publicly readable entity files only; no embargo, restricted access, guestbook or registration. Full resolved manifest, no per-file download-size cap.",
+            "limitation": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。"
+          },
+          "verified_at": "2026-10-23T00:34:31.593822+00:00",
+          "container": "datalab-backend-1",
+          "pipeline": "Unmodified current OpenDataSources facade loaded in a temporary Python process inside the existing container: search, resolve, shared bounded content probe, download with fresh manifest and shared streaming transfer. Running service not changed.",
+          "search_query": "ion-exchanger plasticizer",
+          "search_total": 2,
+          "external_id": "doi:10.18150/LII8AM",
+          "record_title": "Finding a perfect match of ion-exchanger and plasticizer for ion-selective sensors",
+          "record_url": "https://doi.org/10.18150/LII8AM",
+          "version": "1.0",
+          "resolved_entity_file_count": 42,
+          "filename": "Effect_of_cation_exchanger_concentration_increase_on_conductivity_of_THF.xlsx",
+          "file_url": "https://repod.icm.edu.pl/api/access/datafile/39792?format=original",
+          "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "downloaded_size": 8787,
+          "sha256": "eaba0302eec3393658b1dbbb94bfb504d5abfccfb9ffb92fe08eaf4f2a917644",
+          "provider_checksum": "md5:8f1574e421172871fcc80ab45a15bf74",
+          "provider_checksum_verified": true,
+          "license": "https://creativecommons.org/licenses/by/4.0/legalcode",
+          "entity_validation": {
+            "zip_crc_verified": true,
+            "members": [
+              "[Content_Types].xml",
+              "_rels/.rels",
+              "xl/_rels/workbook.xml.rels",
+              "xl/workbook.xml",
+              "xl/sharedStrings.xml",
+              "xl/theme/theme1.xml",
+              "xl/styles.xml",
+              "xl/worksheets/sheet1.xml",
+              "docProps/core.xml",
+              "docProps/app.xml"
+            ],
+            "member_count": 10
+          },
+          "official_logo": {
+            "file": "oct23/repod.png",
+            "source_id": "repod",
+            "owner": "RepOD",
+            "official_page": "https://repod.icm.edu.pl/",
+            "asset_url": "https://repod.icm.edu.pl/javax.faces.resource/images/favicondataverse.png",
+            "sha256": "ab234608935f5d63d17df1b2f443f3a5d73ed5c7577774af3a3366b5caf48650",
+            "retrieved_on": "2026-10-23",
+            "bytes": 4157
+          }
+        }
+      }
+    },
+    {
+      "number": 11,
+      "source_id": "deic-dataverse",
+      "title": "DeiC 丹麦国家研究数据仓库",
+      "connector_title": "DeiC Dataverse",
+      "homepage": "https://dataverse.deic.dk/",
+      "country": "丹麦",
+      "documentation": "https://guides.dataverse.org/en/latest/api/dataaccess.html",
+      "enablement": "new_adapter",
+      "description": "检索DeiC 丹麦国家研究数据仓库正式发布的研究数据，获取公开的原始数据表、观测、标注和归档文件。",
+      "scope": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 5114,
+        "sha256": "3ab55312aa1f7034cbcc76374f4d2ba1e1136883d8e244aee1b707f954fa19e8",
+        "evidence": {
+          "source_id": "deic-dataverse",
+          "title": "DeiC 丹麦国家研究数据仓库",
+          "connector_title": "DeiC Dataverse",
+          "country": "丹麦",
+          "homepage": "https://dataverse.deic.dk/",
+          "official_documentation": [
+            "https://www.deic.dk/da/data-management/tjenester/deic-dataverse",
+            "https://guides.dataverse.org/en/latest/api/dataaccess.html"
+          ],
+          "scope": {
+            "subjects": [
+              "all disciplines",
+              "humanities",
+              "environment",
+              "social sciences"
+            ],
+            "doi_prefixes": [
+              "10.60612/datadk/"
+            ],
+            "availability": "Published, publicly readable entity files only; no embargo, restricted access, guestbook or registration. Full resolved manifest, no per-file download-size cap.",
+            "limitation": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。"
+          },
+          "verified_at": "2026-10-23T00:34:31.081453+00:00",
+          "container": "datalab-backend-1",
+          "pipeline": "Unmodified current OpenDataSources facade loaded in a temporary Python process inside the existing container: search, resolve, shared bounded content probe, download with fresh manifest and shared streaming transfer. Running service not changed.",
+          "search_query": "Wordie",
+          "search_total": 1,
+          "external_id": "doi:10.60612/DATADK/AEOFGC",
+          "record_title": "Supporting Data for: Half a century of dynamic instability following the ocean-driven break-up of Wordie Ice Shelf",
+          "record_url": "https://doi.org/10.60612/DATADK/AEOFGC",
+          "version": "1.1",
+          "resolved_entity_file_count": 26,
+          "filename": "GL2023.zip",
+          "file_url": "https://dataverse.deic.dk/api/access/datafile/39",
+          "content_type": "application/zipped-shapefile",
+          "downloaded_size": 5114,
+          "sha256": "3ab55312aa1f7034cbcc76374f4d2ba1e1136883d8e244aee1b707f954fa19e8",
+          "provider_checksum": "sha256:3ab55312aa1f7034cbcc76374f4d2ba1e1136883d8e244aee1b707f954fa19e8",
+          "provider_checksum_verified": true,
+          "license": "CC BY 4.0",
+          "entity_validation": {
+            "zip_crc_verified": true,
+            "members": [
+              "Grounding Line/GL2023.shp",
+              "Grounding Line/GL2023.shx",
+              "Grounding Line/GL2023.dbf",
+              "Grounding Line/GL2023.cpg",
+              "Grounding Line/GL2023.prj",
+              "Grounding Line/GL2023.shp.xml",
+              "Grounding Line/GL2023.sbn",
+              "Grounding Line/GL2023.sbx"
+            ],
+            "member_count": 8
+          },
+          "official_logo": {
+            "file": "oct23/deic-dataverse.png",
+            "source_id": "deic-dataverse",
+            "owner": "DeiC Dataverse",
+            "official_page": "https://dataverse.deic.dk/",
+            "asset_url": "https://dataverse.deic.dk/logos/navbar/logo-deic-dataverse.png",
+            "sha256": "d785b8d901d1df844286778812522f7626a7eceaaf7c94233764ecc0895dfa86",
+            "retrieved_on": "2026-10-23",
+            "bytes": 78122
+          }
+        }
+      }
+    },
+    {
+      "number": 12,
+      "source_id": "bonndata",
+      "title": "bonndata 波恩大学研究数据",
+      "connector_title": "bonndata",
+      "homepage": "https://bonndata.uni-bonn.de/",
+      "country": "德国",
+      "documentation": "https://guides.dataverse.org/en/latest/api/dataaccess.html",
+      "enablement": "new_adapter",
+      "description": "检索bonndata 波恩大学研究数据正式发布的研究数据，获取公开的原始数据表、观测、标注和归档文件。",
+      "scope": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 591316,
+        "sha256": "4b0132277cfd81864c99103f6183d90ecc10127d9238f1f2a26c9ff8fe4fee06",
+        "evidence": {
+          "source_id": "bonndata",
+          "title": "bonndata 波恩大学研究数据",
+          "connector_title": "bonndata",
+          "country": "德国",
+          "homepage": "https://bonndata.uni-bonn.de/",
+          "official_documentation": [
+            "https://bonndata.uni-bonn.de/",
+            "https://guides.dataverse.org/en/latest/api/dataaccess.html"
+          ],
+          "scope": {
+            "subjects": [
+              "all disciplines",
+              "agriculture",
+              "biodiversity",
+              "mathematics",
+              "digital humanities"
+            ],
+            "doi_prefixes": [
+              "10.60507/fk2/"
+            ],
+            "availability": "Published, publicly readable entity files only; no embargo, restricted access, guestbook or registration. Full resolved manifest, no per-file download-size cap.",
+            "limitation": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。"
+          },
+          "verified_at": "2026-10-23T00:34:32.619402+00:00",
+          "container": "datalab-backend-1",
+          "pipeline": "Unmodified current OpenDataSources facade loaded in a temporary Python process inside the existing container: search, resolve, shared bounded content probe, download with fresh manifest and shared streaming transfer. Running service not changed.",
+          "search_query": "stem borer",
+          "search_total": 4,
+          "external_id": "doi:10.60507/FK2/BBP6GG",
+          "record_title": "Probability of Habitat Suitability for Stem Borer Pests and Natural Enemies in Kenya and Tanzania Under Current Climatic Conditions (1970-2000) and Different Climate Change Scenarios (2041-2060, 2081-2100)",
+          "record_url": "https://doi.org/10.60507/FK2/BBP6GG",
+          "version": "1.0",
+          "resolved_entity_file_count": 2,
+          "filename": "ZEF_bio_stem-borer-habitat-suitability-model_tanzan-kenya-ras.zip",
+          "file_url": "https://bonndata.uni-bonn.de/api/access/datafile/1581",
+          "content_type": "application/zip",
+          "downloaded_size": 591316,
+          "sha256": "4b0132277cfd81864c99103f6183d90ecc10127d9238f1f2a26c9ff8fe4fee06",
+          "provider_checksum": "md5:bcd7cdee395b575e05944ff5467a4077",
+          "provider_checksum_verified": true,
+          "license": "CC BY-SA 4.0",
+          "entity_validation": {
+            "zip_crc_verified": true,
+            "members": [
+              "bufu_126_2041_mme_average.tif",
+              "bufu_126_2041_mme_average.tif.aux.xml",
+              "bufu_126_2081_mme_average.tif",
+              "bufu_126_2081_mme_average.tif.aux.xml",
+              "bufu_245_2041_mme_average.tif",
+              "bufu_245_2041_mme_average.tif.aux.xml",
+              "bufu_245_2081_mme_average.tif",
+              "bufu_245_2081_mme_average.tif.aux.xml",
+              "bufu_370_2041_mme_average.tif",
+              "bufu_370_2041_mme_average.tif.aux.xml",
+              "bufu_370_2081_mme_average.tif",
+              "bufu_370_2081_mme_average.tif.aux.xml",
+              "bufu_585_2041_mme_average.tif",
+              "bufu_585_2041_mme_average.tif.aux.xml",
+              "bufu_585_2081_mme_average.tif"
+            ],
+            "member_count": 90
+          },
+          "official_logo": {
+            "file": "oct23/bonndata.svg",
+            "source_id": "bonndata",
+            "owner": "University of Bonn",
+            "official_page": "https://bonndata.uni-bonn.de/",
+            "asset_url": "https://bonndata.uni-bonn.de/imglibs/dataverse_logo.svg",
+            "sha256": "6740e172902b5638843f8c1c0c8388d4bc83befba167728b28f365171a18345c",
+            "retrieved_on": "2026-10-23",
+            "bytes": 9698
+          }
+        }
+      }
+    },
+    {
+      "number": 13,
+      "source_id": "tudo-data",
+      "title": "TUDOdata 多特蒙德工业大学研究数据",
+      "connector_title": "TUDOdata",
+      "homepage": "https://data.tu-dortmund.de/",
+      "country": "德国",
+      "documentation": "https://guides.dataverse.org/en/latest/api/dataaccess.html",
+      "enablement": "new_adapter",
+      "description": "检索TUDOdata 多特蒙德工业大学研究数据正式发布的研究数据，获取公开的原始数据表、观测、标注和归档文件。",
+      "scope": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 755,
+        "sha256": "335a48bd954c9d5aeefce507b5843a2e2b0afb29ed265c7c474b3a555b46c60b",
+        "evidence": {
+          "source_id": "tudo-data",
+          "title": "TUDOdata 多特蒙德工业大学研究数据",
+          "connector_title": "TUDOdata",
+          "country": "德国",
+          "homepage": "https://data.tu-dortmund.de/",
+          "official_documentation": [
+            "https://fdm.tu-dortmund.de/en/rdm-at-tu-dortmund/technical-support/tudodata/",
+            "https://guides.dataverse.org/en/latest/api/dataaccess.html"
+          ],
+          "scope": {
+            "subjects": [
+              "all disciplines",
+              "physics",
+              "chemistry",
+              "engineering",
+              "education"
+            ],
+            "doi_prefixes": [
+              "10.17877/"
+            ],
+            "availability": "Published, publicly readable entity files only; no embargo, restricted access, guestbook or registration. Full resolved manifest, no per-file download-size cap.",
+            "limitation": "仅接入本仓库已发布、无禁运、无需登录或填写访客问卷的原始实体数据；排除仅外部收录、说明文档和代码文件。保留原格式、版本、源许可及校验和，不按文件数量截断清单。"
+          },
+          "verified_at": "2026-10-23T00:34:32.892655+00:00",
+          "container": "datalab-backend-1",
+          "pipeline": "Unmodified current OpenDataSources facade loaded in a temporary Python process inside the existing container: search, resolve, shared bounded content probe, download with fresh manifest and shared streaming transfer. Running service not changed.",
+          "search_query": "Allpix diamond",
+          "search_total": 3,
+          "external_id": "doi:10.17877/TUDODATA-2026-F3XOXL",
+          "record_title": "Allpix Squared simulation workflow and derived data for charge-carrier transport in diamond detectors using newly implemented mobility and trapping models, evaluated with the TransientPropagation and PulseTransfer modules.",
+          "record_url": "https://doi.org/10.17877/TUDODATA-2026-F3XOXL",
+          "version": "1.0",
+          "resolved_entity_file_count": 124,
+          "filename": "Full_scan_fwhm_vs_E_with_sim.csv",
+          "file_url": "https://data.tu-dortmund.de/api/access/datafile/123148",
+          "content_type": "text/csv",
+          "downloaded_size": 755,
+          "sha256": "335a48bd954c9d5aeefce507b5843a2e2b0afb29ed265c7c474b3a555b46c60b",
+          "provider_checksum": "md5:735666c7b0fb3d75fb2116e53aeff4ea",
+          "provider_checksum_verified": true,
+          "license": "The research software in this dataset is published under Apache License Version 2.0, full license information is given in Documentation/LICENSE_code.txt. The research data in this dataset is published under Creative Commons Attribution 4.0 International (CC-BY 4.0), full license information is given in Documentation/License-CC_BY_4.0.txt",
+          "entity_validation": {
+            "header": "Electric Field (V/um)\nElectricField_V_per_um,FWHM_ns,Dt_Di_e_Dt_ns,Dt_sigma_ns,Voltage_V\n0.004,459.532,,,2\n0.006,303.473,,,3\n0.008,228.879,,,4\n0.01,185.961,,,5\n0.014,133.723,,,7\n0.02,95.3186,,,10\n0.03,65.3251,,,15\n0.04,50.2923,,,20\n0.06,34.9515,,,30\n",
+            "line_count": 39
+          },
+          "official_logo": {
+            "source_id": "tudo-data",
+            "owner": "TU Dortmund",
+            "file": "oct23/tudo-data.png",
+            "official_page": "https://data.tu-dortmund.de/",
+            "asset_url": "https://data.tu-dortmund.de/logos/1/Logo_tudodata.png",
+            "sha256": "b11a02aafc346ade12ad2f7d887c8c1e05f1a0513178d7e5d614a13b2a9d54f8",
+            "retrieved_on": "2026-10-23",
+            "bytes": 1762
+          }
+        }
+      }
+    },
+    {
+      "number": 14,
+      "source_id": "muenster-datastore",
+      "title": "Münster datastore 明斯特大学研究数据",
+      "connector_title": "Münster datastore",
+      "homepage": "https://datastore.uni-muenster.de/",
+      "country": "德国",
+      "documentation": "https://datastore.uni-muenster.de/about",
+      "enablement": "new_adapter",
+      "description": "检索明斯特大学正式发布的跨学科研究数据，获取教育实验、材料、生态等研究的公开原始文件。",
+      "scope": "仅获取明确公开、无禁运的已发布数据集实体文件；不展示论文、说明、代码或需要申请的数据。记录标识固定发布版本，保留完整文件清单、原格式与源站摘要。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 6519,
+        "sha256": "e278e7c44973af493c634f01488a60017abb2b79d160dd11d0773838ded6337b",
+        "evidence": {
+          "source_id": "muenster-datastore",
+          "title": "Münster datastore 明斯特大学研究数据",
+          "connector_title": "Münster datastore",
+          "country": "德国",
+          "homepage": "https://datastore.uni-muenster.de/",
+          "official_documentation": [
+            "https://datastore.uni-muenster.de/about",
+            "https://datastore.uni-muenster.de/about"
+          ],
+          "scope": {
+            "subjects": [
+              "all disciplines",
+              "education",
+              "materials",
+              "chemistry",
+              "ecology"
+            ],
+            "doi_prefixes": [],
+            "availability": "Published, publicly readable entity files only; no embargo, restricted access, guestbook or registration. Full resolved manifest, no per-file download-size cap.",
+            "limitation": "仅获取明确公开、无禁运的已发布数据集实体文件；不展示论文、说明、代码或需要申请的数据。记录标识固定发布版本，保留完整文件清单、原格式与源站摘要。"
+          },
+          "verified_at": "2026-10-23T00:34:31.022649+00:00",
+          "container": "datalab-backend-1",
+          "pipeline": "Unmodified current OpenDataSources facade loaded in a temporary Python process inside the existing container: search, resolve, shared bounded content probe, download with fresh manifest and shared streaming transfer. Running service not changed.",
+          "search_query": "ProVie",
+          "search_total": 1,
+          "external_id": "r33k1-nmp76",
+          "record_title": "Database: ProVie Project",
+          "record_url": "https://datastore.uni-muenster.de/records/r33k1-nmp76",
+          "version": "1",
+          "resolved_entity_file_count": 1,
+          "filename": "ProVie_dataset.csv",
+          "file_url": "https://datastore.uni-muenster.de/api/records/r33k1-nmp76/files/ProVie_dataset.csv/content",
+          "content_type": "text/csv",
+          "downloaded_size": 6519,
+          "sha256": "e278e7c44973af493c634f01488a60017abb2b79d160dd11d0773838ded6337b",
+          "provider_checksum": "md5:48e938e2d4837575bf00ba8e543b2a3d",
+          "provider_checksum_verified": true,
+          "license": "https://spdx.org/licenses/CC-BY-SA-4.0",
+          "entity_validation": {
+            "header": "ID;video group;prompt;labheu;sex;program;rep.;GPA;points;share;pk;duration;pcom;strk;pcon\r\n1;1;0;0;2;4;0;2,3;7;80;2;7;3;2;2\r\n2;2;1;0;1;2;0;1,1;6;33,33;1,5;17;12;3;4\r\n3;3;0;1;1;2;0;1,8;6;33,33;2;13;5;6;1\r\n4;4;1;1;2;2;1;3,1;7;10;2,5;22;5;1;2\r\n5;1;0;",
+            "line_count": 170
+          },
+          "official_logo": {
+            "file": "oct23/muenster-datastore.png",
+            "source_id": "muenster-datastore",
+            "owner": "University of Münster",
+            "official_page": "https://datastore.uni-muenster.de/",
+            "asset_url": "https://datastore.uni-muenster.de/static/apple-touch-icon-180.png",
+            "sha256": "bd5fe0f705178318e9e2368f86018850224f2f2c9edda850ed625fd316cad3e1",
+            "retrieved_on": "2026-10-23",
+            "bytes": 45645
+          }
+        }
+      }
+    },
+    {
+      "number": 15,
+      "source_id": "uniprot",
+      "title": "UniProt 蛋白质序列",
+      "connector_title": "UniProt",
+      "homepage": "https://www.uniprot.org/",
+      "country": "国际",
+      "documentation": "https://www.uniprot.org/help/api_queries",
+      "enablement": "completed_existing_adapter_and_enabled",
+      "description": "按蛋白质名称、基因或物种检索 UniProt，获取所选记录的完整 FASTA 序列。",
+      "scope": "每条结果对应一条蛋白质记录；下载完整序列，不代表整个物种蛋白质组。保留获取时的序列与条目版本，源站当前记录可能继续更新。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 233,
+        "sha256": "aecc3cb75f840f242f6b4489d501384d0c50cf0d61a8dab5a1dab81a80aa4bae",
+        "evidence": {
+          "source_id": "uniprot",
+          "query": "P69905",
+          "external_id": "P69905",
+          "title": "Hemoglobin subunit alpha (P69905)",
+          "file_count": 1,
+          "filename": "uniprot_P69905.fasta",
+          "bytes": 233,
+          "sha256": "aecc3cb75f840f242f6b4489d501384d0c50cf0d61a8dab5a1dab81a80aa4bae",
+          "content_type": "application/octet-stream",
+          "entity_lines": 4,
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "uniprot",
+            "external_id": "P69905",
+            "discovery_source_id": "uniprot",
+            "source_url": "https://www.uniprot.org/uniprotkb/P69905",
+            "sha256": "aecc3cb75f840f242f6b4489d501384d0c50cf0d61a8dab5a1dab81a80aa4bae",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "https://creativecommons.org/licenses/by/4.0/",
+            "source_version": "2:219",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:36:49.518813+00:00"
+          },
+          "status": "passed",
+          "full_content_validation": "passed"
+        }
+      }
+    },
+    {
+      "number": 16,
+      "source_id": "rcsb-pdb",
+      "title": "RCSB PDB 分子结构",
+      "connector_title": "RCSB PDB",
+      "homepage": "https://www.rcsb.org/",
+      "country": "美国 / 国际",
+      "documentation": "https://search.rcsb.org/",
+      "enablement": "completed_existing_adapter_and_enabled",
+      "description": "检索实验测定的生物大分子结构，获取完整 PDBx/mmCIF 原生坐标文件。",
+      "scope": "每条结果对应一个已公开实验结构，获取当前完整坐标文件并记录修订日期；不是固定历史归档。不把结构说明元数据当成坐标数据。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 69506,
+        "sha256": "23787562c427d7c1abe5420e86d5f1d0a6c7007dec1e8ce85645a6d69c32e8ba",
+        "evidence": {
+          "source_id": "rcsb-pdb",
+          "query": "1CRN",
+          "external_id": "1CRN",
+          "title": "WATER STRUCTURE OF A HYDROPHOBIC PROTEIN AT ATOMIC RESOLUTION. PENTAGON RINGS OF WATER MOLECULES IN CRYSTALS OF CRAMBIN",
+          "file_count": 1,
+          "filename": "pdb_1CRN.cif",
+          "bytes": 69506,
+          "sha256": "23787562c427d7c1abe5420e86d5f1d0a6c7007dec1e8ce85645a6d69c32e8ba",
+          "content_type": "chemical/x-cif",
+          "entity_lines": 1654,
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "rcsb-pdb",
+            "external_id": "1CRN",
+            "discovery_source_id": "rcsb-pdb",
+            "source_url": "https://www.rcsb.org/structure/1CRN",
+            "sha256": "23787562c427d7c1abe5420e86d5f1d0a6c7007dec1e8ce85645a6d69c32e8ba",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+            "source_version": "2024-10-30T00:00:00.000+00:00",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:36:46.755015+00:00"
+          },
+          "status": "passed",
+          "full_content_validation": "passed"
+        }
+      }
+    },
+    {
+      "number": 17,
+      "source_id": "ena",
+      "title": "ENA 核酸序列档案",
+      "connector_title": "ENA",
+      "homepage": "https://www.ebi.ac.uk/ena/",
+      "country": "英国 / 国际",
+      "documentation": "https://ena-docs.readthedocs.io/en/latest/retrieval/programmatic-access/advanced-search.html",
+      "enablement": "completed_existing_adapter_and_enabled",
+      "description": "按主题检索 European Nucleotide Archive 已公开核酸序列，并获取完整 FASTA。",
+      "scope": "每条结果对应一个公开序列记录，并固定其序列版本；原始测序 FASTQ 仍由 SRA 连接器获取。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 4719094,
+        "sha256": "c41a4207c8916ba6138460d129ce5604cb307d40b7d56207878a9e731a418074",
+        "evidence": {
+          "source_id": "ena",
+          "query": "U00096",
+          "external_id": "U00096",
+          "title": "U00096",
+          "file_count": 1,
+          "filename": "ena_U00096.3.fasta",
+          "bytes": 4719094,
+          "sha256": "c41a4207c8916ba6138460d129ce5604cb307d40b7d56207878a9e731a418074",
+          "content_type": "application/octet-stream",
+          "entity_lines": 77362,
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "ena",
+            "external_id": "U00096",
+            "discovery_source_id": "ena",
+            "source_url": "https://www.ebi.ac.uk/ena/browser/view/U00096",
+            "sha256": "c41a4207c8916ba6138460d129ce5604cb307d40b7d56207878a9e731a418074",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": null,
+            "source_version": "3",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:36:50.173633+00:00"
+          },
+          "status": "passed",
+          "full_content_validation": "passed"
+        }
+      }
+    },
+    {
+      "number": 18,
+      "source_id": "pride",
+      "title": "PRIDE 蛋白质组数据",
+      "connector_title": "PRIDE",
+      "homepage": "https://www.ebi.ac.uk/pride/",
+      "country": "英国 / 国际",
+      "documentation": "https://www.ebi.ac.uk/pride/ws/archive/v2/docs/api-guide.html",
+      "enablement": "completed_existing_adapter_and_enabled",
+      "description": "检索 PRIDE 公开蛋白质组研究并获取已发布质谱、肽段鉴定和定量结果文件。",
+      "scope": "只获取公开研究的质谱、鉴定、定量和序列文件，排除说明及样本描述附件；保留原格式与项目许可，完整列出当前项目可获取的文件。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 103845,
+        "sha256": "8a82cecec756d5d91f3135a75816fdbae1a2ce7188e4f393239c60aa5d7caba2",
+        "evidence": {
+          "source_id": "pride",
+          "query": "PXD000001",
+          "external_id": "PXD000001",
+          "title": "TMT spikes - Using R and Bioconductor for proteomics data analysis",
+          "file_count": 8,
+          "filename": "PRIDE_Exp_Complete_Ac_22134.pride.mztab.gz",
+          "bytes": 103845,
+          "sha256": "8a82cecec756d5d91f3135a75816fdbae1a2ce7188e4f393239c60aa5d7caba2",
+          "content_type": "application/octet-stream",
+          "entity_lines": 2945,
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "pride",
+            "external_id": "PXD000001",
+            "discovery_source_id": "pride",
+            "source_url": "https://www.ebi.ac.uk/pride/archive/projects/PXD000001",
+            "sha256": "8a82cecec756d5d91f3135a75816fdbae1a2ce7188e4f393239c60aa5d7caba2",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "EBI terms of use",
+            "source_version": "2017-06-20T14:57:06.000+00:00",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:36:51.419285+00:00"
+          },
+          "status": "passed",
+          "full_content_validation": "passed"
+        }
+      }
+    },
+    {
+      "number": 19,
+      "source_id": "metabolights",
+      "title": "MetaboLights 代谢组数据",
+      "connector_title": "MetaboLights",
+      "homepage": "https://www.ebi.ac.uk/metabolights/",
+      "country": "英国 / 国际",
+      "documentation": "https://www.ebi.ac.uk/training/online/courses/metabolights-quick-tour/getting-data-from-metabolights/",
+      "enablement": "completed_existing_adapter_and_enabled",
+      "description": "检索 MetaboLights 公开研究，下载代谢物测量表及公开原始实验文件。",
+      "scope": "仅展示明确公开研究中的实体数据；调查说明、样本描述和目录本身不算可获取实验数据。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 252657,
+        "sha256": "e05ed5f0f52f385192846beb7c20573b56c5a233e90b3d3e2dee26c2a2bcc6ff",
+        "evidence": {
+          "source_id": "metabolights",
+          "query": "MTBLS1",
+          "external_id": "MTBLS1",
+          "title": "A metabolomic study of urinary changes in type 2 diabetes in human compared to the control group",
+          "file_count": 1,
+          "filename": "MTBLS1_m_MTBLS1_metabolite_profiling_NMR_spectroscopy_v2_maf.tsv",
+          "bytes": 252657,
+          "sha256": "e05ed5f0f52f385192846beb7c20573b56c5a233e90b3d3e2dee26c2a2bcc6ff",
+          "content_type": "text/tab-separated-values",
+          "entity_lines": 221,
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "metabolights",
+            "external_id": "MTBLS1",
+            "discovery_source_id": "metabolights",
+            "source_url": "https://www.ebi.ac.uk/metabolights/MTBLS1",
+            "sha256": "e05ed5f0f52f385192846beb7c20573b56c5a233e90b3d3e2dee26c2a2bcc6ff",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "https://www.ebi.ac.uk/about/terms-of-use/",
+            "source_version": "3:20260522065818",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:36:50.101293+00:00"
+          },
+          "status": "passed",
+          "full_content_validation": "passed"
+        }
+      }
+    },
+    {
+      "number": 20,
+      "source_id": "metabolomics-workbench",
+      "title": "Metabolomics Workbench 代谢组",
+      "connector_title": "Metabolomics Workbench",
+      "homepage": "https://www.metabolomicsworkbench.org/",
+      "country": "美国",
+      "documentation": "https://www.metabolomicsworkbench.org/tools/MWRestAPIv1.2.pdf",
+      "enablement": "completed_existing_adapter_and_enabled",
+      "description": "按研究标题检索 NIH Metabolomics Workbench，获取包含全部分析和测量值的原生 mwTab JSON。",
+      "scope": "按研究标题或 ST 编号查找；仅返回来源确认有代谢物测量值的研究，获取研究的完整 mwTab JSON，包括所有公开分析。各研究许可不同，以来源实际声明为准。",
+      "automatic_discovery": true,
+      "manual_connector": true,
+      "validation": {
+        "status": "passed",
+        "whole_file_download": true,
+        "bytes": 88195,
+        "sha256": "a8245963363f0d0db18d020291e3c24b17a710357cfed51026a62cf8e140aaff",
+        "evidence": {
+          "source_id": "metabolomics-workbench",
+          "query": "ST000001",
+          "external_id": "ST000001",
+          "title": "Fatb Induction Experiment (FatBIE)",
+          "file_count": 1,
+          "filename": "ST000001_mwtab.json",
+          "bytes": 88195,
+          "sha256": "a8245963363f0d0db18d020291e3c24b17a710357cfed51026a62cf8e140aaff",
+          "content_type": "application/json",
+          "entity_lines": 153,
+          "receipt": {
+            "source": "data_connector",
+            "connector_id": "metabolomics-workbench",
+            "external_id": "ST000001",
+            "discovery_source_id": "metabolomics-workbench",
+            "source_url": "https://www.metabolomicsworkbench.org/data/DRCCMetadata.php?StudyID=ST000001",
+            "sha256": "a8245963363f0d0db18d020291e3c24b17a710357cfed51026a62cf8e140aaff",
+            "checksum_origin": "computed_locally",
+            "provider_checksum": null,
+            "license": "https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en",
+            "source_version": "1:1",
+            "provider_checksum_verified": false,
+            "acquired_at": "2026-10-23T00:36:48.355963+00:00"
+          },
+          "status": "passed",
+          "full_content_validation": "passed"
+        }
+      }
+    }
+  ],
+  "excluded_sources": {
+    "repositories": [
+      {
+        "name": "QDR",
+        "homepage": "https://qdr.syr.edu/",
+        "reason": "Official FAQ requires individual registration and agreement for data-file access. Public ATI annotations are not evidence that all research data can be obtained anonymously; removed rather than enabled.",
+        "official_policy": "https://qdr.syr.edu/about/faq"
+      },
+      {
+        "name": "CORA",
+        "homepage": "https://dataverse.csuc.cat/",
+        "reason": "API returned Anubis challenge, not dataset JSON. Not enabled; no challenge bypass."
+      },
+      {
+        "name": "HEPData",
+        "homepage": "https://www.hepdata.net/",
+        "reason": "Official endpoint returned 403; not enabled or bypassed."
+      },
+      {
+        "name": "4TU.ResearchData",
+        "homepage": "https://data.4tu.nl/",
+        "reason": "Official v2 API timed out from deployment container; not counted as verified."
+      },
+      {
+        "name": "Yale Dataverse, UVA Dataverse, SciELO Data",
+        "reason": "Official API returned 403 in deployment-container checks; not enabled or bypassed."
+      },
+      {
+        "name": "UNC Dataverse, CIRAD Dataverse",
+        "reason": "Official API returned 401; not enabled or bypassed."
+      }
+    ],
+    "earth_sciences": [
+      {
+        "source": "EarthScope",
+        "reason": "Implementation retained but disabled. Official anonymous HTTP access ends 2026-12-15. Not counted among 20 additions.",
+        "documentation": "https://www.earthscope.org/news/nsf-ngf-data-and-product-download-quotas/"
+      },
+      {
+        "source": "BCO-DMO",
+        "reason": "Official search API works; entity host ConnectTimeout in actual DataLab container. Not enabled."
+      },
+      {
+        "source": "NOAA CoastWatch / IFREMER ERDDAP",
+        "reason": "Official catalogs timed out from actual DataLab container. Not enabled."
+      },
+      {
+        "source": "JPL SBDB",
+        "reason": "Fair Use requires globally serialized requests; this batch does not add the required shared coordination. Not enabled."
+      }
+    ]
+  },
+  "compatibility_notes": [
+    "Jülich original unconverted files use plain datafile endpoint; format=original is used only for converted files.",
+    "RepOD Fairchive omits version fields in search. File resolution pins published version and provider hash; data-file downloads re-resolve. Original XLSX bytes retain the original format instead of adopting the transformed TAB extension. Per-file source license is preserved.",
+    "Bonn static-data and Münster university S3 redirects are allowlisted only on observed exact official host/path shapes.",
+    "Institutional logos and their official provenance are handled in frontend assets by the UI subtask; ASU retains a neutral fallback where official logo retrieval was denied."
+  ],
+  "checks": {
+    "backend": {
+      "status": "passed",
+      "passed": 11455,
+      "skipped": 69,
+      "seconds": 107.72
+    },
+    "sandbox": {
+      "status": "passed",
+      "passed": 6220,
+      "skipped": 84,
+      "seconds": 64.83
+    },
+    "frontend_type_check": "passed",
+    "frontend_production_build": "passed; pre-existing >500kB chunk advisory only",
+    "frontend_unit_tests": {
+      "passed": 3219,
+      "failed": 0
+    },
+    "browser_gate": {
+      "passed": 16,
+      "total": 16,
+      "engines": [
+        "chromium",
+        "webkit"
+      ]
+    },
+    "connector_picker": {
+      "passed": true,
+      "checks": {
+        "neutralSources": [
+          "asu-research-data",
+          "natural-earth",
+          "metabolomics-workbench",
+          "who-gho"
+        ],
+        "compactSources": {
+          "choices": 94,
+          "loadedLogos": 89,
+          "unknownSource": "neutral fallback icon"
+        },
+        "franceLogo": {
+          "width": 180,
+          "height": 180
+        },
+        "lightFocus": {
+          "color": "rgb(43, 118, 89)",
+          "width": "2px",
+          "style": "solid",
+          "accent": "rgb(43, 118, 89)",
+          "shadow": "none"
+        },
+        "selection": "keyboard and pointer selection, search preserves selection, disabled controls, clear restores automatic matching",
+        "darkFocus": {
+          "color": "rgb(169, 203, 187)",
+          "width": "2px",
+          "style": "solid",
+          "accent": "rgb(169, 203, 187)",
+          "shadow": "none"
+        },
+        "mobile390": {
+          "width": 366,
+          "scroll": 364,
+          "client": 364,
+          "viewport": 390,
+          "columns": "316px"
+        },
+        "mobile320": {
+          "width": 296,
+          "scroll": 294,
+          "client": 294,
+          "viewport": 320,
+          "columns": "246px"
+        },
+        "globalControls": "native checkbox/radio/link retain green keyboard outlines; compound text has one inset focus edge",
+        "management": "details link navigates to unchanged management descriptions and capabilities"
+      },
+      "note": "浏览器夹具包含停用/未知来源；实际启用数量以automatic_sources_total和connector_picker_total为准。"
+    },
+    "compose_config": "passed",
+    "independent_review": "统计与地球科学适配器的完整性、URL约束、版本与文件格式已交叉审查，无未解决阻断项。"
+  },
+  "branding": {
+    "official_source_marks": [
+      {
+        "source_id": "bonndata",
+        "file": "oct23/bonndata.svg",
+        "official_page": "https://bonndata.uni-bonn.de/",
+        "asset_url": "https://bonndata.uni-bonn.de/imglibs/dataverse_logo.svg",
+        "sha256": "6740e172902b5638843f8c1c0c8388d4bc83befba167728b28f365171a18345c"
+      },
+      {
+        "source_id": "deic-dataverse",
+        "file": "oct23/deic-dataverse.png",
+        "official_page": "https://dataverse.deic.dk/",
+        "asset_url": "https://dataverse.deic.dk/logos/navbar/logo-deic-dataverse.png",
+        "sha256": "d785b8d901d1df844286778812522f7626a7eceaaf7c94233764ecc0895dfa86"
+      },
+      {
+        "source_id": "heasarc",
+        "file": "oct23/heasarc.svg",
+        "official_page": "https://heasarc.gsfc.nasa.gov/",
+        "asset_url": "https://heasarc.gsfc.nasa.gov/docs/images/nasa-logo.svg",
+        "sha256": "e03e455100c083590c507df7870c3887a9f2298388cf6f421b6d72bc7eae9008"
+      },
+      {
+        "source_id": "juelich-data",
+        "file": "oct23/juelich-data.png",
+        "official_page": "https://data.fz-juelich.de/",
+        "asset_url": "https://data.fz-juelich.de/branding/files/dataverse/img/logo.png",
+        "sha256": "6cd02f8dcef1d6c0e6d7d813cbfdc8a63cb1d10244ab4cc9eb6c4f2459708070"
+      },
+      {
+        "source_id": "malaysia-data-gov",
+        "file": "oct23/malaysia-data-gov.png",
+        "official_page": "https://data.gov.my/",
+        "asset_url": "https://data.gov.my/favicon-32x32.png",
+        "sha256": "50c4b9e6f88271ad3b2cb8cbc6c7111047bd418ab4d3553319ba9b859c2369d7"
+      },
+      {
+        "source_id": "muenster-datastore",
+        "file": "oct23/muenster-datastore.png",
+        "official_page": "https://datastore.uni-muenster.de/",
+        "asset_url": "https://datastore.uni-muenster.de/static/apple-touch-icon-180.png",
+        "sha256": "bd5fe0f705178318e9e2368f86018850224f2f2c9edda850ed625fd316cad3e1"
+      },
+      {
+        "source_id": "repod",
+        "file": "oct23/repod.png",
+        "official_page": "https://repod.icm.edu.pl/",
+        "asset_url": "https://repod.icm.edu.pl/javax.faces.resource/images/favicondataverse.png",
+        "sha256": "ab234608935f5d63d17df1b2f443f3a5d73ed5c7577774af3a3366b5caf48650"
+      },
+      {
+        "source_id": "worldclim",
+        "file": "oct23/worldclim.ico",
+        "official_page": "https://www.worldclim.org/",
+        "asset_url": "https://www.worldclim.org/img/favicon.ico",
+        "sha256": "08ea3a5ac8611d70b883aa0d9e5a75dd445c93868e43b31dd87045144693b33c"
+      },
+      {
+        "source_id": "noaa-ghcn-daily",
+        "file": "expansion-next/noaa-gml.ico",
+        "official_page": "https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily",
+        "asset_url": "https://gml.noaa.gov/favicon.ico",
+        "sha256": "be594b48336e2545d169dcb07629b83581c9ca79003d53d24bbf4675a54f4cab"
+      },
+      {
+        "source_id": "norway-ssb",
+        "file": "oct23/norway-ssb.png",
+        "official_page": "https://www.ssb.no/en/",
+        "asset_url": "https://www.ssb.no/_/asset/mimir/favicon/favicon-96x96.png",
+        "sha256": "8e7cb39ac55f8fd9c3433a952a214dfbc4cc703b8bf293bdab0574c444b968cd"
+      },
+      {
+        "source_id": "tudo-data",
+        "file": "oct23/tudo-data.png",
+        "official_page": "https://data.tu-dortmund.de/",
+        "asset_url": "https://data.tu-dortmund.de/logos/1/Logo_tudodata.png",
+        "sha256": "b11a02aafc346ade12ad2f7d887c8c1e05f1a0513178d7e5d614a13b2a9d54f8"
+      }
+    ],
+    "neutral_fallbacks": [
+      {
+        "source_id": "asu-research-data",
+        "official_page": "https://dataverse.asu.edu/",
+        "reason": "Official repository and university homepages returned HTTP 403 while locating branding; no verified local mark. Public data API remains independently available.",
+        "checked_on": "2026-10-23",
+        "display": "neutral database icon"
+      },
+      {
+        "source_id": "natural-earth",
+        "official_page": "https://www.naturalearthdata.com/",
+        "asset_url": "https://www.naturalearthdata.com/favicon.ico",
+        "reason": "Official icon request returned HTTP 406; retain neutral icon.",
+        "checked_on": "2026-10-23",
+        "display": "neutral database icon"
+      },
+      {
+        "source_id": "metabolomics-workbench",
+        "official_page": "https://www.metabolomicsworkbench.org/",
+        "reason": "Homepage provides a wide banner and the host institution mark; no verified compact source mark bundled.",
+        "checked_on": "2026-10-23",
+        "display": "neutral database icon"
+      },
+      {
+        "source_id": "who-gho",
+        "official_page": "https://www.who.int/about/policies/publishing/data-policy/terms-and-conditions",
+        "reason": "WHO emblem reuse requires permission. Use the source name and neutral icon without the emblem.",
+        "checked_on": "2026-10-23",
+        "display": "neutral database icon"
+      }
+    ]
+  },
+  "deployment": {
+    "status": "held",
+    "reason": "遵循保持独立、等待其他任务结束后再发布的要求。并行开放数据检索改动仍等待历史研究问题及候选公开说明向DeepSeek外发的授权；本批未触发该重判。",
+    "committed": false,
+    "pushed": false,
+    "deployed": false,
+    "background_automation_created": false
+  }
+}

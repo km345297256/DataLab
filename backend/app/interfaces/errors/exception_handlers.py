@@ -57,11 +57,15 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         """Handle HTTP exceptions"""
         logger.warning("HTTP exception status_code=%d", exc.status_code)
+        headers = {}
+        if exc.status_code == 409 and (exc.headers or {}).get("X-DataSeek-Error") == "skill-selection-unavailable":
+            headers["X-DataSeek-Error"] = "skill-selection-unavailable"
+        retry_after = (exc.headers or {}).get("Retry-After", "")
+        if exc.status_code == 429 and retry_after.isdigit():
+            headers["Retry-After"] = retry_after
         return JSONResponse(
             status_code=exc.status_code,
-            headers={"X-DataSeek-Error": "skill-selection-unavailable"}
-            if exc.status_code == 409 and (exc.headers or {}).get("X-DataSeek-Error") == "skill-selection-unavailable"
-            else None,
+            headers=headers or None,
             content=APIResponse(
                 code=exc.status_code,
                 msg=exc.detail,

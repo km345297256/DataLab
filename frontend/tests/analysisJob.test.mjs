@@ -38,6 +38,12 @@ test('late updates locate their original tool in earlier steps', () => {
   assert.equal(findAnalysisTool(messages, 'absent'), undefined);
 });
 
+test('late lifecycle updates preserve the durable data search card reference', () => {
+  const current = tool({ status: 'called', open_data_search_id: 'saved-search' });
+  const merged = mergeAnalysisToolEvent(current, tool({ open_data_search_id: null }));
+  assert.equal(merged.open_data_search_id, 'saved-search');
+});
+
 test('elapsed time freezes at completion and interrupted is terminal', () => {
   const done = job({ finished_at: '2026-09-05T00:00:12Z', status: 'interrupted' });
   assert.equal(analysisJobElapsedSeconds(done, Date.now()), 12);

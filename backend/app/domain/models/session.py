@@ -37,6 +37,7 @@ class Session(BaseModel):
     llm_overrides: Optional[dict] = None
     dataset_ids: List[str] = Field(default_factory=list)
     sandbox_dataset_ids: List[str] = Field(default_factory=list)
+    sandbox_input_signature: Optional[str] = None
     title: Optional[str] = None
     title_manually_set: bool = False
     unread_message_count: int = 0

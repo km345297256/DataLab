@@ -9,6 +9,10 @@
         :tabs="tabs" 
         :default-tab="normalizedDefaultTab">
 
+        <template #account>
+          <AccountProfileSettings />
+        </template>
+
         <template #settings>
           <GeneralSettings />
         </template>
@@ -29,7 +33,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Settings2, Puzzle, BotMessageSquare } from 'lucide-vue-next'
+import { Settings2, Puzzle, BotMessageSquare, UserRound } from 'lucide-vue-next'
 import {
   Dialog,
   DialogContent,
@@ -39,6 +43,7 @@ import {
 import { useSettingsDialog } from '@/composables/useSettingsDialog'
 import SettingsTabs from './SettingsTabs.vue'
 import GeneralSettings from './GeneralSettings.vue'
+import AccountProfileSettings from './AccountProfileSettings.vue'
 import SkillSettings from './SkillSettings.vue'
 import AgentProfileRuntimeSettings from './AgentProfileRuntimeSettings.vue'
 import type { TabItem } from './SettingsTabs.vue'
@@ -48,6 +53,7 @@ const { isSettingsDialogOpen, defaultTab, settingsDialogVersion } = useSettingsD
 
 // Tab configuration
 const tabs: TabItem[] = [
+  { id: 'account', label: '账号与安全', icon: UserRound },
   {
     id: 'settings',
     label: 'Settings',

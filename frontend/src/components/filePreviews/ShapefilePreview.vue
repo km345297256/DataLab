@@ -45,10 +45,10 @@
             <button type="button" class="size-8 border-t border-[var(--border-main)] text-xs text-[var(--text-secondary)] hover:bg-gray-50" title="复位" @click="resetView">⌂</button>
           </div>
           <label class="absolute right-3 top-3 z-10 flex items-center gap-2 rounded border border-[var(--border-main)] bg-white px-2 py-1.5 text-xs text-[var(--text-secondary)] shadow-sm">
-            <input v-model="showBasemap" type="checkbox" class="accent-[#2878d3]" /> 地图底图
+            <input v-model="showBasemap" type="checkbox" class="accent-[var(--control-focus-color)]" /> 地图底图
           </label>
           <div class="absolute right-3 top-12 z-10 flex gap-2">
-            <button type="button" class="rounded border px-2 py-1.5 text-xs shadow-sm" :class="selectionMode ? 'border-[#2878d3] bg-[#e8f1ec] text-[#245b42]' : 'border-[var(--border-main)] bg-white text-[var(--text-secondary)]'" :aria-pressed="selectionMode" title="选择与框内区域相交的完整要素，不裁剪几何" @click="toggleSelectionMode">{{ selectionMode ? '退出框选' : '框选要素' }}</button>
+            <button type="button" class="rounded border px-2 py-1.5 text-xs shadow-sm" :class="selectionMode ? 'border-[var(--control-focus-color)] bg-[#e8f1ec] text-[#245b42]' : 'border-[var(--border-main)] bg-white text-[var(--text-secondary)]'" :aria-pressed="selectionMode" title="选择与框内区域相交的完整要素，不裁剪几何" @click="toggleSelectionMode">{{ selectionMode ? '退出框选' : '框选要素' }}</button>
             <button v-if="selectedIndices.size || selectionRect" type="button" class="rounded border border-[var(--border-main)] bg-white px-2 py-1.5 text-xs text-[var(--text-secondary)] shadow-sm" @click="clearSelection">清除选择</button>
           </div>
         <svg

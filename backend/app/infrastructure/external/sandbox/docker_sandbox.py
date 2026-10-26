@@ -8,19 +8,33 @@ import asyncio
 import io
 import re
 from urllib.parse import quote
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from datetime import datetime, UTC
 from async_lru import alru_cache
 from app.core.config import get_settings
 from app.domain.models.tool_result import ToolResult
 from app.domain.external.sandbox import Sandbox
 from app.domain.models.dataset import DatasetMount, DatasetStorageType
+from app.domain.models.file import FileInfo
+from app.domain.models.analysis_input import upload_runtime_path
+from app.domain.models.object_file import ObjectFileMountError
+from app.infrastructure.external.sandbox.object_mount import (
+    ObjectMountSpec, ObjectMountHandle, create_object_mount, restore_object_mount,
+    remove_object_mount_helpers, input_mount_signature, MOUNT_ERROR,
+    release_object_mount_helpers,
+    ObjectMountIdentityError, LABEL_PREFIX,
+)
 from app.infrastructure.external.browser.playwright_browser import PlaywrightBrowser
 from app.infrastructure.external.browser.browser_use_browser import BrowserUseBrowser
 from app.domain.external.browser import Browser
 from app.infrastructure.external.sandbox.dataset_mount_validator import (
     canonical_host_source as _canonical_host_source,
     docker_host_source_and_candidates as _docker_host_source_and_candidates,
+)
+from app.infrastructure.external.sandbox.dataset_readability import (
+    DatasetReadabilityError,
+    prepare_managed_dataset_source,
+    verify_dataset_readability,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,17 +69,56 @@ class DockerSandbox(Sandbox):
         image_reference: str | None = None,
         image_digest: str | None = None,
         runtime_kind: str | None = None,
+        object_mount_handle: ObjectMountHandle | None = None,
     ):
         """Initialize Docker sandbox and API interaction client"""
-        self.client = httpx.AsyncClient(timeout=600)
+        self.client = httpx.AsyncClient(timeout=None)
         self._container_name = container_name
         self._docker_host = docker_host
         self._image_reference = image_reference
         self._image_digest = image_digest
+        self._object_mount_handle = object_mount_handle
         self._execution_runtime_kind = runtime_kind or (
             "remote_docker" if docker_host else "local_docker"
         )
         self._set_ip(ip)
+
+    @property
+    def input_mount_signature(self) -> str | None:
+        handle = getattr(self, "_object_mount_handle", None)
+        return handle.signature if handle else None
+
+    @property
+    def object_mount_grant_id(self) -> str | None:
+        handle = getattr(self, "_object_mount_handle", None)
+        return handle.grant_id if handle else None
+
+    async def verify_readonly_inputs(self, files: list[FileInfo]) -> None:
+        """Validate exact mount metadata without copying or hashing file bytes."""
+        if not files:
+            if self.input_mount_signature:
+                raise ObjectFileMountError(MOUNT_ERROR)
+            return
+        expected = input_mount_signature(files)
+        if not self._container_name or self._docker_host or self.input_mount_signature != expected:
+            raise ObjectFileMountError(MOUNT_ERROR)
+
+        def verify():
+            client = docker.from_env(timeout=get_settings().sandbox_docker_create_timeout_seconds)
+            try:
+                container = client.containers.get(self._container_name)
+                container.reload()
+                handle = restore_object_mount(client, container=container, settings=get_settings(), expected_files=files)
+                if not handle or handle.signature != expected:
+                    raise ObjectFileMountError(MOUNT_ERROR)
+                if {item.target for item in handle.mounts} != {upload_runtime_path(info) for info in files}:
+                    raise ObjectFileMountError(MOUNT_ERROR)
+            except Exception:
+                raise ObjectFileMountError(MOUNT_ERROR) from None
+            finally:
+                client.close()
+
+        await asyncio.to_thread(verify)
 
     def _set_ip(self, ip: str) -> None:
         self.ip = ip
@@ -94,7 +147,10 @@ class DockerSandbox(Sandbox):
                     data=result.data,
                 )
 
-        if operation == "file_replace" and data.get("replaced_count") == 0:
+        if (operation == "file_replace" and data.get("replaced_count") == 0
+                and not (result.success is True and data.get("changed") is False
+                         and data.get("write_action") == "reuse"
+                         and data.get("side_effect_state") == "not_started")):
             return ToolResult(
                 success=False,
                 message="Replacement made no changes: target text was not found",
@@ -171,6 +227,7 @@ class DockerSandbox(Sandbox):
         docker_host: str = None,
         network: str = None,
         mounts: Optional[List[DatasetMount]] = None,
+        object_mount: ObjectMountSpec | None = None,
     ) -> 'DockerSandbox':
         """Create a new Docker sandbox (static method)
         
@@ -189,6 +246,8 @@ class DockerSandbox(Sandbox):
         container_name = f"{name_prefix}-{str(uuid.uuid4())[:8]}"
         
         docker_client = None
+        object_handle = None
+        container = None
         try:
             # Create Docker client. Keep the timeout explicit so create failures
             # are bounded and can be recovered by checking whether Docker created
@@ -206,8 +265,15 @@ class DockerSandbox(Sandbox):
                 "name": container_name,
                 "detach": True,
                 "remove": True,
+                # Explicit ownership also survives images built outside Compose.
+                "labels": {
+                    "com.docker.compose.project": name_prefix.removesuffix("-sandbox"),
+                    "com.docker.compose.service": "sandbox-image",
+                },
                 "environment": {
-                    "SERVICE_TIMEOUT_MINUTES": settings.sandbox_ttl_minutes,
+                    # Do not arm the supervisor's timed service shutdown:
+                    # long analysis/review requests must remain alive without
+                    # receiving unrelated HTTP requests as a keepalive.
                     "CHROME_ARGS": settings.sandbox_chrome_args,
                     "HTTPS_PROXY": settings.sandbox_https_proxy,
                     "HTTP_PROXY": settings.sandbox_http_proxy,
@@ -217,6 +283,18 @@ class DockerSandbox(Sandbox):
             docker_mounts = []
             seen_sources: set[str] = set()
             seen_targets: set[str] = set()
+            if object_mount:
+                if docker_host:
+                    raise ObjectFileMountError("当前执行节点不支持只读对象挂载。")
+                object_handle = create_object_mount(
+                    docker_client, sandbox_name=container_name, spec=object_mount, settings=settings,
+                )
+                container_config["labels"].update(object_handle.labels)
+                for input_mount in object_handle.mounts:
+                    seen_targets.add(input_mount.target)
+                    docker_mounts.append(docker.types.Mount(
+                        target=input_mount.target, source=input_mount.source, type="bind", read_only=True,
+                    ))
             for mount in mounts or []:
                 if not mount.read_only:
                     raise RuntimeError("Dataset mounts must be read-only")
@@ -224,25 +302,9 @@ class DockerSandbox(Sandbox):
                     raise RuntimeError("Invalid dataset mount identity")
                 dataset_root = f"/home/ubuntu/datasets/{mount.dataset_id}"
                 if mount.storage_type == DatasetStorageType.MANAGED_UPLOAD:
-                    if mount.source != settings.dataset_managed_volume:
-                        raise RuntimeError("Unapproved managed dataset volume")
-                    if mount.target != dataset_root:
-                        raise RuntimeError("Invalid managed dataset mount target")
-                    volume = docker_client.volumes.get(mount.source)
-                    volume_root = volume.attrs.get("Mountpoint")
-                    if not volume_root:
-                        raise RuntimeError(f"Docker volume {mount.source} has no host mountpoint")
-                    target = dataset_root
-                    source = str(Path(volume_root) / mount.dataset_id)
-                    if target in seen_targets:
-                        raise RuntimeError("Duplicate dataset mount target")
-                    seen_targets.add(target)
-                    docker_mounts.append(docker.types.Mount(
-                        target=target,
-                        source=source,
-                        type="bind",
-                        read_only=True,
-                    ))
+                    raise ObjectFileMountError(
+                        "历史托管数据尚未迁移到对象存储，不能创建分析副本；请联系管理员迁移后再分析。"
+                    )
                 else:
                     if mount.storage_type != DatasetStorageType.HOST_PATH:
                         raise RuntimeError("Unsupported dataset storage type")
@@ -264,6 +326,9 @@ class DockerSandbox(Sandbox):
                         source=docker_source,
                         candidate_roots=candidate_roots,
                     )
+                    # A root allowlist/type check does not establish permission
+                    # for the actual analysis user. Never chmod or copy host data.
+                    verify_dataset_readability(docker_client, image=image, source=source)
                     if source in seen_sources:
                         raise RuntimeError("Duplicate dataset mount source")
                     if target in seen_targets:
@@ -312,10 +377,24 @@ class DockerSandbox(Sandbox):
                 image_reference=image_reference,
                 image_digest=image_digest,
                 runtime_kind="remote_docker" if docker_host else "local_docker",
+                object_mount_handle=object_handle,
             )
             
         except Exception as e:
+            if object_handle is not None and docker_client is not None:
+                # Creation owns both containers until it returns a complete
+                # handle. Never orphan FUSE when sandbox startup fails.
+                if container is not None:
+                    container.remove(force=True)
+                remove_object_mount_helpers(docker_client, sandbox_name=container_name)
+            if object_mount:
+                logger.error("Failed to create sandbox with read-only object mounts error_type=%s", type(e).__name__)
+                raise ObjectFileMountError(MOUNT_ERROR) from None
+            if isinstance(e, ObjectFileMountError):
+                raise
             logger.exception("Failed to create Docker sandbox")
+            if isinstance(e, DatasetReadabilityError):
+                raise DatasetReadabilityError(e.code) from None
             if mounts:
                 raise RuntimeError("Failed to create Docker sandbox with the selected read-only dataset") from e
             raise Exception(f"Failed to create Docker sandbox: {str(e)}")
@@ -536,6 +615,34 @@ class DockerSandbox(Sandbox):
         )
         return consume_shell_receipt(self._tool_result_from_response(response, "shell_exec"), None)
 
+    async def runtime_capabilities(self) -> ToolResult:
+        response = await self.client.get(
+            f"{self.base_url}/api/v1/shell/runtime-capabilities", timeout=15,
+        )
+        response.raise_for_status()
+        return ToolResult(**response.json())
+
+    async def program_preflight(self, exec_dir: str, script_path: str) -> ToolResult:
+        response = await self.client.post(
+            f"{self.base_url}/api/v1/shell/program-preflight",
+            json={"exec_dir": exec_dir, "script_path": script_path}, timeout=None,
+        )
+        response.raise_for_status()
+        return ToolResult(**response.json())
+
+    async def exec_program(self, session_id: str, exec_dir: str, script_path: str,
+                           args: list[str]) -> ToolResult:
+        from app.domain.services.execution_evidence import consume_shell_receipt, register_shell_attempt
+        from app.domain.services.program_execution import program_command, consume_program_feedback
+        attempt = register_shell_attempt(self, session_id, exec_dir, program_command(script_path, args))
+        response = await self.client.post(
+            f"{self.base_url}/api/v1/shell/program",
+            json={"id": session_id, "exec_dir": exec_dir, "script_path": script_path, "args": args,
+                  **({"operation_id": attempt.operation_id} if attempt else {})},
+        )
+        result = consume_shell_receipt(self._tool_result_from_response(response, "shell_exec"), attempt)
+        return consume_program_feedback(result, attempt)
+
     async def exec_command_tracked(self, session_id: str, exec_dir: str, command: str,
                                    operation_id: str) -> ToolResult:
         response = await self.client.post(
@@ -547,7 +654,7 @@ class DockerSandbox(Sandbox):
     async def shell_operation_status(self, session_id: str, operation_id: str) -> ToolResult:
         response = await self.client.post(
             f"{self.base_url}/api/v1/shell/operation-status",
-            json={"id": session_id, "operation_id": operation_id}, timeout=3.0,
+            json={"id": session_id, "operation_id": operation_id}, timeout=None,
         )
         return ToolResult(**response.json())
 
@@ -563,8 +670,11 @@ class DockerSandbox(Sandbox):
         )
         return consume_shell_receipt(self._tool_result_from_response(response, "plugin_exec"), attempt)
 
-    async def view_shell(self, session_id: str, console: bool = False) -> ToolResult:
+    async def view_shell(self, session_id: str, console: bool = False, *,
+                         output_id: str | None = None, cursor: int | None = None,
+                         max_bytes: int = 8192) -> ToolResult:
         from app.domain.services.execution_evidence import bind_shell_observation
+        from app.domain.services.program_execution import consume_program_feedback
         attempt = bind_shell_observation(self, session_id)
         response = await self.client.post(
             f"{self.base_url}/api/v1/shell/view",
@@ -572,9 +682,11 @@ class DockerSandbox(Sandbox):
                 "id": session_id,
                 "console": console,
                 **({"operation_id": attempt.operation_id} if attempt else {}),
+                **({"output_id": output_id, "cursor": cursor, "max_bytes": max_bytes}
+                   if output_id is not None or cursor is not None else {}),
             }
         )
-        return ToolResult(**response.json())
+        return consume_program_feedback(ToolResult(**response.json()), attempt)
 
     async def wait_for_process(self, session_id: str, seconds: Optional[int] = None) -> ToolResult:
         from app.domain.services.execution_evidence import bind_shell_observation, refresh_shell_attempt
@@ -652,7 +764,7 @@ class DockerSandbox(Sandbox):
         return ToolResult(**response.json())
 
     async def file_read(self, file: str, start_line: int = None, 
-                        end_line: int = None, sudo: bool = False) -> ToolResult:
+                        end_line: int = None, sudo: bool = False, include_version: bool = False) -> ToolResult:
         """Read file content
         
         Args:
@@ -670,10 +782,20 @@ class DockerSandbox(Sandbox):
                 "file": file,
                 "start_line": start_line,
                 "end_line": end_line,
-                "sudo": sudo
+                "sudo": sudo,
+                "include_version": include_version,
             }
         )
         return ToolResult(**response.json())
+
+    async def file_apply_patch(self, file: str, base_sha256: str,
+                               replacements: list[dict], syntax_check: str = "none") -> ToolResult:
+        response = await self.client.post(
+            f"{self.base_url}/api/v1/file/apply-patch",
+            json={"file": file, "base_sha256": base_sha256,
+                  "replacements": replacements, "syntax_check": syntax_check},
+        )
+        return self._tool_result_from_response(response, "file_apply_patch")
         
     async def file_exists(self, path: str) -> ToolResult:
         """Check if file exists
@@ -741,7 +863,12 @@ class DockerSandbox(Sandbox):
                 "sudo": sudo
             }
         )
-        return self._tool_result_from_response(response, "file_replace")
+        result = self._tool_result_from_response(response, "file_replace")
+        status_code = getattr(response, "status_code", None)
+        if type(status_code) is int and 200 <= status_code < 300:
+            from app.domain.services.execution_evidence import confirm_file_replace_no_change
+            confirm_file_replace_no_change(self, file, result)
+        return result
 
     async def file_search(self, file: str, regex: str, sudo: bool = False) -> ToolResult:
         """Search in file content
@@ -790,32 +917,76 @@ class DockerSandbox(Sandbox):
         response.raise_for_status()
         return ToolResult(**response.json())
 
-    async def validate_artifacts(self, items: list[dict[str, str]]) -> ToolResult:
-        """Validate generated bytes without a model/tool round or existence fallback."""
-        try:
-            response = await self.client.post(
-                f"{self.base_url}/api/v1/file/validate-artifacts",
-                json={"items": items}, timeout=35.0,
-            )
-            response.raise_for_status()
-            result = ToolResult(**response.json())
-            if (not result.success or not isinstance(result.data, dict)
-                    or result.data.get("version") != 1 or not isinstance(result.data.get("files"), list)):
-                raise ValueError("unsupported_validation_response")
-            return result
-        except (httpx.HTTPError, ValueError, TypeError):
-            # Old sandbox images may return 404. Never infer validity from
-            # existence or retry an analysis when only verification is missing.
-            return ToolResult(success=False, message="Artifact validation unavailable", data={
-                "version": 1, "code": "validation_unavailable", "files": [],
-            })
+    async def validate_artifacts(self, items: list[dict[str, str]], *, purpose: str = "delivery") -> ToolResult:
+        """Retry transient read-only verification, never the analysis producing it.
 
-    async def analysis_fingerprints(self, paths: list[str]) -> ToolResult:
-        """Snapshot only the bounded registered-input/output roots, without tools."""
+        A timeout here says nothing about file validity. Keep the same batch and
+        obtain a fresh receipt after transport recovers. Invalid bytes, malformed
+        receipts and authorization errors are not transient transport failures.
+        This request policy is independent of task duration/consumption, and
+        cancellation always propagates without publishing a completion verdict.
+        """
+        from app.domain.services.model_retry import model_retry_decision
+        from app.infrastructure.external.sandbox.delivery_receipt import legacy_delivery_receipts
+
+        if purpose not in {"delivery", "content"}:
+            raise ValueError("invalid_validation_purpose")
+        endpoint = "inspect-deliveries" if purpose == "delivery" else "validate-artifacts"
+        legacy_fingerprints = False
+
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await self.client.post(
+                    f"{self.base_url}/api/v1/file/{'fingerprints' if legacy_fingerprints else endpoint}",
+                    json=({"paths": list(dict.fromkeys(item["path"] for item in items))}
+                          if legacy_fingerprints else {"items": items, "purpose": purpose}), timeout=None,
+                )
+                if purpose == "delivery" and not legacy_fingerprints and response.status_code in {404, 405}:
+                    # Do not send the new purpose to an old endpoint that might
+                    # silently ignore it and run content inspection anyway.
+                    legacy_fingerprints = True
+                    response = await self.client.post(
+                        f"{self.base_url}/api/v1/file/fingerprints",
+                        json={"paths": list(dict.fromkeys(item["path"] for item in items))}, timeout=None,
+                    )
+                response.raise_for_status()
+                result = ToolResult(**response.json())
+                if (not result.success or not isinstance(result.data, dict)
+                        or type(result.data.get("version")) is not int or result.data["version"] != 1
+                        or not isinstance(result.data.get("files"), list)):
+                    raise ValueError("unsupported_validation_response")
+                if legacy_fingerprints:
+                    result.data = legacy_delivery_receipts(items, result.data)
+                elif purpose == "delivery" and result.data.get("purpose") != "delivery":
+                    raise ValueError("unsupported_delivery_response")
+                return result
+            except (httpx.HTTPError, ValueError, TypeError) as error:
+                retryable = isinstance(error, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError))
+                if isinstance(error, httpx.HTTPStatusError):
+                    retryable = error.response.status_code in {408, 429, 500, 502, 503, 504}
+                if not retryable or attempt == attempts:
+                    break
+                decision = model_retry_decision(error, attempt=attempt, base_seconds=0.5, max_seconds=5.0)
+                if decision.delay_seconds is None:
+                    break  # Never retry earlier than the service's Retry-After.
+                logger.info("artifact_validation_transport_retry attempt=%d error_type=%s",
+                            attempt, type(error).__name__)
+                if decision.delay_seconds:
+                    await asyncio.sleep(decision.delay_seconds)
+        # No existence-only fallback, model round, or analytical tool dispatch.
+        return ToolResult(success=False, message="Artifact validation unavailable", data={
+            "version": 1, "purpose": purpose, "code": "validation_unavailable", "files": [],
+        })
+
+    async def analysis_fingerprints(
+        self, paths: list[str], *, approved_upload_paths: list[str] | None = None,
+    ) -> ToolResult:
+        """Snapshot bounded inputs/outputs; upload scope is authorized upstream."""
         try:
             response = await self.client.post(
                 f"{self.base_url}/api/v1/file/analysis-fingerprints",
-                json={"paths": paths}, timeout=35.0,
+                json={"paths": paths, "approved_upload_paths": list(approved_upload_paths or [])}, timeout=None,
             )
             response.raise_for_status()
             result = ToolResult(**response.json())
@@ -841,27 +1012,81 @@ class DockerSandbox(Sandbox):
         Returns:
             Upload operation result
         """
+        # Probe before reading: an older sandbox must not consume a non-seekable
+        # storage response before we choose its compatible multipart protocol.
+        supports_streaming = getattr(self, "_supports_stream_upload", None)
+        if supports_streaming is None:
+            capability = await self.client.head(f"{self.base_url}/api/v1/file/upload-stream")
+            if capability.status_code in {404, 405}:
+                supports_streaming = False
+            else:
+                capability.raise_for_status()
+                if capability.status_code != 204:
+                    raise ValueError("Unsupported sandbox upload capability")
+                supports_streaming = True
+            self._supports_stream_upload = supports_streaming
+        if supports_streaming:
+            from app.domain.utils.file_stream import file_chunks
+            source = io.BytesIO(file_data) if isinstance(file_data, (bytes, bytearray)) else file_data
+            headers = {"Content-Type": "application/octet-stream"}
+            try:
+                source.seek(0)
+                size = source.seek(0, 2)
+                source.seek(0)
+            except (AttributeError, OSError, io.UnsupportedOperation):
+                size = getattr(source, "headers", {}).get("Content-Length")
+            if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
+                headers["Content-Length"] = str(size)
+            elif isinstance(size, str) and size.isascii() and size.isdigit():
+                headers["Content-Length"] = size
+            if "Content-Length" in headers:
+                # A full request body may be sent before an early HTTP error is
+                # read. Check known-size inputs before consuming their stream.
+                capacity = await self.client.head(
+                    f"{self.base_url}/api/v1/file/upload-stream",
+                    params={"path": path, "size": headers["Content-Length"]},
+                )
+                if capacity.status_code == 507:
+                    return ToolResult(success=False, message="Analysis storage has insufficient free space",
+                                      data={"code": "insufficient_storage"})
+                capacity.raise_for_status()
+                if capacity.status_code != 204:
+                    raise ValueError("Unsupported sandbox upload capacity response")
+            chunks = file_chunks(source)
+            try:
+                response = await self.client.post(
+                    f"{self.base_url}/api/v1/file/upload-stream", params={"path": path},
+                    content=chunks, headers=headers,
+                    timeout=httpx.Timeout(connect=30, read=None, write=600, pool=30),
+                )
+                return ToolResult(**response.json())
+            finally:
+                await chunks.aclose()
+                if source is not file_data:
+                    source.close()
+
         # Prepare form data for upload. Some storage streams expose seek()
         # but are not actually seekable, e.g. MinIO HTTP response streams.
-        if isinstance(file_data, (bytes, bytearray)):
-            file_data = io.BytesIO(file_data)
-        elif hasattr(file_data, "seek"):
-            try:
-                file_data.seek(0)
-            except (OSError, io.UnsupportedOperation):
-                if hasattr(file_data, "read"):
-                    file_data = io.BytesIO(file_data.read())
-        files = {"file": (filename or "upload", file_data, "application/octet-stream")}
+        from app.domain.utils.file_stream import close_file, rewindable_file
+        prepared = await rewindable_file(file_data)
+        files = {"file": (filename or "upload", prepared, "application/octet-stream")}
         data = {"path": path}
         
-        response = await self.client.post(
-            f"{self.base_url}/api/v1/file/upload",
-            files=files,
-            data=data
-        )
-        return ToolResult(**response.json())
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/api/v1/file/upload",
+                files=files,
+                data=data,
+                # The sandbox may still be moving a large upload on disk after
+                # request bytes finish. Do not turn that into a total-time cap.
+                timeout=httpx.Timeout(connect=30, read=None, write=600, pool=30),
+            )
+            return ToolResult(**response.json())
+        finally:
+            if prepared is not file_data:
+                close_file(prepared)
 
-    async def file_download(self, path: str) -> BinaryIO:
+    async def file_download(self, path: str, *, max_bytes: int | None = None) -> BinaryIO:
         """Download file from sandbox
         
         Args:
@@ -870,6 +1095,20 @@ class DockerSandbox(Sandbox):
         Returns:
             File content as binary stream
         """
+        if max_bytes is not None:
+            if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+                raise ValueError("max_bytes must be a positive integer")
+            output = io.BytesIO()
+            # Enforce the limit on decoded bytes too; Content-Length can be
+            # absent, compressed, stale, or controlled by the remote response.
+            async with self.client.stream("GET", f"{self.base_url}/api/v1/file/download", params={"path": path}) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes(chunk_size=min(64 * 1024, max_bytes + 1)):
+                    if output.tell() + len(chunk) > max_bytes:
+                        raise ValueError("Sandbox file exceeds the download size limit")
+                    output.write(chunk)
+            output.seek(0)
+            return output
         response = await self.client.get(
             f"{self.base_url}/api/v1/file/download",
             params={"path": path}
@@ -928,9 +1167,15 @@ class DockerSandbox(Sandbox):
                     else docker.from_env()
                 )
                 try:
-                    docker_client.containers.get(self._container_name).remove(force=True)
-                except docker.errors.NotFound:
-                    pass  # container may have already exited with remove=True
+                    try:
+                        docker_client.containers.get(self._container_name).remove(force=True)
+                    except docker.errors.NotFound:
+                        pass  # container may have already exited with remove=True
+                    if not self._docker_host:
+                        await release_object_mount_helpers(
+                            docker_client, sandbox_name=self._container_name,
+                            extra_grant_ids=([self.object_mount_grant_id] if self.object_mount_grant_id else []),
+                        )
                 finally:
                     close = getattr(docker_client, "close", None)
                     if callable(close):
@@ -995,7 +1240,7 @@ class DockerSandbox(Sandbox):
                     return False
                 await DockerSandbox._update_record_resumed(self._container_name)
                 await DockerSandbox._update_allocation_status(self._container_name, "running")
-                self.client = httpx.AsyncClient(timeout=600)
+                self.client = httpx.AsyncClient(timeout=None)
                 return True
             finally:
                 close = getattr(docker_client, "close", None)
@@ -1160,7 +1405,8 @@ class DockerSandbox(Sandbox):
             return None
 
     @classmethod
-    async def create(cls, mounts: Optional[List[DatasetMount]] = None) -> Sandbox:
+    async def create(cls, mounts: Optional[List[DatasetMount]] = None,
+                     object_mount: ObjectMountSpec | None = None) -> Sandbox:
         """Create a new sandbox instance
         
         Returns:
@@ -1169,11 +1415,15 @@ class DockerSandbox(Sandbox):
         settings = get_settings()
 
         if settings.sandbox_address and settings.sandbox_isolation == "shared":
+            if object_mount:
+                raise ObjectFileMountError("共享执行环境不支持隔离的只读对象挂载。")
             # Chrome CDP needs IP address
             ip = await cls._resolve_hostname_to_ip(settings.sandbox_address)
             return DockerSandbox(ip=ip, runtime_kind="fixed_sandbox")
     
         async with _DOCKER_CREATE_SEMAPHORE:
+            if object_mount:
+                return await asyncio.to_thread(DockerSandbox._create_task, None, None, mounts, object_mount)
             return await asyncio.to_thread(DockerSandbox._create_task, None, None, mounts)
 
     @classmethod
@@ -1212,6 +1462,17 @@ class DockerSandbox(Sandbox):
 
             ip_address = cls._get_container_ip(container)
             image_reference, image_digest = cls._get_container_image_identity(container)
+            labels = container.attrs.get("Config", {}).get("Labels", {}) or {}
+            if labels.get(LABEL_PREFIX + "helper"):
+                from app.application.services.object_mount_service import get_object_mount_service
+
+                if not await get_object_mount_service().is_active(labels.get(LABEL_PREFIX + "grant", "")):
+                    raise ObjectMountIdentityError(MOUNT_ERROR)
+            # FUSE probes call this backend's HTTP gateway. Keep Docker's
+            # blocking exec/stat off the ASGI loop so it can serve those reads.
+            object_handle = await asyncio.to_thread(
+                restore_object_mount, docker_client, container=container, settings=settings,
+            )
             logger.info(f"IP address: {ip_address}")
             return DockerSandbox(
                 ip=ip_address,
@@ -1219,6 +1480,7 @@ class DockerSandbox(Sandbox):
                 image_reference=image_reference,
                 image_digest=image_digest,
                 runtime_kind="local_docker",
+                object_mount_handle=object_handle,
             )
         finally:
             docker_client.close()

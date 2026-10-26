@@ -628,12 +628,12 @@ def test_fast_path_step_description_stays_chinese_for_english_question():
     assert plan.steps[0].description == "探查数据集文件组织并回答用户问题"
 
 
-def test_dataset_fast_path_keeps_skill_mcp_and_image_requests_on_planner():
+def test_dataset_fast_path_accepts_skills_but_keeps_mcp_and_images_on_planner():
     flow = _flow()
 
     assert flow._should_use_dataset_fast_path(
         Message(message="analyze", datasets=[_dataset()], skills=["custom-skill"])
-    ) is False
+    ) is True
     assert flow._should_use_dataset_fast_path(
         Message(message="analyze", datasets=[_dataset()], mcp_servers=["server"])
     ) is False
@@ -671,7 +671,7 @@ def test_dataset_fast_path_dynamic_prompt_keeps_bounded_conversation_only():
     prompt = flow._dynamic_system_prompt()
 
     assert "dataset-context" in prompt
-    assert "skill-context" not in prompt
+    assert "skill-context" in prompt
     assert "old-session-context" not in prompt
     assert flow._dynamic_user_context() == "old-session-context"
 
@@ -727,17 +727,9 @@ def test_session_context_excludes_internal_placeholder_messages():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("resume_waiting_question", "expected_step_id"),
-    [
-        (False, "dataset-fast-path"),
-        (True, "stale-step"),
-    ],
-    ids=["invalid-pending-question-replans", "valid-pending-question-resumes"],
-)
-async def test_waiting_session_only_resumes_a_valid_pending_question(
-    resume_waiting_question,
-    expected_step_id,
+@pytest.mark.parametrize("session_status", [SessionStatus.WAITING, SessionStatus.RUNNING, SessionStatus.COMPLETED])
+async def test_waiting_session_without_host_reply_always_starts_current_request(
+    session_status,
 ):
     message = Message(message="这个数据集的空间范围是多少", datasets=[_dataset()])
     stale_plan = _flow()._create_dataset_fast_path_plan(message)
@@ -745,7 +737,7 @@ async def test_waiting_session_only_resumes_a_valid_pending_question(
 
     class Repository:
         async def find_by_id(self, _session_id):
-            return SimpleNamespace(status=SessionStatus.WAITING)
+            return SimpleNamespace(status=session_status)
 
         async def update_status(self, _session_id, _status):
             return None
@@ -758,16 +750,24 @@ async def test_waiting_session_only_resumes_a_valid_pending_question(
 
     class Planner:
         rolled_back = False
+        reset = False
 
         async def roll_back(self, _message):
             self.rolled_back = True
 
+        async def reset_context(self):
+            self.reset = True
+
     class Executor:
         def __init__(self):
             self.executed_step_ids = []
+            self.reset = False
 
         async def roll_back(self, _message):
-            return resume_waiting_question
+            raise AssertionError("Unbound input must not answer a pending question")
+
+        async def reset_context(self):
+            self.reset = True
 
         async def execute_step(self, _plan, step, _message):
             self.executed_step_ids.append(step.id)
@@ -794,20 +794,16 @@ async def test_waiting_session_only_resumes_a_valid_pending_question(
     observed_step_id = None
     event_stream = flow.run(message)
     async for event in event_stream:
-        if not resume_waiting_question and isinstance(event, PlanEvent):
+        if isinstance(event, PlanEvent):
             if event.status == PlanStatus.CREATED:
                 observed_step_id = event.plan.steps[0].id
                 break
-        if resume_waiting_question and isinstance(event, MessageEvent):
-            observed_step_id = flow.executor.executed_step_ids[0]
-            break
     await event_stream.aclose()
 
-    assert flow.planner.rolled_back is True
-    assert observed_step_id == expected_step_id
-    assert flow.executor.executed_step_ids == (
-        ["stale-step"] if resume_waiting_question else []
-    )
+    assert flow.planner.rolled_back is False
+    assert flow.planner.reset is True and flow.executor.reset is True
+    assert observed_step_id == "dataset-fast-path"
+    assert flow.executor.executed_step_ids == []
 
 
 def test_successful_single_step_plan_skips_duplicate_summary():
@@ -827,7 +823,8 @@ def test_successful_single_step_plan_skips_duplicate_summary():
 
 
 @pytest.mark.asyncio
-async def test_dataset_fast_path_skips_planner_and_summary_round_trips():
+@pytest.mark.parametrize("skills", [[], ["reusable-analysis-method"]])
+async def test_dataset_fast_path_skips_planner_and_summary_round_trips(skills):
     class _Repository:
         async def find_by_id(self, _session_id):
             return SimpleNamespace(status=SessionStatus.PENDING)
@@ -845,8 +842,12 @@ async def test_dataset_fast_path_skips_planner_and_summary_round_trips():
 
     class _Executor:
         summarize_called = False
+        calls = 0
 
         async def execute_step(self, _plan, step, _message):
+            self.calls += 1
+            assert _message.skills == skills
+            assert len(_plan.steps) == 1
             step.status = ExecutionStatus.COMPLETED
             step.success = True
             step.result = "analysis complete"
@@ -879,11 +880,12 @@ async def test_dataset_fast_path_skips_planner_and_summary_round_trips():
     events = [
         event
         async for event in flow.run(
-            Message(message="请画图", datasets=[_dataset()])
+            Message(message="请画图", datasets=[_dataset()], skills=skills)
         )
     ]
 
     assert flow.executor.summarize_called is False
+    assert flow.executor.calls == 1
     assert sum(isinstance(event, MessageEvent) and event.message == "analysis complete" for event in events) == 1
     assert [
         event.status for event in events if isinstance(event, PlanEvent)
@@ -903,7 +905,7 @@ def test_dataset_fast_path_keeps_session_history_out_of_system_prompt():
     prompt = flow._dynamic_system_prompt()
 
     assert "dataset-context" in prompt
-    assert "skill-context" not in prompt
+    assert "skill-context" in prompt
     assert "old-session-context" not in prompt
     assert flow._dynamic_user_context() == "old-session-context"
 

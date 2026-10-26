@@ -1,7 +1,7 @@
 <template>
   <div class="flex w-full flex-col gap-4">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <label class="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg bg-[var(--background-gray-main)] px-3">
+      <label class="control-shell flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg bg-[var(--background-gray-main)] px-3">
         <Search :size="16" class="shrink-0 text-[var(--icon-tertiary)]" />
         <input
           v-model="query"
@@ -70,7 +70,7 @@
             :class="autoEnabledSkills.has(skill.name) ? 'bg-[var(--Button-primary-black)]' : 'bg-[var(--fill-tsp-white-dark)]'"
             :aria-checked="autoEnabledSkills.has(skill.name)"
             :aria-label="t('Auto enable skill', { name: skill.name })"
-            :disabled="saving"
+            :disabled="saving || Boolean(deletingSkillId)"
             @click="toggleSkill(skill.name)"
           >
             <span
@@ -81,15 +81,24 @@
           <span class="text-[10px] text-[var(--text-tertiary)]">
             {{ autoEnabledSkills.has(skill.name) ? t('Automatic') : t('Manual') }}
           </span>
+          <button
+            v-if="canDeletePersonalSkill(skill)"
+            type="button"
+            class="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-[var(--function-error)] hover:bg-[var(--fill-tsp-white-light)] disabled:opacity-50"
+            :aria-label="t('Delete skill named', { name: skill.title || skill.name })"
+            :disabled="saving || Boolean(deletingSkillId)"
+            @click="requestDeleteSkill(skill)"
+          ><LoaderCircle v-if="deletingSkillId === skill.id" :size="13" class="animate-spin" /><Trash2 v-else :size="13" />{{ t(deletingSkillId === skill.id ? 'Deleting skill...' : 'Delete') }}</button>
         </div>
       </article>
     </div>
+    <PersonalSkillDeleteDialog :skill="skillToDelete" :busy="Boolean(deletingSkillId)" :error="deleteError" @confirm="confirmDeleteSkill" @cancel="cancelDeleteSkill" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { Library, Puzzle, Search, Upload } from 'lucide-vue-next';
+import { Library, Puzzle, Search, Upload, Trash2, LoaderCircle } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import {
@@ -100,6 +109,8 @@ import {
   type SkillInfo,
 } from '@/api/skill';
 import { useSettingsDialog } from '@/composables/useSettingsDialog';
+import { usePersonalSkillDeletion } from '@/composables/usePersonalSkillDeletion';
+import PersonalSkillDeleteDialog from '@/components/PersonalSkillDeleteDialog.vue';
 import { showErrorToast, showSuccessToast } from '@/utils/toast';
 import { eventBus } from '@/utils/eventBus';
 import { EVENT_SKILL_CATALOG_UPDATED, EVENT_SKILL_PREFERENCES_UPDATED } from '@/constants/event';
@@ -114,6 +125,15 @@ const loading = ref(false);
 const saving = ref(false);
 const uploading = ref(false);
 const fileInput = ref<HTMLInputElement>();
+let loadRevision = 0;
+
+const { canDeletePersonalSkill, deletingSkillId, skillToDelete, deleteError, requestDeleteSkill, confirmDeleteSkill, cancelDeleteSkill } = usePersonalSkillDeletion((skill) => {
+  loadRevision += 1;
+  loading.value = false;
+  skills.value = skills.value.filter(item => item.id !== skill.id);
+  autoEnabledSkills.value = new Set([...autoEnabledSkills.value].filter(name => name !== skill.name));
+  eventBus.emit(EVENT_SKILL_PREFERENCES_UPDATED, [...autoEnabledSkills.value]);
+});
 
 const filteredSkills = computed(() => {
   const normalized = query.value.trim().toLowerCase();
@@ -123,24 +143,27 @@ const filteredSkills = computed(() => {
 });
 
 const load = async () => {
+  const revision = ++loadRevision;
   loading.value = true;
   try {
     const [availableSkills, enabledSkills] = await Promise.all([
       listSkills(),
       getSkillPreferences(),
     ]);
+    if (revision !== loadRevision) return;
     skills.value = availableSkills;
     autoEnabledSkills.value = new Set(enabledSkills);
   } catch (error) {
+    if (revision !== loadRevision) return;
     console.error('Failed to load skill settings:', error);
     showErrorToast(t('Failed to load skill settings'));
   } finally {
-    loading.value = false;
+    if (revision === loadRevision) loading.value = false;
   }
 };
 
 const toggleSkill = async (name: string) => {
-  if (saving.value) return;
+  if (saving.value || deletingSkillId.value) return;
   const previous = new Set(autoEnabledSkills.value);
   const next = new Set(previous);
   if (next.has(name)) next.delete(name);
@@ -181,7 +204,7 @@ const handleUpload = async (event: Event) => {
 
 const browseSkills = () => {
   closeSettingsDialog();
-  router.push({ path: '/plugins', query: { tab: 'skills' } });
+  router.push('/skills');
 };
 
 onMounted(load);

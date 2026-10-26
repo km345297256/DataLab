@@ -8,22 +8,24 @@ installation remains in the dedicated Skill, MCP and Renderer modules.
 from datetime import UTC, datetime
 import logging
 from pathlib import Path
+import re
 import shutil
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.application.errors.exceptions import BadRequestError, NotFoundError, UnauthorizedError
 from app.application.services.agent_service import AgentService
 from app.application.services.resource_configuration_service import ResourceConfigurationService
 from app.core.config import get_settings
 from app.domain.models.audit import AuditRiskLevel
-from app.domain.models.mcp_config import MCPScope
+from app.domain.models.mcp_config import MCPConfigurationConflict, MCPScope
 from app.domain.models.session import SessionStatus
 from app.domain.models.skill import SkillScope
-from app.domain.models.user import User, UserRole
+from app.domain.models.user import RegistrationStatus, User, UserRole
 from app.domain.services.audit_service import AuditService, get_audit_service
+from app.domain.services.skills.catalog_lock import serialized_skill_catalog
 from app.domain.services.resource_usage_service import ResourceUsageService, get_resource_usage_service
 from app.domain.services.user_name_service import UserNameService
 from app.infrastructure.models.documents import SessionDocument, SkillDocument, UserDocument
@@ -52,8 +54,12 @@ logger = logging.getLogger(__name__)
 
 
 def _require_admin(user: User) -> None:
-    if user.role != UserRole.ADMIN:
+    if user.role != UserRole.ADMIN or not user.is_active or user.registration_status != RegistrationStatus.APPROVED:
         raise UnauthorizedError("Admin access required")
+
+
+def _can_read_task_content(session, user: User) -> bool:
+    return bool(session.is_shared) or session.user_id == user.id or user.id in (getattr(session, "collaborator_user_ids", None) or [])
 
 
 async def _user_names(user_ids: set[str]) -> dict[str, str]:
@@ -86,9 +92,10 @@ def _mcp_response(name: str, server, owner_names: dict[str, str]) -> AdminMCPSer
         transport=server.transport,
         enabled=server.enabled,
         description=server.description,
-        command=server.command,
-        args=server.args,
-        url=server.url,
+        # Administrative metadata is not a credential/configuration export.
+        command=None,
+        args=None,
+        url=None,
         scope=server.scope,
         user_id=server.user_id,
         owner_user_id=server.owner_user_id,
@@ -165,8 +172,10 @@ async def list_tasks(
             if needle in doc.session_id.lower()
             or needle in doc.user_id.lower()
             or needle in (doc.task_id or "").lower()
-            or needle in (doc.title or "").lower()
-            or needle in (doc.latest_message or "").lower()
+            or (_can_read_task_content(doc, current_user) and (
+                needle in (doc.title or "").lower()
+                or needle in (doc.latest_message or "").lower()
+            ))
         ]
     total = len(docs)
     page_docs = docs[offset : offset + limit]
@@ -179,12 +188,13 @@ async def list_tasks(
             agent_id=doc.agent_id,
             task_id=doc.task_id,
             sandbox_id=doc.sandbox_id,
-            title=doc.title,
-            latest_message=doc.latest_message,
+            title=doc.title if _can_read_task_content(doc, current_user) else None,
+            latest_message=doc.latest_message if _can_read_task_content(doc, current_user) else None,
             latest_message_at=doc.latest_message_at,
             status=doc.status,
             unread_message_count=doc.unread_message_count,
             is_shared=bool(doc.is_shared),
+            can_replay=_can_read_task_content(doc, current_user),
             created_at=doc.created_at,
             updated_at=doc.updated_at,
         )
@@ -201,9 +211,10 @@ async def get_task_replay(
 ) -> APIResponse[SharedSessionResponse]:
     _require_admin(current_user)
     session = await SessionDocument.find_one(SessionDocument.session_id == session_id)
-    if not session:
+    if not session or not _can_read_task_content(session, current_user):
         raise NotFoundError("Task not found")
-    events = await agent_service.get_session_events(session_id)
+    reader_id = current_user.id if session.user_id == current_user.id or current_user.id in (session.collaborator_user_ids or []) else None
+    events = await agent_service.get_session_events(session_id, user_id=reader_id)
     return APIResponse.success(
         SharedSessionResponse(
             session_id=session.session_id,
@@ -260,6 +271,7 @@ async def list_skills(
 
 
 @router.patch("/skills/{skill_id}", response_model=APIResponse[AdminSkillResponse])
+@serialized_skill_catalog
 async def update_skill(
     skill_id: str,
     request: AdminSkillUpdateRequest,
@@ -354,22 +366,18 @@ def _purge_staged_skill_package(staged: Optional[tuple[Path, Path]]) -> None:
 
 
 async def _clear_deleted_skill_references(skill_id: str, skill_name: str) -> None:
-    normalized_name = skill_name.strip().lower()
-    for user in await UserDocument.find().to_list():
-        installed = [item for item in user.installed_skill_ids if item != skill_id]
-        automatic = [
-            name
-            for name in user.auto_enabled_skills
-            if name.strip().lower() != normalized_name
-        ]
-        if installed == user.installed_skill_ids and automatic == user.auto_enabled_skills:
-            continue
-        user.installed_skill_ids = installed
-        user.auto_enabled_skills = automatic
-        await user.save()
+    name_match = {"$regex": r"^\s*" + re.escape(skill_name.strip()) + r"\s*$", "$options": "i"}
+    # Cleanup touches only references on the current documents. Saving a loaded
+    # UserDocument here could resurrect a concurrently revoked role/session.
+    await UserDocument.get_pymongo_collection().update_many(
+        {"$or": [{"installed_skill_ids": skill_id}, {"auto_enabled_skills": name_match}]},
+        {"$pull": {"installed_skill_ids": skill_id, "auto_enabled_skills": name_match},
+         "$set": {"updated_at": datetime.now(UTC)}},
+    )
 
 
 @router.delete("/skills/{skill_id}", response_model=APIResponse[dict])
+@serialized_skill_catalog
 async def delete_skill(
     skill_id: str,
     current_user: User = Depends(get_current_user),
@@ -465,6 +473,8 @@ async def update_mcp_server(
     server = config.mcpServers.get(name)
     if not server:
         raise NotFoundError("MCP server not found")
+    expected = server.model_copy(deep=True)
+    server = server.model_copy(deep=True)
     if request.enabled is not None:
         server.enabled = request.enabled
     if request.scope is not None:
@@ -481,8 +491,10 @@ async def update_mcp_server(
         server.owner_user_id = request.owner_user_id or None
     if request.workspace_id is not None:
         server.workspace_id = request.workspace_id or None
-    config.mcpServers[name] = server
-    await repository.save_mcp_config(config)
+    try:
+        await repository.upsert_server(name, server, expected=expected)
+    except MCPConfigurationConflict:
+        raise HTTPException(status_code=409, detail="MCP configuration changed; reload before saving") from None
     await audit_service.record(
         actor_user_id=current_user.id,
         action="admin.mcp.update",
@@ -514,8 +526,10 @@ async def delete_mcp_server(
     server = config.mcpServers.get(name)
     if not server:
         raise NotFoundError("MCP server not found")
-    config.mcpServers.pop(name, None)
-    await repository.save_mcp_config(config)
+    try:
+        await repository.delete_server(name, expected=server.model_copy(deep=True))
+    except MCPConfigurationConflict:
+        raise HTTPException(status_code=409, detail="MCP configuration changed; reload before deleting") from None
     await audit_service.record(
         actor_user_id=current_user.id,
         action="admin.mcp.delete",

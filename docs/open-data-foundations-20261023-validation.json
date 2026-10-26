@@ -1,0 +1,1093 @@
+{
+  "名称": "DataLab 基础科学数据源增补验收清单",
+  "生成时间": "2026-10-23T01:05:06.417998+00:00",
+  "新增可用来源数": 9,
+  "学科范围": [
+    "数学",
+    "物理",
+    "化学",
+    "化工",
+    "天文",
+    "空间",
+    "材料"
+  ],
+  "当前本地自动检索来源池": 97,
+  "当前本地通用连接器数": 95,
+  "原有NCBI连接器数": 3,
+  "当前本地选择器连接器总数": 98,
+  "来源清单": [
+    {
+      "id": "oeis",
+      "名称": "OEIS 整数序列数据库",
+      "学科": [
+        "数学",
+        "数论",
+        "组合数学"
+      ],
+      "官网": "https://oeis.org/",
+      "官方文档": "https://oeis.org/wiki/JSON_Format,_Compressed_Files",
+      "获取能力": "按数列项、A 编号或英文名称检索整数序列，获取官方发布的 b-file 数值表。",
+      "范围说明": "获取官方已发布 b-file 中的全部有限项，保留任意精度整数和原始索引；不表示无限数列的全部项。仅有说明而无发布数值文件的记录不提供获取。遵循 CC BY-SA 4.0，并引用序列页面。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "已由其他任务发布带入",
+      "验证证据": {
+        "source": "oeis",
+        "status": "passed",
+        "query": "A000045",
+        "filename": "A000045_b000045.txt",
+        "bytes": 429385,
+        "sha256": "fb52264d1faa56aa9d3bc9f52eb42fe5c9beaba71cef4a0e50689bbbbeb923e4",
+        "url": "https://oeis.org/A000045/b000045.txt",
+        "shape": {
+          "rows": 2001,
+          "first_index": 0,
+          "last_index": 2000
+        },
+        "scope": "Published finite b-file, not all terms of an infinite sequence",
+        "license": "CC-BY-SA-4.0"
+      }
+    },
+    {
+      "id": "miplib",
+      "名称": "MIPLIB 混合整数优化基准库",
+      "学科": [
+        "数学",
+        "优化计算",
+        "运筹学"
+      ],
+      "官网": "https://miplib.zib.de/",
+      "官方文档": "https://miplib.zib.de/download.html",
+      "获取能力": "检索 ZIB 维护的完整 MIPLIB 2017 实例目录，获取含目标函数、约束和变量的原始 MPS 压缩文件。",
+      "范围说明": "按实例名称、英文结构标签、提交者和分组检索 MIPLIB 2017 全目录；返回完整 .mps.gz 模型，不把求解状态、图片或实例索引作为数据。使用时引用 MIPLIB 2017，并遵循源站及实例权利说明。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "已由其他任务发布带入",
+      "验证证据": {
+        "source": "miplib",
+        "status": "passed",
+        "query": "50v-10",
+        "filename": "50v-10.mps.gz",
+        "bytes": 37959,
+        "sha256": "9e64ce8962b8152e48b617cf7ec9e1abd8efeee8dcb317d4c06d817e5644192c",
+        "url": "https://miplib.zib.de/WebData/instances/50v-10.mps.gz",
+        "shape": {
+          "decompressed_bytes": 294310,
+          "gzip_crc_checked": true,
+          "endata": true
+        },
+        "scope": "Complete original MPS optimization instance; full official collection catalogue is searchable"
+      }
+    },
+    {
+      "id": "gwosc",
+      "名称": "GWOSC 引力波开放科学中心",
+      "学科": [
+        "物理",
+        "天文"
+      ],
+      "官网": "https://gwosc.org/",
+      "官方文档": "https://gwosc.org/api/v2/",
+      "获取能力": "按公开引力波事件名或发布目录检索，获取对应版本的原始应变 HDF5 文件。",
+      "范围说明": "覆盖官方API v2公开事件、候选和已标记注入记录的发布版本；候选不等于确认探测，类别以源站目录为准。查询事件名（如GW150914）或目录名（如GWTC-1-confident）；GWOSC或引力波可浏览全目录。仅接入发布版本提供的完整HDF5应变文件，保留探测器、GPS起点、持续秒数、采样率、数据质量和版本；事件窗口不代表整轮运行的连续数据。无应变文件的参数估计版本不展示为可获取数据。CC BY 4.0，遵循GWOSC署名要求。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "已由其他任务发布带入",
+      "验证证据": {
+        "source": "gwosc",
+        "query": "GW150914 v3",
+        "candidates": 1,
+        "files": 8,
+        "candidate": {
+          "id": "affd0e12537d8d67131a084ae1441148a5ea9b2ab809e6394adf27a7c3e4e9e0",
+          "source_id": "gwosc",
+          "external_id": "GW150914-v3",
+          "title": "GW150914 · v3 · GWTC-1-confident",
+          "description": "GWOSC公开事件/候选/注入记录的完整应变文件；类别以发布目录为准，探测器、GPS时间窗口与采样率见文件清单。",
+          "source_url": "https://gwosc.org/api/v2/event-versions/GW150914-v3",
+          "access": "needs_resolution",
+          "formats": [
+            "HDF5"
+          ],
+          "size": null,
+          "license": "CC BY 4.0 — https://gwosc.org/acknowledgement/",
+          "coverage": {
+            "scope": "该发布版本公开的事件应变时间窗口，不是整轮观测运行"
+          },
+          "match_notes": [],
+          "limitations": [],
+          "system_notes": [],
+          "metadata": {
+            "version": 3,
+            "catalog": "GWTC-1-confident"
+          }
+        },
+        "entity_validation": {
+          "groups": [
+            "meta",
+            "quality",
+            "strain"
+          ],
+          "strain_shape": [
+            131072
+          ],
+          "finite_samples": 131072,
+          "sample_spacing": "0.000244140625",
+          "gps_start": 1126259447,
+          "duration": 32,
+          "detector": "b'H1'"
+        },
+        "status": "passed",
+        "file": {
+          "url": "https://gwosc.org/eventapi/json/GWTC-1-confident/GW150914/v3/H-H1_GWOSC_4KHZ_R1-1126259447-32.hdf5",
+          "size": null,
+          "checksum": null,
+          "version": "GW150914-v3@GWTC-1-confident",
+          "license": "CC BY 4.0 — https://gwosc.org/acknowledgement/",
+          "content_type": "application/x-hdf5",
+          "kind": "完整应变文件 · H1 · GPS 1126259447 · 32秒 · 4kHz",
+          "coverage": {
+            "gps_start": 1126259447,
+            "duration_seconds": 32,
+            "detector": "H1",
+            "sample_rate_khz": 4
+          },
+          "id": "4eb60a765a0e7a84c1c99df46d49392b1b3e39141149f8d5569e9e2520dfcc75",
+          "source_id": "gwosc",
+          "external_id": "GW150914-v3",
+          "filename": "H-H1_GWOSC_4KHZ_R1-1126259447-32.hdf5",
+          "source_filename": "H-H1_GWOSC_4KHZ_R1-1126259447-32.hdf5",
+          "record_url": "https://gwosc.org/api/v2/event-versions/GW150914-v3",
+          "available": true,
+          "reason": ""
+        },
+        "bytes": 1040781,
+        "sha256": "c5ea87beced5094b56b4d694f3a36e6d59f74d3a46e546b980a6a199d1f252a9",
+        "source_checksum_available": false,
+        "source_checksum_note": "Official file manifest and response expose no provider content checksum; no checksum claim invented."
+      }
+    },
+    {
+      "id": "nasa-cdaweb",
+      "名称": "NASA CDAWeb 日地空间观测",
+      "学科": [
+        "空间",
+        "空间物理"
+      ],
+      "官网": "https://cdaweb.gsfc.nasa.gov/",
+      "官方文档": "https://cdaweb.gsfc.nasa.gov/WebServices/REST/",
+      "获取能力": "检索 NASA SPDF 的任务、仪器和日地空间观测数据集，获取官方原始 CDF 文件。",
+      "范围说明": "按英文任务、仪器、主题或数据集ID检索；可加start=2009-06-01 end=2009-06-02指定UTC闭区间。无时间条件时使用源站公布的完整覆盖期，不擅自缩短时间。获取与区间相交的完整原始CDF文件，实际覆盖可超出查询边界；保留源文件全部变量和缺测/质量标志，不生成裁切或插值数据。排除仅元数据的master CDF；不包含虚拟变量或服务端增强元数据。SPDF通常仅保存最新修订，获取时保留版本与哈希；许可及署名以各数据产品为准。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "已由其他任务发布带入",
+      "验证证据": {
+        "source": "nasa-cdaweb",
+        "query": "AC_H2_MFI start=2009-06-01 end=2009-06-02",
+        "candidates": 1,
+        "files": 2,
+        "candidate": {
+          "id": "ce901710c8d8c8ef211176b402b7fb109a1503f44b59bed0e91da5f8febaf2e5",
+          "source_id": "nasa-cdaweb",
+          "external_id": "AC_H2_MFI|20090601T000000Z|20090602T000000Z",
+          "title": "AC_H2_MFI · H2 - ACE Magnetic Field 1-Hour Level 2 Data - N. Ness (Bartol Research Institute)",
+          "description": "完整原始CDF文件；UTC 2009-06-01T00:00:00+00:00 — 2009-06-02T00:00:00+00:00；文件可能跨越查询边界。",
+          "source_url": "https://cdaweb.gsfc.nasa.gov/WS/cdasr/1/dataviews/sp_phys/datasets?id=AC_H2_MFI",
+          "access": "needs_resolution",
+          "formats": [
+            "CDF"
+          ],
+          "size": null,
+          "license": "SPDF默认CC0/Public Domain，个别提供方例外及引用要求以数据集为准 — https://hdrl.gsfc.nasa.gov/data_use_policy.html",
+          "coverage": {
+            "start": "2009-06-01T00:00:00+00:00",
+            "end": "2009-06-02T00:00:00+00:00",
+            "available_start": "1997-09-02T00:00:00+00:00",
+            "available_end": "2026-08-31T23:00:00+00:00",
+            "scope": "所示UTC区间相交的所有完整原始文件；保留原有缺测和质量标志"
+          },
+          "match_notes": [],
+          "limitations": [],
+          "system_notes": [],
+          "metadata": {
+            "requested_interval": true
+          },
+          "doi": "10.48322/fh85-fj47"
+        },
+        "entity_validation": {
+          "cdf_version": "2.5.22",
+          "variables": [
+            "Epoch",
+            "Time_PB5",
+            "Magnitude",
+            "BGSEc",
+            "label_BGSE",
+            "BGSM",
+            "label_bgsm",
+            "Q_FLAG",
+            "SC_pos_GSE",
+            "label_pos_GSE",
+            "SC_pos_GSM",
+            "label_pos_GSM",
+            "unit_time",
+            "label_time",
+            "format_time",
+            "cartesian"
+          ],
+          "records": 24,
+          "magnitude_first_values": [
+            3.5269999504089355,
+            3.4049999713897705,
+            2.881999969482422,
+            2.7300000190734863
+          ],
+          "epoch_first": "2009-06-01T00:00:00.000000000"
+        },
+        "status": "passed",
+        "file": {
+          "url": "https://cdaweb.gsfc.nasa.gov/sp_phys/data/ace/mag/level_2_cdaweb/mfi_h2/2009/ac_h2_mfi_20090601_v05.cdf",
+          "size": 28580,
+          "checksum": null,
+          "version": "05 · 2009-11-17T05:00:03.000Z",
+          "license": "SPDF默认CC0/Public Domain，个别提供方例外及引用要求以数据集为准 — https://hdrl.gsfc.nasa.gov/data_use_policy.html",
+          "content_type": "application/x-cdf",
+          "kind": "完整原始CDF · 2009-06-01T00:00:00+00:00 — 2009-06-01T23:00:00+00:00",
+          "coverage": {
+            "start": "2009-06-01T00:00:00+00:00",
+            "end": "2009-06-01T23:00:00+00:00",
+            "dataset_id": "AC_H2_MFI"
+          },
+          "id": "1abff9f8275cdf2102d38e8f3af69819a27fb8b03265b8e9ee20258b5524dab8",
+          "source_id": "nasa-cdaweb",
+          "external_id": "AC_H2_MFI|20090601T000000Z|20090602T000000Z",
+          "filename": "ac_h2_mfi_20090601_v05.cdf",
+          "source_filename": "ac_h2_mfi_20090601_v05.cdf",
+          "record_url": "https://cdaweb.gsfc.nasa.gov/WS/cdasr/1/dataviews/sp_phys/datasets?id=AC_H2_MFI",
+          "available": true,
+          "reason": ""
+        },
+        "bytes": 28580,
+        "sha256": "91b749784c404bdd25a755a15dc038434008107bc8df6f3254b86b4a43476137",
+        "source_checksum_available": false,
+        "source_checksum_note": "Official file manifest and response expose no provider content checksum; no checksum claim invented."
+      }
+    },
+    {
+      "id": "crystallography-open-database",
+      "名称": "COD 开放晶体学数据库",
+      "学科": [
+        "化学",
+        "材料"
+      ],
+      "官网": "https://www.crystallography.net/cod/",
+      "官方文档": "https://wiki.crystallography.net/RESTful_API/",
+      "获取能力": "检索有机、无机、金属有机物和矿物晶体结构，获取固定修订版本的完整 CIF。",
+      "范围说明": "按英文名称、文献关键词或七位 COD 编号检索具有原子坐标的结构；获取源站固定修订版 CIF，排除标记错误或重复的记录。CC0；保留 CIF 内的原始来源与引用要求。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "等待统一发布",
+      "验证证据": {
+        "source_id": "crystallography-open-database",
+        "query": "9005026",
+        "source_info": {
+          "homepage": "https://www.crystallography.net/cod/",
+          "documentation": "https://wiki.crystallography.net/RESTful_API/",
+          "country": "国际",
+          "institution": "Crystallography Open Database",
+          "logo_url": "https://www.crystallography.net/cod/images/cod-blue-yellow.svg"
+        },
+        "definition": {
+          "id": "crystallography-open-database",
+          "title": "COD 开放晶体学数据库",
+          "connector_title": "Crystallography Open Database",
+          "description": "检索有机、无机、金属有机物和矿物晶体结构，获取固定修订版本的完整 CIF。",
+          "domains": [
+            "www.crystallography.net"
+          ],
+          "subjects": [
+            "chemistry",
+            "materials",
+            "crystallography",
+            "minerals",
+            "crystal structures"
+          ],
+          "languages": [
+            "en"
+          ],
+          "protocol": "rest",
+          "discovery_mode": "repository",
+          "acquisition": "files",
+          "limitation": "按英文名称、文献关键词或七位 COD 编号检索具有原子坐标的结构；获取源站固定修订版 CIF，排除标记错误或重复的记录。CC0；保留 CIF 内的原始来源与引用要求。"
+        },
+        "search_total": 1,
+        "candidate": {
+          "id": "f9ed0a1d7134ec8f445c4d0d15e70d453df80d476111f0c40b9a1fc04cc6b960",
+          "source_id": "crystallography-open-database",
+          "external_id": "9005026",
+          "title": "Quartz",
+          "description": "- O2 Si - · An X-ray study of the temperature dependence of the quartz structure Sample: at T = 854 K",
+          "source_url": "https://www.crystallography.net/cod/9005026.html",
+          "access": "needs_resolution",
+          "formats": [],
+          "size": null,
+          "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "coverage": {
+            "scope": "单个晶体结构完整 CIF"
+          },
+          "match_notes": [],
+          "limitations": [],
+          "system_notes": [],
+          "metadata": {
+            "version": "291351"
+          }
+        },
+        "verified_files": 1,
+        "file": {
+          "id": "fcd25cbdaa232001e31a832bdd20bf16cda4f1e00c07c8c2dc0235af71561440",
+          "source_id": "crystallography-open-database",
+          "external_id": "9005026",
+          "url": "https://www.crystallography.net/cod/9005026.cif@291351",
+          "filename": "cod_9005026_r291351.cif",
+          "source_filename": "cod_9005026_r291351.cif",
+          "size": 2514,
+          "checksum": null,
+          "content_type": "text/plain",
+          "version": "291351",
+          "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "available": true,
+          "reason": "已确认来源文件当前可读取。",
+          "kind": "完整源数据",
+          "record_url": "https://www.crystallography.net/cod/9005026.html",
+          "verification": {
+            "method": "http_content_probe",
+            "sample_bytes": 2514,
+            "total_bytes": 2514,
+            "checked_at": "2026-10-23T01:00:01.439037+00:00"
+          },
+          "system_notes": [
+            "搜索阶段已读取 1 个文件的内容；每条记录先核验 6 个文件，每文件最多读取 16 KiB。",
+            "读取样本仅确认当前可读；完整性、校验和及实际分析适用性仍需获取后确认。"
+          ]
+        },
+        "status": "passed",
+        "complete_bytes": 2514,
+        "sha256": "504bfc37bf2ea5ae17f0388fe01e5f3520380dcb8857047d9793e0432fdfdbb2",
+        "receipt": {
+          "source": "data_connector",
+          "connector_id": "crystallography-open-database",
+          "external_id": "9005026",
+          "discovery_source_id": "crystallography-open-database",
+          "source_url": "https://www.crystallography.net/cod/9005026.html",
+          "sha256": "504bfc37bf2ea5ae17f0388fe01e5f3520380dcb8857047d9793e0432fdfdbb2",
+          "checksum_origin": "computed_locally",
+          "provider_checksum": null,
+          "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "source_version": "291351",
+          "provider_checksum_verified": false,
+          "acquired_at": "2026-10-23T01:00:03.875193+00:00"
+        },
+        "format_validated": true
+      }
+    },
+    {
+      "id": "nist-thermoml",
+      "名称": "NIST ThermoML 热物性数据",
+      "学科": [
+        "化学",
+        "化工",
+        "热物性"
+      ],
+      "官网": "https://trc.nist.gov/ThermoML/",
+      "官方文档": "https://trc.nist.gov/ThermoML/",
+      "获取能力": "检索实验热物性、热化学和相平衡数据，获取含数值、单位、实验条件及不确定度的完整 ThermoML XML。",
+      "范围说明": "范围为 NIST/TRC 从合作期刊整理的静态实验数据归档，目前涵盖至 2019 年。按英文关键词或 DOI 检索；一份 XML 包含该记录全部已归档实验数据，保留官方 MD5、原始文献和提取日期，不表示全文或实时 TRC 数据库。按 NIST 数据声明使用。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "等待统一发布",
+      "验证证据": {
+        "source_id": "nist-thermoml",
+        "query": "10.1016/j.fluid.2014.11.015",
+        "source_info": {
+          "homepage": "https://trc.nist.gov/ThermoML/",
+          "documentation": "https://trc.nist.gov/ThermoML/",
+          "country": "美国",
+          "institution": "NIST Thermodynamics Research Center",
+          "logo_url": "https://trc.nist.gov/ThermoML/favicon.ico"
+        },
+        "definition": {
+          "id": "nist-thermoml",
+          "title": "NIST ThermoML 热物性数据",
+          "connector_title": "NIST ThermoML",
+          "description": "检索实验热物性、热化学和相平衡数据，获取含数值、单位、实验条件及不确定度的完整 ThermoML XML。",
+          "domains": [
+            "trc.nist.gov"
+          ],
+          "subjects": [
+            "chemistry",
+            "chemical engineering",
+            "thermodynamics",
+            "thermophysical properties",
+            "phase equilibria"
+          ],
+          "languages": [
+            "en"
+          ],
+          "protocol": "rest",
+          "discovery_mode": "repository",
+          "acquisition": "files",
+          "limitation": "范围为 NIST/TRC 从合作期刊整理的静态实验数据归档，目前涵盖至 2019 年。按英文关键词或 DOI 检索；一份 XML 包含该记录全部已归档实验数据，保留官方 MD5、原始文献和提取日期，不表示全文或实时 TRC 数据库。按 NIST 数据声明使用。"
+        },
+        "search_total": 1,
+        "candidate": {
+          "id": "df6a3e9806b58a5d64246fce7d0c51f3d0cba84667d7e135d0a0dc4f93d39ec7",
+          "source_id": "nist-thermoml",
+          "external_id": "10.1016/j.fluid.2014.11.015",
+          "title": "Vapor liquid equilibrium of CO2 in NH3 CO2 SO2 H2O system",
+          "description": "Vapor liquid equilibrium (VLE) of CO2 in CO2 and SO2 loaded aqueous ammonia (NH3 CO2 SO2 H2O system) was investigated in this study. The effect of SO2 loading (mol SO2/mol NH3 in solvent) on VLE of CO2 was measured in the range of 0.1 0.3 mol SO2/mol NH3 in 2.5 7.5 wt.% aqueous ammonia at 20 C, 40 C and 60 C, using a Fourier transform infrared (FT-IR) gas analysis method with a pressure determination stirred tank apparatus. The equilibrium vapor pressures of CO2 in the aqueous ammonia with no SO2 content were compared with experimental data in the public domain. The electrolyte NRTL model was carried out to predict the VLE data using Aspen Plus. The comparison between experimental results and model predictions showed good agreement. The total equilibrium pressure, NH3 equilibrium partial pressure and liquid speciation in the NH3 CO2 SO2 H2O systemwere calculated and analyzed. It was found that the total equilibrium pressure decrease slightly at lower CO2 loading (mol CO2/mol NH3), but increase sharply at higher CO2 loading with SO2 loading. The NH3 equilibrium partial pressure, and the NH3 and NH2COO molar concentrations decrease with SO2 loading. However, the NH4 + and HCO3 molar concentrations increase with SO2 loading. Further CO2 equilibrium partial pressure analysis shows that the driving force and solvent capacity of CO2 absorption decrease with SO2 loading, while the desorption capacity and driving force of CO2 at high temperature significantly increases with SO2 loading, which has the potential to reduce the regeneration energy of CO2.",
+          "source_url": "https://trc.nist.gov/ThermoML/10.1016/j.fluid.2014.11.015.html",
+          "access": "needs_resolution",
+          "formats": [],
+          "size": null,
+          "license": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+          "coverage": {
+            "data_points": 73,
+            "scope": "该记录全部已归档实验数据"
+          },
+          "match_notes": [],
+          "limitations": [],
+          "system_notes": [],
+          "metadata": {
+            "version": "2020-09-29",
+            "source_checksum": "md5:82e0e45d780b8178375647267986dc56"
+          }
+        },
+        "verified_files": 1,
+        "file": {
+          "id": "82f99405769fd0d21fda955ff894c34144a11e1b19988de72ed40ccfa8566200",
+          "source_id": "nist-thermoml",
+          "external_id": "10.1016/j.fluid.2014.11.015",
+          "url": "https://trc.nist.gov/ThermoML/10.1016/j.fluid.2014.11.015.xml",
+          "filename": "thermoml_10.1016_j.fluid.2014.11.015.xml",
+          "source_filename": "thermoml_10.1016_j.fluid.2014.11.015.xml",
+          "size": null,
+          "checksum": "md5:82e0e45d780b8178375647267986dc56",
+          "content_type": "application/xml",
+          "version": "2020-09-29:82e0e45d780b8178375647267986dc56",
+          "license": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+          "available": true,
+          "reason": "已确认来源文件当前可读取。",
+          "kind": "完整源数据",
+          "record_url": "https://trc.nist.gov/ThermoML/10.1016/j.fluid.2014.11.015.html",
+          "coverage": {
+            "data_points": 73,
+            "scope": "该记录全部已归档实验数据"
+          },
+          "probe_without_range": true,
+          "verification": {
+            "method": "http_content_probe",
+            "sample_bytes": 16384,
+            "total_bytes": null,
+            "checked_at": "2026-10-23T01:00:06.718328+00:00"
+          },
+          "system_notes": [
+            "搜索阶段已读取 1 个文件的内容；每条记录先核验 6 个文件，每文件最多读取 16 KiB。",
+            "读取样本仅确认当前可读；完整性、校验和及实际分析适用性仍需获取后确认。"
+          ]
+        },
+        "status": "passed",
+        "complete_bytes": 68860,
+        "sha256": "6f520bf091eb9487eb245439fd9da7cb20194449b523c156709be5cd0e09e289",
+        "receipt": {
+          "source": "data_connector",
+          "connector_id": "nist-thermoml",
+          "external_id": "10.1016/j.fluid.2014.11.015",
+          "discovery_source_id": "nist-thermoml",
+          "source_url": "https://trc.nist.gov/ThermoML/10.1016/j.fluid.2014.11.015.html",
+          "sha256": "6f520bf091eb9487eb245439fd9da7cb20194449b523c156709be5cd0e09e289",
+          "checksum_origin": "computed_locally",
+          "provider_checksum": "md5:82e0e45d780b8178375647267986dc56",
+          "license": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+          "source_version": "2020-09-29:82e0e45d780b8178375647267986dc56",
+          "provider_checksum_verified": true,
+          "acquired_at": "2026-10-23T01:00:08.757297+00:00"
+        },
+        "format_validated": true
+      }
+    },
+    {
+      "id": "nomad",
+      "名称": "NOMAD 材料计算数据",
+      "学科": [
+        "材料",
+        "物理",
+        "化学"
+      ],
+      "官网": "https://nomad-lab.eu/nomad-lab/",
+      "官方文档": "https://nomad-lab.eu/backend/api/v1/extensions/docs",
+      "获取能力": "检索公开材料计算记录，获取条目原始计算文件的完整 ZIP，保留原格式与官方文件清单。",
+      "范围说明": "仅纳入已公开、处理成功且无禁运的 VASP、Gaussian、Quantum Espresso、CP2K、FHI-aims 计算条目；按化学式、元素符号或英文关键词检索。每个 ZIP 对应一条计算记录的全部原始文件，可能含同目录相关计算，不代表整个项目或全部材料；不下载受限项目。遵循条目的原始许可。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "等待统一发布",
+      "验证证据": {
+        "source_id": "nomad",
+        "query": "CaFe2Re",
+        "source_info": {
+          "homepage": "https://nomad-lab.eu/nomad-lab/",
+          "documentation": "https://nomad-lab.eu/backend/api/v1/extensions/docs",
+          "country": "德国 / 国际",
+          "institution": "FAIRmat / NOMAD",
+          "logo_url": "https://nomad-lab.eu/nomad-lab/assets/nomad.svg"
+        },
+        "definition": {
+          "id": "nomad",
+          "title": "NOMAD 材料计算数据",
+          "connector_title": "NOMAD",
+          "description": "检索公开材料计算记录，获取条目原始计算文件的完整 ZIP，保留原格式与官方文件清单。",
+          "domains": [
+            "nomad-lab.eu"
+          ],
+          "subjects": [
+            "materials",
+            "physics",
+            "chemistry",
+            "density functional theory",
+            "electronic structure"
+          ],
+          "languages": [
+            "en"
+          ],
+          "protocol": "rest",
+          "discovery_mode": "repository",
+          "acquisition": "files",
+          "limitation": "仅纳入已公开、处理成功且无禁运的 VASP、Gaussian、Quantum Espresso、CP2K、FHI-aims 计算条目；按化学式、元素符号或英文关键词检索。每个 ZIP 对应一条计算记录的全部原始文件，可能含同目录相关计算，不代表整个项目或全部材料；不下载受限项目。遵循条目的原始许可。"
+        },
+        "search_total": 73,
+        "candidate": {
+          "id": "0020f3d215836956d417cec1c34b78f01631cb6e50369cb49407d4f5920cab93",
+          "source_id": "nomad",
+          "external_id": "----9KNOtIZc9bDFEWxgjeSRsJrC",
+          "title": "CaFe2Re · VASP",
+          "description": "aflowlib_data/LIB3_LIB/Ca_svFe_pvRe_pv/TFCC008.BCA/vasprun.xml.relax1",
+          "source_url": "https://nomad-lab.eu/gui/entry/id/----9KNOtIZc9bDFEWxgjeSRsJrC",
+          "access": "needs_resolution",
+          "formats": [],
+          "size": null,
+          "license": "CC BY 4.0",
+          "coverage": {
+            "scope": "单条材料计算的完整原始文件包"
+          },
+          "match_notes": [],
+          "limitations": [],
+          "system_notes": [],
+          "metadata": {
+            "version": "2017-06-12T13:40:49.627000"
+          }
+        },
+        "verified_files": 1,
+        "file": {
+          "id": "b445ea17d5d6fea28e86e359",
+          "source_id": "nomad",
+          "external_id": "----9KNOtIZc9bDFEWxgjeSRsJrC",
+          "url": "https://nomad-lab.eu/backend/api/v1/entries/----9KNOtIZc9bDFEWxgjeSRsJrC/raw",
+          "filename": "nomad_----9KNOtIZc9bDFEWxgjeSRsJrC_raw.zip",
+          "source_filename": "nomad_----9KNOtIZc9bDFEWxgjeSRsJrC_raw.zip",
+          "size": null,
+          "checksum": null,
+          "content_type": "application/zip",
+          "version": "r0ck_h3kQQGZdp5E41vb9g:2017-06-12T13:40:49.627000",
+          "license": "CC BY 4.0",
+          "available": true,
+          "reason": "已确认来源文件当前可读取。",
+          "kind": "完整源数据",
+          "record_url": "https://nomad-lab.eu/gui/entry/id/----9KNOtIZc9bDFEWxgjeSRsJrC",
+          "source_manifest": [
+            {
+              "path": "aflowlib_data/LIB3_LIB/Ca_svFe_pvRe_pv/TFCC008.BCA/vasprun.xml.relax1",
+              "size": 1163309
+            },
+            {
+              "path": "aflowlib_data/LIB3_LIB/Ca_svFe_pvRe_pv/TFCC008.BCA/vasprun.xml.relax2",
+              "size": 551285
+            }
+          ],
+          "upload_id": "r0ck_h3kQQGZdp5E41vb9g",
+          "mainfile": "aflowlib_data/LIB3_LIB/Ca_svFe_pvRe_pv/TFCC008.BCA/vasprun.xml.relax1",
+          "coverage": {
+            "files": 2,
+            "uncompressed_bytes": 1714594,
+            "scope": "单条计算的全部原始文件，含同目录相关文件"
+          },
+          "verification": {
+            "method": "http_content_probe",
+            "sample_bytes": 16384,
+            "total_bytes": null,
+            "checked_at": "2026-10-23T01:00:28.445347+00:00"
+          },
+          "system_notes": [
+            "搜索阶段已读取 1 个文件的内容；每条记录先核验 6 个文件，每文件最多读取 16 KiB。",
+            "读取样本仅确认当前可读；完整性、校验和及实际分析适用性仍需获取后确认。"
+          ]
+        },
+        "status": "passed",
+        "complete_bytes": 1715563,
+        "sha256": "15e173bb3da7b5f5ea88922ce0fb33f9eb5e86d67a3f80b635e0751a561ca3f2",
+        "receipt": {
+          "source": "data_connector",
+          "connector_id": "nomad",
+          "external_id": "----9KNOtIZc9bDFEWxgjeSRsJrC",
+          "discovery_source_id": "nomad",
+          "source_url": "https://nomad-lab.eu/gui/entry/id/----9KNOtIZc9bDFEWxgjeSRsJrC",
+          "sha256": "15e173bb3da7b5f5ea88922ce0fb33f9eb5e86d67a3f80b635e0751a561ca3f2",
+          "checksum_origin": "computed_locally",
+          "provider_checksum": null,
+          "license": "CC BY 4.0",
+          "source_version": "r0ck_h3kQQGZdp5E41vb9g:2017-06-12T13:40:49.627000",
+          "provider_checksum_verified": false,
+          "acquired_at": "2026-10-23T01:00:43.020090+00:00"
+        },
+        "format_validated": true
+      }
+    },
+    {
+      "id": "cds-vizier",
+      "名称": "CDS VizieR 天文测量表",
+      "学科": [
+        "天文"
+      ],
+      "官网": "https://vizier.cds.unistra.fr/",
+      "官方文档": "https://vizier.cds.unistra.fr/doc/asu-summary.htx",
+      "获取能力": "按英文主题、目录编号检索 VizieR，获取官方归档中对应的完整天文测量数据表。",
+      "范围说明": "范围为 VizieR 可检索数据表中能对应到官方归档原始 DAT 文件的测量表；完整获取所选表，不截取前若干行，不等于整篇论文的全部附属文件或全目录所有图像。保留原始定宽格式、缺测符号和单位说明链接；表格会修订，保存源站文件日期及获取哈希。使用须引用原始作者和 CDS，具体许可见目录说明。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "等待统一发布",
+      "验证证据": {
+        "source_id": "cds-vizier",
+        "query": "II/131",
+        "candidate_count": 4,
+        "file_count": 1,
+        "filename": "catalog.dat",
+        "url": "https://cdsarc.cds.unistra.fr/ftp/II/131/catalog.dat",
+        "version": "03-May-1996 10:07; ReadMe sha256:bcd118f78ef98def897de739ed0331b3a8e4b8075abb04ed82e2cb8d8010df1c",
+        "external_id": "II/131/catalog",
+        "probe_bytes": 16384,
+        "provider_size": 182344,
+        "download_bytes": 182344,
+        "science_sample_verified": true,
+        "sha256": "f88e48240d24ae9c6f82b78f6e9adf572546ce39153e7efc57d067284665d812",
+        "provider_checksum_verified": false,
+        "actual_rows": 1518,
+        "schema_rows": 1518,
+        "status": "passed",
+        "runtime_full_stream_validator": "passed"
+      }
+    },
+    {
+      "id": "mast",
+      "名称": "MAST 空间望远镜科学数据",
+      "学科": [
+        "天文",
+        "空间"
+      ],
+      "官网": "https://archive.stsci.edu/",
+      "官方文档": "https://mast.stsci.edu/api/v0/pyex.html",
+      "获取能力": "按目标名称、任务或观测编号检索 MAST，获取公开的完整 FITS 图像、光谱与光变文件。",
+      "范围说明": "裸查询按目标名称精确匹配；也支持 mission=IUE observation=lwp13058、target=\"M101\"、mission=TESS 等精确条件，可组合。仅列公开观测直接关联的 SCIENCE FITS 产品（含 IUE 归档压缩光谱），排除专有期、预览、辅助文件和观测索引。保留源产品的处理级别，不代表未经校准的原始仪器读数。每个文件完整获取，但不是任务全部数据；重处理会更新产品。数据多数为公有领域，HLSP/特定集合有单独许可与署名要求，不能统一视为 CC0。",
+      "本地接入状态": "已启用，完整样本文件验收通过",
+      "运行版本状态": "等待统一发布",
+      "验证证据": {
+        "source_id": "mast",
+        "query": "mission=IUE observation=lwp13058",
+        "candidate_count": 1,
+        "file_count": 2,
+        "filename": "lwp13058.mxlo.gz",
+        "url": "https://archive.stsci.edu/pub/iue/data/lwp/13000/lwp13058.mxlo.gz",
+        "version": "源站当前处理版本未标明; bytes=18206",
+        "external_id": "282672",
+        "probe_bytes": 16384,
+        "provider_size": 18206,
+        "download_bytes": 18206,
+        "science_sample_verified": true,
+        "sha256": "fda749aa801131a237b83ad22a96f25e9bcf2f077375e1f79aa9ceeee0a17c22",
+        "provider_checksum_verified": false,
+        "fits_magic": "SIMPLE  =                    T",
+        "fits_cards": [
+          "BITPIX  =                    8 / 8 bits ASCII",
+          "NAXIS   =                    0 / No image data"
+        ],
+        "uncompressed_bytes": 48960,
+        "status": "passed",
+        "runtime_full_stream_validator": "passed"
+      }
+    }
+  ],
+  "国内与既有来源": "继续保留ScienceDB 科学数据银行等原有实际已启用入口；本次新增专门来源均以真实实体文件验收为准，不按重复镜像或机构子栏目凑数。",
+  "补充说明": {
+    "既有来源": [
+      "sciencedb",
+      "cern-open-data",
+      "pubchem",
+      "chembl",
+      "rcsb-pdb",
+      "heasarc",
+      "nasa-exoplanet",
+      "nasa-osdr",
+      "rodare"
+    ],
+    "大小与存储": "未新增实体文件大小上限；仍沿用流式/可恢复获取与对象存储，不创建分析输入副本。",
+    "源站例外": "NIST ThermoML 的HTTP Range返回不一致，使用有界普通GET探测；中断后安全重取整份XML并核验官方MD5，不拼接错误范围。",
+    "完整性": "压缩模型与天文gzip读至EOF核验CRC；NOMAD核验全包manifest、大小与CRC；CDS核对全部行数；完整校验可取消，且不阻塞API事件循环。",
+    "界面": "聊天复用、连接器手选入口、管理介绍布局均保留；7个可核验官方本地标识，OEIS与MIPLIB使用中性图标。"
+  },
+  "未启用来源": [
+    {
+      "source": "lmfdb",
+      "reason": "Official API initially returned actual data, then reCAPTCHA HTML during end-to-end automated validation; adapter prepared but disabled. No access-control bypass attempted.",
+      "url": "https://www.lmfdb.org/api/"
+    },
+    {
+      "source": "suitesparse",
+      "reason": "Official Oct 16 2026 notice says matrix downloads offline and return 403; excluded, no mirror workaround attempted.",
+      "url": "https://sparse.tamu.edu/"
+    }
+  ],
+  "验收": {
+    "backend": {
+      "summary": "13 failed, 11624 passed, 69 skipped, 2 warnings in 119.50s (0:01:59)",
+      "passed": false,
+      "failed_tests": [
+        "tests/test_analysis_inputs.py::test_special_capabilities_keep_their_existing_orchestration[skill] - AssertionError: assert not True",
+        "tests/test_artifact_write_agent_flow.py::test_confirmed_program_computation_allows_report_revision_within_same_step - AssertionError: assert (0 == 1)",
+        "tests/test_artifact_write_agent_flow.py::test_program_method_evidence_requires_private_successful_validated_source[success] - TypeError: 'NoneType' object is not subscriptable",
+        "tests/test_artifact_write_agent_flow.py::test_program_method_evidence_requires_private_successful_validated_source[failed] - AssertionError: assert 0 == 1",
+        "tests/test_artifact_write_agent_flow.py::test_program_method_evidence_requires_private_successful_validated_source[bad_snapshot] - AssertionError: assert 0 == 1",
+        "tests/test_artifact_write_agent_flow.py::test_program_method_evidence_requires_private_successful_validated_source[public_only] - AssertionError: assert 0 == 1",
+        "tests/test_execution_agent_result.py::test_explicit_stdout_request_finishes_after_one_successful_shell_batch - assert None == 1024",
+        "tests/test_model_driver.py::test_real_cordis_catalog_reaches_production_execution_agent_and_runtime - app.domain.services.context_budget.ContextBudgetExceeded: context_budget_ex...",
+        "tests/test_persistence_contracts.py::test_frozen_catalog_matches_current_code - AssertionError: assert [{'after_vers...limit'], ...}] == []",
+        "tests/test_session_skill_creator.py::test_complete_stage_repair_never_compresses_methods_or_copies_bad_output[length] - AssertionError: assert '重新生成一份完整' in '你是 DataLab 的科研分析技能设...",
+        "tests/test_session_skill_creator.py::test_complete_stage_repair_never_compresses_methods_or_copies_bad_output[schema] - AssertionError: assert '重新生成一份完整' in '你是 DataLab 的科研分析技能设...",
+        "tests/test_session_skill_creator.py::test_complete_stage_repair_never_compresses_methods_or_copies_bad_output[driver_callback] - AssertionError: assert '重新生成一份完整' in '你是 DataLab 的科研分析技能设...",
+        "tests/test_session_skill_creator.py::test_complete_stage_repair_never_compresses_methods_or_copies_bad_output[empty_driver_completion] - AssertionError: assert '重新生成一份完整' in '你是 DataLab 的科研分析技能设..."
+      ],
+      "说明": "最后一次共享工作区全量测试有13项失败，涉及并行修改中的技能、分析执行、模型输出预算和持久化契约；新来源相关233项专项测试通过。当前不满足整批发布门槛。"
+    },
+    "backend_log_sha256": "c60591b7cbac36c294b639ae788b96a526b1a2a253b469735bd346fb3f573fd5",
+    "focused": "233 passed in 5.85s",
+    "focused_log_sha256": "c8fa2a6e374577eb64d1cd1f9e47119444599e967df76340b852056c59a7b152",
+    "sandbox": "6220 passed, 84 skipped, 41 warnings, 563 subtests passed in 68.56s (0:01:08)",
+    "sandbox_log_sha256": "61dcf7458c5e48f481840c0017e66df6744ecfff3b7e4e06637450a204c33920",
+    "frontend": {
+      "type_check": "passed",
+      "production_build": "passed",
+      "unit_tests": {
+        "passed": 3223,
+        "failed": 0
+      },
+      "connector_picker": {
+        "output": "temporary browser validation screenshots",
+        "passed": true,
+        "errors": [],
+        "externalAttempts": [],
+        "checks": {
+          "neutralSources": [
+            "asu-research-data",
+            "natural-earth",
+            "metabolomics-workbench",
+            "who-gho",
+            "oeis",
+            "miplib"
+          ],
+          "foundationSources": {
+            "names": [
+              "oeis",
+              "miplib",
+              "gwosc",
+              "nasa-cdaweb",
+              "crystallography-open-database",
+              "nist-thermoml",
+              "nomad",
+              "cds-vizier",
+              "mast"
+            ],
+            "officialLogos": 7,
+            "neutralFallbacks": [
+              "oeis",
+              "miplib"
+            ],
+            "lmfdbEnabled": false
+          },
+          "compactSources": {
+            "choices": 103,
+            "loadedLogos": 96,
+            "unknownSource": "neutral fallback icon"
+          },
+          "franceLogo": {
+            "width": 180,
+            "height": 180
+          },
+          "lightFocus": {
+            "color": "rgb(43, 118, 89)",
+            "width": "2px",
+            "style": "solid",
+            "accent": "rgb(43, 118, 89)",
+            "shadow": "none"
+          },
+          "selection": "keyboard and pointer selection, search preserves selection, disabled controls, clear restores automatic matching",
+          "darkFocus": {
+            "color": "rgb(169, 203, 187)",
+            "width": "2px",
+            "style": "solid",
+            "accent": "rgb(169, 203, 187)",
+            "shadow": "none"
+          },
+          "mobile390": {
+            "width": 366,
+            "scroll": 364,
+            "client": 364,
+            "viewport": 390,
+            "columns": "316px"
+          },
+          "mobile320": {
+            "width": 296,
+            "scroll": 294,
+            "client": 294,
+            "viewport": 320,
+            "columns": "246px"
+          },
+          "globalControls": "native checkbox/radio/link retain green keyboard outlines; compound text has one inset focus edge",
+          "management": "details link navigates to unchanged management descriptions and capabilities"
+        }
+      },
+      "browser_gate": {
+        "passed": 18,
+        "failed": 0,
+        "engines": [
+          "chromium",
+          "webkit"
+        ],
+        "note": "Current repository matrix has 9 scenarios per engine, including skill-creation. All passed. After replacing only NOMAD wordmark with its official compact favicon, picker and production build were rerun successfully."
+      },
+      "source_asset_sha256": "7 of 7 match originals",
+      "manual_visual_review": "Verified foundation-sources.png; official compact NOMAD icon visible, labels and neutral OEIS/MIPLIB fallbacks clear."
+    },
+    "compose_config": "passed"
+  },
+  "补充证据": {
+    "physics_space_scope": [
+      "GWOSC is the public event/candidate/injection version catalogue, not full observing-run archive. Only official original HDF5 files are acquired.",
+      "CDAWeb unqualified search preserves full official start/end period. All 10591 original ACE H2 MFI files from 1997-09-02 through 2026-08-31 resolved without truncation.",
+      "Explicit CDAWeb UTC closed interval is part of external ID. Original complete files intersecting it may extend beyond boundaries. Master CDF/metadata files are excluded.",
+      "No file-size cap added. Shared streaming acquisition retained. Full validation files were temporary and removed; no analysis input cache created.",
+      "Scientific validators h5py/cdflib installed in temporary /tmp path only, not application dependencies."
+    ],
+    "astronomy_structures": {
+      "mast_fits_entities": [
+        {
+          "filename": "lwp13058.mxlo.gz",
+          "sha256": "fda749aa801131a237b83ad22a96f25e9bcf2f077375e1f79aa9ceeee0a17c22",
+          "hdus": [
+            {
+              "type": "PRIMARY",
+              "naxis": 0,
+              "dimensions": [],
+              "data_bytes": 0,
+              "columns": {}
+            },
+            {
+              "type": "BINTABLE",
+              "naxis": 2,
+              "dimensions": [
+                11535,
+                1
+              ],
+              "data_bytes": 11535,
+              "columns": {
+                "TFORM1": "5A",
+                "TTYPE1": "APERTURE",
+                "TFORM2": "1I",
+                "TTYPE2": "NPOINTS",
+                "TFORM3": "1E",
+                "TTYPE3": "WAVELENGTH",
+                "TFORM4": "1E",
+                "TTYPE4": "DELTAW",
+                "TFORM5": "640E",
+                "TTYPE5": "NET",
+                "TFORM6": "640E",
+                "TTYPE6": "BACKGROUND",
+                "TFORM7": "640E",
+                "TTYPE7": "SIGMA",
+                "TFORM8": "640I",
+                "TTYPE8": "QUALITY",
+                "TFORM9": "640E",
+                "TTYPE9": "FLUX"
+              }
+            }
+          ]
+        },
+        {
+          "filename": "lwp13058mxlo_vo.fits",
+          "sha256": "701dd8da8f531d4a3dc82e1d384bf5bcab0a383ed993d0f5791039549a537a9e",
+          "hdus": [
+            {
+              "type": "PRIMARY",
+              "naxis": 0,
+              "dimensions": [],
+              "data_bytes": 0,
+              "columns": {}
+            },
+            {
+              "type": "BINTABLE",
+              "naxis": 2,
+              "dimensions": [
+                7882,
+                1
+              ],
+              "data_bytes": 7882,
+              "columns": {
+                "TTYPE1": "WAVE",
+                "TTYPE2": "FLUX",
+                "TTYPE3": "SIGMA",
+                "TTYPE4": "QUALITY",
+                "TFORM1": "563E",
+                "TFORM2": "563E",
+                "TFORM3": "563E",
+                "TFORM4": "563I"
+              }
+            }
+          ]
+        }
+      ],
+      "logos": [
+        {
+          "url": "https://mast.stsci.edu/api/v0/mastlogo_thumb.png",
+          "status": 200,
+          "content_type": "image/png"
+        },
+        {
+          "url": "https://vizier.cds.unistra.fr/vizier/vizier.png",
+          "status": 200,
+          "content_type": "image/png"
+        }
+      ]
+    },
+    "astronomy_scope": [
+      "CDS: full TAP_SCHEMA catalogue searched dynamically by each English term or catalogue identifier; metadata pages use TOP page*10 with full count, not data rows. Fetches whole original exact table DAT/DAT.gz from official archive; excludes ReadMe-only/reference/notes tables and tables without a corresponding supported original entity.",
+      "CDS: record count and fixed-width schema remain in file coverage, ReadMe link retained. No source-file row truncation, complete nonblank row count checked against declared records. Original DAT formats and units/missing markers preserved.",
+      "MAST: exact target_name by default; explicit mission/target/observation/instrument/proposal filters supported. All product manifest pages read, total must remain consistent; PUBLIC rechecked at resolve. Only directly related PUBLIC SCIENCE FITS/legacy IUE spectra; previews, auxiliary products, proprietary products and unrelated associated products excluded.",
+      "MAST: supported canonical product, url/pub and url/missions identifiers. Official url/pub URIs point to the same original archive.stsci.edu/pub path documented by Astroquery. No arbitrary embedded http URLs, mirrors, external hosts, S3 buckets or credentials added.",
+      "MAST Download gateway returned 502 during this run; documented original STScI public archive returned 200 and complete files verified. Gateway-only products remain dependent on provider recovery and are not displayed unless normal probes succeed. No bypass of 401/403/robots/login attempted.",
+      "MAST products preserve provider processing level, may be calibrated/reprocessed. Not claimed to be raw instrument readings or entire mission archive; mostly public domain but provider-specific attribution/licenses apply.",
+      "No dataset file-size cap. Existing stream_download and object-storage boundary preserved. Runtime gzip CRC/EOF and CDS nonblank row counts checked in bounded 64 KiB buffers with cancellation and rewind. No decompressed copies or analysis input caches.",
+      "Only local SHA256 available for tested files; no provider checksum was invented. Full files temporary and streams closed, anonymous ingestion staging discarded."
+    ],
+    "chemistry_notes": [
+      "三源均通过真实OpenDataSources.search -> verify -> download，使用共享流式下载器与完整格式验证。",
+      "NIST原生Range响应使用压缩表示范围而发送identity实体，故仅在可信源标记下使用16KiB有界普通GET探测；完整下载保留MD5核验。",
+      "NOMAD每条计算的ZIP完整保留源站rawdir全部文件与manifest，逐文件核对路径、大小及CRC并确认数值计算输出；原始ZIP封装可能每次有不同SHA256，不将本地SHA256误称源站校验和。",
+      "仅NIST提供并核验provider MD5；COD固定svnrevision，NOMAD保留upload及发布时间和原始许可。",
+      "NOMAD实测SiO2返回0、O2Si返回1135；NaCl返回0、ClNa返回1388。已实现元素排序与最简整数比例化，并测试Fe2O3等。",
+      "完整网络验收后补充原始manifest按路径稳定排序，36项单测包含排序不影响文件身份的回归验证。"
+    ],
+    "logos": [
+      {
+        "source_id": "gwosc",
+        "owner": "GWOSC",
+        "official_page": "https://gwosc.org/",
+        "asset_url": "https://gwosc.org/static/images/gwosc_logo.svg",
+        "retrieved_on": "2026-10-23",
+        "file": "foundation/gwosc.svg",
+        "sha256": "a333e63a7a530bbf82144b86d39b05bcfb7f0a4f50b89c0c319f869d6cc35a87",
+        "bytes": 3783
+      },
+      {
+        "source_id": "nasa-cdaweb",
+        "owner": "NASA SPDF",
+        "official_page": "https://cdaweb.gsfc.nasa.gov/",
+        "asset_url": "https://cdaweb.gsfc.nasa.gov/images/NASA_Insignia-RGB-2023.png",
+        "retrieved_on": "2026-10-23",
+        "file": "foundation/nasa-cdaweb.png",
+        "sha256": "b63a067ec3b7837843e4ee2ee8b49cce9ccca81ece4a211e065479198c9c6cc3",
+        "bytes": 67753
+      },
+      {
+        "source_id": "crystallography-open-database",
+        "owner": "Crystallography Open Database",
+        "official_page": "https://www.crystallography.net/cod/",
+        "asset_url": "https://www.crystallography.net/cod/images/cod-blue-yellow.svg",
+        "retrieved_on": "2026-10-23",
+        "file": "foundation/crystallography-open-database.svg",
+        "sha256": "3f6db2759ccd667385dc782961a8369f824127380e5e3038dc839a0def0e4082",
+        "bytes": 7739
+      },
+      {
+        "source_id": "nist-thermoml",
+        "owner": "NIST Thermodynamics Research Center",
+        "official_page": "https://trc.nist.gov/ThermoML/",
+        "asset_url": "https://trc.nist.gov/ThermoML/favicon.ico",
+        "retrieved_on": "2026-10-23",
+        "file": "foundation/nist-thermoml.ico",
+        "sha256": "fada0e912cf7e01cbd02f6264cce7b3cfbc2cdf96ae1bded6a601f25410f6690",
+        "bytes": 15086
+      },
+      {
+        "source_id": "nomad",
+        "owner": "FAIRmat / NOMAD",
+        "official_page": "https://nomad-lab.eu/nomad-lab/",
+        "asset_url": "https://nomad-lab.eu/nomad-lab/assets/favicon.ico",
+        "retrieved_on": "2026-10-23",
+        "file": "foundation/nomad.ico",
+        "sha256": "75bf533416f0f9040dcfed9599726962afc74f8016456558666bdfa9dccffd1b",
+        "bytes": 15406,
+        "note": "Official homepage icon used at compact size instead of reducing the wide NOMAD wordmark."
+      },
+      {
+        "source_id": "cds-vizier",
+        "owner": "CDS Strasbourg",
+        "official_page": "https://vizier.cds.unistra.fr/",
+        "asset_url": "https://vizier.cds.unistra.fr/vizier/vizier.png",
+        "retrieved_on": "2026-10-23",
+        "file": "foundation/cds-vizier.png",
+        "sha256": "b2869b2f7dba1928889510c9b1d217a003e6ed9d208941512a5f1a8d945530ed",
+        "bytes": 23760
+      },
+      {
+        "source_id": "mast",
+        "owner": "Space Telescope Science Institute",
+        "official_page": "https://mast.stsci.edu/api/v0/",
+        "asset_url": "https://mast.stsci.edu/api/v0/mastlogo_thumb.png",
+        "retrieved_on": "2026-10-23",
+        "file": "foundation/mast.png",
+        "sha256": "269228e6fee8604d2059caa1212f63ffb8ce1286c5ebc10bd572ddac51878b46",
+        "bytes": 11266
+      }
+    ]
+  },
+  "发布状态": {
+    "本任务发起部署": false,
+    "本任务提交或推送": false,
+    "其他任务发布时带入的4项": [
+      "gwosc",
+      "miplib",
+      "nasa-cdaweb",
+      "oeis"
+    ],
+    "完整批次": "待统一发布",
+    "原因": "遵守保持独立、等待其他任务结束后再发布的要求；检索核心任务尚有历史研究问题及公开候选说明外发给现有DeepSeek的确认待处理。 最后一次全量后端测试仍有13项失败，亦未满足发布检查门槛。",
+    "状态核对": "2026-10-23 当前运行backend镜像skill-results-20261023，读取其registry得到92个自动来源，其中包含上述4个；本地最终池97个。"
+  },
+  "文件快照": {
+    "backend/app/domain/models/open_data_chem_materials_foundation_definitions.py": "db86130b5f660d2d0d06be063aec5e6182e0d3bfd6a813a06a2146e616ed29ea",
+    "backend/app/domain/models/open_data_physics_space_foundation_definitions.py": "215fee7ebbc355732dc668ea6617ab128c792a852e2ea686edf2531dfd3288a6",
+    "backend/app/domain/models/open_data_astronomy_foundation_definitions.py": "3229c99b52499e4c3761b77409a9debd563bc083c01fab7eeca47eea71ecda55",
+    "backend/app/domain/models/open_data_math_foundation_definitions.py": "fe40b2f25517e6581c8bc046bc8324f381ebccb21288fe0f354a6dd8c3188e8d",
+    "backend/app/infrastructure/external/data_sources/open_data_chem_materials_foundation_adapters.py": "0473d4453bc62b9f69e03c83d53b48935d0e81030596d1a9cf6fce8fed555ca6",
+    "backend/app/infrastructure/external/data_sources/open_data_physics_space_foundation_adapters.py": "1ebc821eaea9e7cac888700b5608316ce2918a2128d761017b892454a1540ac0",
+    "backend/app/infrastructure/external/data_sources/open_data_astronomy_foundation_adapters.py": "d4d2242613891ed78fb69f002dfab6e7d9870090b3fabc193fd2d1d0674aba61",
+    "backend/app/infrastructure/external/data_sources/open_data_math_foundation_adapters.py": "d19c72a1047254cceb0465d7b0cd41474aae71941a538c951e0c687a984e7c45",
+    "backend/tests/test_open_data_foundation_integration.py": "ff4aedd0916c6cf06ec26582ea006f49f4e0726976a4a2dcd565d30abd612cdd",
+    "backend/tests/test_open_data_chem_materials_foundation_adapters.py": "a66b7647de5b81ef7be35b106f6dbdbcce19bca9bcd39277543df2ac83ae7a10",
+    "backend/tests/test_open_data_math_foundation_adapters.py": "58b61bb9af8ea8246a6c429191bfa6ea346084eadee23c4cd06527d54fb26713",
+    "backend/tests/test_open_data_physics_space_foundation_adapters.py": "b4b39db5663f7d26ed2d3a9db26ac10504352aad6af04ec3d03cf91845275c2f",
+    "backend/tests/test_open_data_astronomy_foundation_adapters.py": "044a02625b54a53542ddec9f7acd86f8845d70e17696d0bba3ed2fa21c943745",
+    "backend/app/domain/models/open_data_registry.py": "336ce8db2ff117e208848852f32bf1ec2e1f6a7631d03804a548810b3314bba4",
+    "backend/app/infrastructure/external/data_sources/open_data_sources.py": "26aed36a43a13f1b49245d3b8f228ee5a907b2fa625f3d520e1395ef12dad270",
+    "frontend/src/utils/connectorFoundationBranding.ts": "e8f734047be2053692116fb6f5e25ca0b24cf8d9a5767e3ebe46a594ddfa1347",
+    "frontend/src/utils/connectorBranding.ts": "ac152a15cfcdd46acf969f092233612fe21443b3b08cd00c09bd6b00a13e8b7d",
+    "frontend/public/images/connectors/sources.json": "0474487f79f04c6f3a4ff16e722d794bd6b02a2899b271dded3178174b6bb087",
+    "frontend/tests/browser/connector-picker-smoke.mjs": "526a5f03c1a7806e535b9ed8ef15cfbbd20bd0a1616208abe01f836edb5cf056"
+  }
+}

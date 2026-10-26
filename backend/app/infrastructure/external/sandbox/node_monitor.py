@@ -6,6 +6,7 @@ from datetime import datetime, UTC, timedelta
 import docker
 
 from app.core.config import get_settings
+from app.infrastructure.external.sandbox.object_mount import release_object_mount_helpers
 from app.domain.models.execution_node import (
     ExecutionNodeStatus,
     ExecutionNodeType,
@@ -130,6 +131,11 @@ class ExecutionNodeMonitor:
                     pass
                 except Exception as exc:
                     logger.warning("Failed to remove expired paused sandbox %s: %s", record.container_name, exc)
+                    continue
+                try:
+                    await release_object_mount_helpers(client, sandbox_name=record.container_name)
+                except Exception as exc:
+                    logger.warning("Failed to release expired sandbox input mounts %s: %s", record.container_name, type(exc).__name__)
                     continue
                 now = datetime.now(UTC)
                 record.status = "destroyed"

@@ -1,7 +1,9 @@
-"""Bounded, read-only validation of output bytes, never model claims or code execution.
+"""Bounded output delivery receipts and explicitly requested content inspection.
 
 The receipt describes the exact bytes inspected. Callers must match its digest
 to the bytes subsequently uploaded; path existence alone is not a receipt.
+The default delivery check proves file integrity only. It neither interprets
+file contents nor certifies format, preview safety, or scientific correctness.
 """
 from __future__ import annotations
 
@@ -11,9 +13,9 @@ import hashlib
 import io
 import json
 import os
+import re
 import stat
 import threading
-import time
 import warnings
 import zipfile
 from pathlib import Path
@@ -29,16 +31,17 @@ MAX_IMAGE_FRAMES = 32
 MAX_TABLE_ROWS = 100_000
 MAX_TABLE_COLUMNS = 2_000
 MAX_TABLE_CELLS = 200_000
+MAX_MARKDOWN_TABLES = 128
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 1_000
 READ_CHUNK_BYTES = 1024 * 1024
-BATCH_TIMEOUT_SECONDS = 30
 SEQUENCE_SUFFIXES = frozenset({".fasta", ".fa", ".fna", ".faa", ".fastq", ".fq"})
 KINDS = frozenset({"image", "table", "report", "code", "data"})
 IMAGE_FORMATS = {
     ".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP",
     ".gif": "GIF", ".bmp": "BMP", ".tif": "TIFF", ".tiff": "TIFF", ".avif": "AVIF",
 }
+VECTOR_IMAGE_SUFFIXES = frozenset({".svg"})
 CODE_SUFFIXES = frozenset({".py", ".js", ".ts", ".r", ".sh", ".sql", ".ipynb"})
 REPORT_SUFFIXES = frozenset({".txt", ".md", ".markdown", ".html", ".htm", ".json"})
 DIAGNOSTIC_KEYS = frozenset({
@@ -62,16 +65,16 @@ class _InvalidArtifact(Exception):
         self.diagnostics = _safe_diagnostics(diagnostics)
 
 
-def _check_cancelled(cancelled: threading.Event, deadline: float) -> None:
-    if cancelled.is_set() or time.monotonic() >= deadline:
-        raise _InvalidArtifact("validation_deadline")
+def _check_cancelled(cancelled: threading.Event) -> None:
+    if cancelled.is_set():
+        raise _InvalidArtifact("validation_cancelled")
 
 
 def _classify(path: str, expected_kind: str) -> str | None:
     suffix = Path(path).suffix.casefold()
     if suffix == ".zip" or suffix in SEQUENCE_SUFFIXES:
         return "data"
-    if suffix in IMAGE_FORMATS:
+    if suffix in IMAGE_FORMATS or suffix in VECTOR_IMAGE_SUFFIXES:
         return "image"
     if suffix in CODE_SUFFIXES:
         return "code"
@@ -79,35 +82,48 @@ def _classify(path: str, expected_kind: str) -> str | None:
         return "table"
     if suffix == ".json" and expected_kind == "table":
         return "table"
+    if suffix in {".md", ".markdown"} and expected_kind == "table":
+        return "table"
     if suffix in REPORT_SUFFIXES:
         return "report"
     return None
 
 
 def _read_stable_output(path: str, root: Path, cancelled: threading.Event,
-                        deadline: float, byte_budget: list[int], *, allow_empty: bool = False) -> bytes:
-    _check_cancelled(cancelled, deadline)
+                        byte_budget: list[int] | None, *, allow_empty: bool = False,
+                        digest_only: bool = False) -> bytes | tuple[int, str]:
+    _check_cancelled(cancelled)
     with _open_output(path, root) as stream:
         before = os.fstat(stream.fileno())
         if not stat.S_ISREG(before.st_mode):
             raise _InvalidArtifact("not_regular_file")
-        if before.st_size > MAX_FILE_BYTES:
+        if digest_only and before.st_nlink != 1:
+            # A hard-link alias must not republish a mounted/private input.
+            raise _InvalidArtifact("unavailable_or_unsafe_path")
+        if not digest_only and before.st_size > MAX_FILE_BYTES:
             raise _InvalidArtifact("file_size_limit", {"size_bytes": before.st_size, "limit_bytes": MAX_FILE_BYTES})
-        if before.st_size > byte_budget[0]:
+        if byte_budget is not None and before.st_size > byte_budget[0]:
             raise _InvalidArtifact("batch_size_limit", {"size_bytes": before.st_size, "limit_bytes": byte_budget[0]})
         if before.st_size == 0 and not allow_empty:
             raise _InvalidArtifact("empty_file")
         chunks: list[bytes] = []
+        digest = hashlib.sha256()
+        size = 0
         remaining = before.st_size + 1
         while remaining:
-            _check_cancelled(cancelled, deadline)
+            _check_cancelled(cancelled)
             chunk = stream.read(min(READ_CHUNK_BYTES, remaining))
             if not chunk:
                 break
-            byte_budget[0] -= len(chunk)
-            if byte_budget[0] < 0:
-                raise _InvalidArtifact("batch_size_limit")
-            chunks.append(chunk)
+            if byte_budget is not None:
+                byte_budget[0] -= len(chunk)
+                if byte_budget[0] < 0:
+                    raise _InvalidArtifact("batch_size_limit")
+            if digest_only:
+                digest.update(chunk)
+            else:
+                chunks.append(chunk)
+            size += len(chunk)
             remaining -= len(chunk)
         after = os.fstat(stream.fileno())
         # Re-traverse the root so a swapped parent cannot validate an old FD.
@@ -118,11 +134,11 @@ def _read_stable_output(path: str, root: Path, cancelled: threading.Event,
             # Once bytes have been read, disappearance or path replacement is
             # a changed artifact, never permission to recreate a missing one.
             raise _InvalidArtifact("changed_during_read") from None
-        content = b"".join(chunks)
         if (_identity(before) != _identity(after) or _identity(after) != _identity(current)
-                or len(content) != before.st_size):
+                or size != before.st_size
+                or (digest_only and (after.st_nlink != 1 or current.st_nlink != 1))):
             raise _InvalidArtifact("changed_during_read")
-        return content
+        return (size, digest.hexdigest()) if digest_only else b"".join(chunks)
 
 
 def _text(content: bytes) -> str:
@@ -132,8 +148,7 @@ def _text(content: bytes) -> str:
     return text
 
 
-def _image_metadata(content: bytes, suffix: str, cancelled: threading.Event,
-                    deadline: float) -> dict[str, Any]:
+def _image_metadata(content: bytes, suffix: str, cancelled: threading.Event) -> dict[str, Any]:
     from PIL import Image
 
     with warnings.catch_warnings():
@@ -151,7 +166,7 @@ def _image_metadata(content: bytes, suffix: str, cancelled: threading.Event,
         with Image.open(io.BytesIO(content)) as image:
             # Verify and decode every permitted frame, not just a valid header.
             while True:
-                _check_cancelled(cancelled, deadline)
+                _check_cancelled(cancelled)
                 try:
                     image.seek(frames)
                 except EOFError:
@@ -165,12 +180,12 @@ def _image_metadata(content: bytes, suffix: str, cancelled: threading.Event,
         return {"format": image_format, "width": width, "height": height, "frames": frames}
 
 
-def _table_metadata(rows, cancelled: threading.Event, deadline: float) -> dict[str, int]:
+def _table_metadata(rows, cancelled: threading.Event) -> dict[str, int]:
     row_count = 0
     columns: int | None = None
     cells = 0
     for row_number, row in enumerate(rows, start=1):
-        _check_cancelled(cancelled, deadline)
+        _check_cancelled(cancelled)
         if not row or all(value is None or value == "" for value in row):
             continue
         if columns is None:
@@ -192,7 +207,7 @@ def _table_metadata(rows, cancelled: threading.Event, deadline: float) -> dict[s
     return {"row_count": row_count, "column_count": columns}
 
 
-def _xlsx_metadata(content: bytes, cancelled: threading.Event, deadline: float) -> dict[str, Any]:
+def _xlsx_metadata(content: bytes, cancelled: threading.Event) -> dict[str, Any]:
     from openpyxl import load_workbook
 
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
@@ -203,7 +218,7 @@ def _xlsx_metadata(content: bytes, cancelled: threading.Event, deadline: float) 
                 "max_archive_entries": MAX_ARCHIVE_ENTRIES, "archive_bytes": sum(entry.file_size for entry in entries),
                 "max_archive_bytes": MAX_ARCHIVE_BYTES})
         for entry in entries:
-            _check_cancelled(cancelled, deadline)
+            _check_cancelled(cancelled)
             if entry.flag_bits & 1:
                 raise _InvalidArtifact("encrypted_workbook")
             if entry.filename.casefold().endswith((".xml", ".rels")):
@@ -218,14 +233,14 @@ def _xlsx_metadata(content: bytes, cancelled: threading.Event, deadline: float) 
             raise _InvalidArtifact("worksheet_count_limit", {"sheet_count": len(workbook.worksheets), "max_sheets": 32})
         sheets = []
         for sheet in workbook.worksheets:
-            _check_cancelled(cancelled, deadline)
+            _check_cancelled(cancelled)
             if ((sheet.max_row or 0) > MAX_TABLE_ROWS or (sheet.max_column or 0) > MAX_TABLE_COLUMNS
                     or (sheet.max_row or 0) * (sheet.max_column or 0) > MAX_TABLE_CELLS):
                 raise _InvalidArtifact("table_size_limit", {"row_count": sheet.max_row or 0,
                     "column_count": sheet.max_column or 0, "max_rows": MAX_TABLE_ROWS,
                     "max_columns": MAX_TABLE_COLUMNS, "max_cells": MAX_TABLE_CELLS})
             try:
-                sheets.append(_table_metadata(sheet.iter_rows(values_only=True), cancelled, deadline))
+                sheets.append(_table_metadata(sheet.iter_rows(values_only=True), cancelled))
             except _InvalidArtifact as exc:
                 if exc.reason != "empty_table":
                     raise
@@ -238,7 +253,7 @@ def _xlsx_metadata(content: bytes, cancelled: threading.Event, deadline: float) 
         workbook.close()
 
 
-def _json_metadata(text: str, expected_kind: str) -> dict[str, Any]:
+def _strict_json(text: str) -> Any:
     def invalid_constant(_value):
         raise _InvalidArtifact("invalid_json_constant")
 
@@ -250,7 +265,11 @@ def _json_metadata(text: str, expected_kind: str) -> dict[str, Any]:
             payload[key] = value
         return payload
 
-    payload = json.loads(text, parse_constant=invalid_constant, object_pairs_hook=unique_object)
+    return json.loads(text, parse_constant=invalid_constant, object_pairs_hook=unique_object)
+
+
+def _json_metadata(text: str, expected_kind: str) -> dict[str, Any]:
+    payload = _strict_json(text)
     if expected_kind != "table":
         return {"format": "JSON", "json_type": type(payload).__name__}
     if not isinstance(payload, list) or not payload:
@@ -275,8 +294,7 @@ def _json_metadata(text: str, expected_kind: str) -> dict[str, Any]:
     return {"format": "JSON", "row_count": len(payload), "column_count": width}
 
 
-def _sequence_metadata(content: bytes, suffix: str, cancelled: threading.Event,
-                       deadline: float) -> dict[str, Any]:
+def _sequence_metadata(content: bytes, suffix: str, cancelled: threading.Event) -> dict[str, Any]:
     """Validate sequence syntax, not biological claims or measured quality."""
     try:
         text = content.decode("ascii")
@@ -287,7 +305,7 @@ def _sequence_metadata(content: bytes, suffix: str, cancelled: threading.Event,
     stream = io.StringIO(text)
     if suffix in {".fastq", ".fq"}:
         while header := stream.readline():
-            _check_cancelled(cancelled, deadline)
+            _check_cancelled(cancelled)
             sequence, separator, quality = (stream.readline().rstrip("\r\n") for _ in range(3))
             header = header.rstrip("\r\n")
             if (not header.startswith("@") or not header[1:].strip()
@@ -302,7 +320,7 @@ def _sequence_metadata(content: bytes, suffix: str, cancelled: threading.Event,
         file_format = "FASTQ"
     else:
         for line in stream:
-            _check_cancelled(cancelled, deadline)
+            _check_cancelled(cancelled)
             line = line.rstrip("\r\n")
             if line.startswith(">"):
                 if not line[1:].strip() or (records and not current_length):
@@ -323,11 +341,159 @@ def _sequence_metadata(content: bytes, suffix: str, cancelled: threading.Event,
             "validation_scope": "format_only"}
 
 
-def _validate_content(content: bytes, suffix: str, kind: str, cancelled: threading.Event,
-                      deadline: float) -> dict[str, Any]:
-    _check_cancelled(cancelled, deadline)
+def _markdown_row(line: str) -> list[str]:
+    """Split GFM pipe cells, respecting escaped delimiters (also in code spans).
+
+    This is a bounded table-structure check, not a Markdown renderer. Code
+    fences and indented code are handled by the caller. No cell content leaves
+    the sandbox. A line without a delimiter cannot establish a pipe table.
+    """
+    text = line.strip()
+    cells, start, escaped = [], 0, False
+    for index, char in enumerate(text):
+        if char == "|" and not escaped:
+            cells.append(text[start:index].strip())
+            start = index + 1
+        escaped = not escaped if char == "\\" else False
+    if not cells:
+        return []
+    cells.append(text[start:].strip())
+    if text.startswith("|"):
+        cells.pop(0)
+    if not cells[-1] and text.endswith("|"):
+        cells.pop()
+    return cells
+
+
+def _markdown_metadata(text: str, cancelled: threading.Event) -> dict[str, Any]:
+    """Recognize complete pipe tables without interpreting prose as a table.
+
+    Ragged rows render with silently dropped/added cells in many Markdown
+    clients. Preserve the report as readable text, but never advertise it as
+    a validated table if any recognized table is inconsistent. Explicit table
+    validation rejects it with a safe structural diagnostic below.
+    """
+    tables, failures = [], []
+    previous = None
+    active = None
+    fence = None
+    total_cells = 0
+    for number, line in enumerate(text.splitlines(), 1):
+        _check_cancelled(cancelled)
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if fence:
+            if match and match[1][0] == fence[0] and len(match[1]) >= fence[1] and not match[2].strip():
+                fence = None
+            previous, active = None, None
+            continue
+        if match:
+            fence = (match[1][0], len(match[1]))
+            previous, active = None, None
+            continue
+        if line.startswith(("    ", "\t")):
+            previous, active = None, None
+            continue
+        cells = _markdown_row(line)
+        delimiter = bool(cells and all(re.fullmatch(r":?-+:?", value) for value in cells))
+        if delimiter and previous is not None and active is None:
+            columns = len(previous[1])
+            active = {"row_count": 1, "column_count": columns}
+            tables.append(active)
+            total_cells += columns
+            if len(cells) != columns:
+                failures.append({"row_number": number, "expected_columns": columns, "actual_columns": len(cells)})
+        elif active is not None:
+            if not cells:
+                active = None
+            else:
+                active["row_count"] += 1
+                total_cells += len(cells)
+                if len(cells) != active["column_count"]:
+                    failures.append({"row_number": number, "expected_columns": active["column_count"],
+                                     "actual_columns": len(cells)})
+        if (len(tables) > MAX_MARKDOWN_TABLES or total_cells > MAX_TABLE_CELLS
+                or any(t["row_count"] > MAX_TABLE_ROWS or t["column_count"] > MAX_TABLE_COLUMNS
+                       for t in tables[-1:])):
+            raise _InvalidArtifact("table_size_limit")
+        previous = (number, cells) if cells and not delimiter else None
+    # A header and separator alone do not demonstrate populated table content.
+    populated = [item for item in tables if item["row_count"] > 1]
+    return {"format": "MARKDOWN", "validation_level": "nonempty_text",
+            "table_validation": "inconsistent" if failures else "rectangular" if populated else "absent",
+            "table_count": len(populated), "tables": populated,
+            **({"table_diagnostics": failures[0]} if failures else {})}
+
+
+def _notebook_metadata(text: str, cancelled: threading.Event) -> dict[str, Any]:
+    """Validate nbformat 4 cell/output structure without repair or execution.
+
+    This intentionally reports notebook_structure, not full JSON-schema or
+    execution validation: arbitrary metadata and MIME payload semantics remain
+    outside the check. Version 4.4 remains valid without cell IDs; 4.5+ requires
+    valid, unique IDs. We never add IDs or erase outputs to make a file pass.
+    """
+    value = _strict_json(text)
+    def require(condition):
+        if not condition:
+            raise _InvalidArtifact("invalid_notebook")
+    def source(v):
+        return isinstance(v, str) or isinstance(v, list) and all(isinstance(s, str) for s in v)
+    def count(v):
+        return v is None or type(v) is int and v >= 0
+    require(isinstance(value, dict))
+    require(type(value.get("nbformat")) is int and value["nbformat"] == 4
+            and type(value.get("nbformat_minor")) is int and value["nbformat_minor"] >= 0
+            and isinstance(value.get("metadata"), dict) and isinstance(value.get("cells"), list))
+    require(len(value["cells"]) <= MAX_TABLE_CELLS)
+    ids, code_cells, executed_cells, output_count = set(), 0, 0, 0
+    for cell in value["cells"]:
+        _check_cancelled(cancelled)
+        require(isinstance(cell, dict) and isinstance(cell.get("cell_type"), str)
+                and cell["cell_type"] in {"markdown", "raw", "code"}
+                and isinstance(cell.get("metadata"), dict) and source(cell.get("source")))
+        if value["nbformat_minor"] >= 5 or "id" in cell:
+            identity = cell.get("id")
+            require(isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", identity)
+                    and identity not in ids)
+            ids.add(identity)
+        if "attachments" in cell:
+            require(cell["cell_type"] in {"markdown", "raw"} and isinstance(cell["attachments"], dict)
+                    and all(isinstance(bundle, dict) for bundle in cell["attachments"].values()))
+        if cell["cell_type"] != "code":
+            require("outputs" not in cell and "execution_count" not in cell)
+            continue
+        code_cells += 1
+        require("execution_count" in cell and count(cell["execution_count"]) and isinstance(cell.get("outputs"), list))
+        executed_cells += cell["execution_count"] is not None
+        output_count += len(cell["outputs"])
+        require(output_count <= MAX_TABLE_CELLS)
+        for output in cell["outputs"]:
+            _check_cancelled(cancelled)
+            require(isinstance(output, dict))
+            kind = output.get("output_type")
+            require(isinstance(kind, str))
+            if kind == "stream":
+                require(isinstance(output.get("name"), str) and output["name"] in {"stdout", "stderr"}
+                        and source(output.get("text")))
+            elif kind == "error":
+                require(isinstance(output.get("ename"), str) and isinstance(output.get("evalue"), str)
+                        and isinstance(output.get("traceback"), list)
+                        and all(isinstance(s, str) for s in output["traceback"]))
+            elif kind in {"display_data", "execute_result"}:
+                require(isinstance(output.get("data"), dict) and isinstance(output.get("metadata"), dict))
+                if kind == "execute_result":
+                    require("execution_count" in output and count(output["execution_count"]))
+            else:
+                require(False)
+    return {"format": "IPYNB", "validation_level": "notebook_structure", "nbformat": 4,
+            "nbformat_minor": value["nbformat_minor"], "cell_count": len(value["cells"]),
+            "code_cell_count": code_cells, "executed_cell_count": executed_cells, "output_count": output_count}
+
+
+def _validate_content(content: bytes, suffix: str, kind: str, cancelled: threading.Event) -> dict[str, Any]:
+    _check_cancelled(cancelled)
     if kind == "data" and suffix in SEQUENCE_SUFFIXES:
-        return _sequence_metadata(content, suffix, cancelled, deadline)
+        return _sequence_metadata(content, suffix, cancelled)
     if kind == "data" and suffix == ".zip":
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             entries = archive.infolist()
@@ -343,54 +509,81 @@ def _validate_content(content: bytes, suffix: str, kind: str, cancelled: threadi
                     raise _InvalidArtifact("invalid_content")
                 with archive.open(entry) as stream:
                     while block := stream.read(READ_CHUNK_BYTES):
-                        _check_cancelled(cancelled, deadline)
+                        _check_cancelled(cancelled)
                         total += len(block)
                         if total > MAX_ARCHIVE_BYTES:
                             raise _InvalidArtifact("archive_size_limit")
             return {"format": "ZIP", "archive_entries": len(entries), "archive_bytes": total}
+    if suffix in VECTOR_IMAGE_SUFFIXES and kind == "image":
+        from app.services.svg_validation import InvalidSvg, svg_metadata
+        try:
+            return svg_metadata(content, max_pixels=MAX_IMAGE_PIXELS,
+                                check=lambda: _check_cancelled(cancelled))
+        except InvalidSvg as error:
+            raise _InvalidArtifact(error.reason, error.diagnostics) from None
     if kind == "image":
-        return _image_metadata(content, suffix, cancelled, deadline)
+        return _image_metadata(content, suffix, cancelled)
     if suffix == ".xlsx":
-        return _xlsx_metadata(content, cancelled, deadline)
+        return _xlsx_metadata(content, cancelled)
     text = _text(content)
     if suffix == ".json":
         return _json_metadata(text, kind)
+    if suffix in {".md", ".markdown"}:
+        metadata = _markdown_metadata(text, cancelled)
+        if kind == "table":
+            if metadata["table_validation"] == "inconsistent":
+                raise _InvalidArtifact("inconsistent_table_width", metadata["table_diagnostics"])
+            if metadata["table_validation"] != "rectangular":
+                raise _InvalidArtifact("empty_table")
+        return metadata
     if kind == "table":
         rows = csv.reader(io.StringIO(text, newline=""), delimiter="\t" if suffix == ".tsv" else ",", strict=True)
         try:
-            return {"format": suffix[1:].upper(), **_table_metadata(rows, cancelled, deadline)}
+            return {"format": suffix[1:].upper(), **_table_metadata(rows, cancelled)}
         except csv.Error:
             raise _InvalidArtifact("invalid_csv_syntax", {"line_number": rows.line_num}) from None
     if kind == "code":
         if suffix == ".py":
             ast.parse(text)  # Parse only: never compile or execute user code.
         elif suffix == ".ipynb":
-            payload = json.loads(text)
-            if not isinstance(payload, dict) or not isinstance(payload.get("cells"), list):
-                raise _InvalidArtifact("invalid_notebook")
+            return _notebook_metadata(text, cancelled)
         return {"format": suffix[1:].upper(), "validation_level": "syntax" if suffix == ".py" else "nonempty_text"}
     return {"format": suffix[1:].upper(), "validation_level": "nonempty_text"}
 
 
 def validate_artifacts(items: list[dict[str, str]], *, root: Path = ARTIFACT_ROOT,
-                       cancelled: threading.Event | None = None, deadline: float | None = None) -> dict:
-    """Return one receipt per requested file; never return file contents/errors."""
+                       cancelled: threading.Event | None = None,
+                       purpose: str = "delivery") -> dict:
+    """Return scoped receipts, never file bodies or unsafe parser errors.
+
+    Delivery accepts any regular readable output, including empty files and
+    formats that cannot be previewed. Content inspection is opt-in and cannot
+    substitute for the separate safe-preview pipeline.
+    """
     if not items or len(items) > MAX_ITEMS:
         raise ValueError("invalid_item_count")
+    if purpose not in {"delivery", "content"}:
+        raise ValueError("invalid_validation_purpose")
+    delivery = purpose == "delivery"
     cancelled = cancelled or threading.Event()
-    deadline = time.monotonic() + BATCH_TIMEOUT_SECONDS if deadline is None else deadline
     files = []
-    byte_budget = [MAX_BATCH_BYTES]
+    # Delivery hashing has bounded memory and reads at most the initial size
+    # plus one byte. The parser's small-file budget must not prevent delivery
+    # of an otherwise readable large result; cancellation remains cooperative.
+    byte_budget = None if delivery else [MAX_BATCH_BYTES]
     for item in items:
         path, expected_kind = item["path"], item["kind"]
-        kind = _classify(path, expected_kind)
+        kind = expected_kind if delivery else _classify(path, expected_kind)
         integrity_only = kind is None
         if integrity_only:
             kind = expected_kind
         receipt = {"path": path, "expected_kind": expected_kind, "kind": kind, "valid": False,
-                   "reason": "invalid_content", "sha256": None, "size": None, "metadata": {}, "diagnostics": {}}
+                   "reason": "unavailable_or_unsafe_path" if delivery else "invalid_content",
+                   "sha256": None, "size": None, "metadata": {}, "diagnostics": {}, "purpose": purpose,
+                   "proof": {"scope": "file_integrity" if delivery else "content_inspection", "checks": [],
+                             "content_validation": "not_performed" if delivery else "not_certified"}}
         try:
-            _check_cancelled(cancelled, deadline)
+            _check_cancelled(cancelled)
             if expected_kind not in KINDS:
                 raise _InvalidArtifact("unsupported_kind")
             if kind is None:
@@ -398,22 +591,36 @@ def validate_artifacts(items: list[dict[str, str]], *, root: Path = ARTIFACT_ROO
             if kind != expected_kind:
                 raise _InvalidArtifact("kind_mismatch")
             try:
-                content = _read_stable_output(path, root, cancelled, deadline, byte_budget, allow_empty=integrity_only)
+                content = _read_stable_output(path, root, cancelled, byte_budget,
+                                              allow_empty=delivery or integrity_only, digest_only=delivery)
             except MissingArtifact:
                 raise _InvalidArtifact("missing_artifact") from None
+            except IsADirectoryError:
+                raise _InvalidArtifact("not_regular_file" if delivery else "unavailable_or_unsafe_path") from None
             except (OSError, ValueError):
                 # ELOOP/ENOTDIR and path validation failures are unsafe paths,
                 # not malformed file contents eligible for local repair.
                 # Keep this catch around reading only: image parsers may also
                 # raise OSError when genuine output bytes are malformed.
                 raise _InvalidArtifact("unavailable_or_unsafe_path") from None
+            receipt["proof"]["checks"] = ["output_path", "regular_file", "readable", "size_match",
+                                           "stable_snapshot", "sha256"]
+            if delivery:
+                _check_cancelled(cancelled)
+                receipt["size"], receipt["sha256"] = content
+                receipt.update(valid=True, reason="delivery_ready", metadata={
+                    "validation_scope": "file_integrity", "content_validation": "not_performed",
+                })
+                files.append(receipt)
+                continue
             receipt["size"] = len(content)
             receipt["sha256"] = hashlib.sha256(content).hexdigest()
             metadata = ({"validation_scope": "file_integrity", "content_validation": "unsupported"}
                         if integrity_only else
-                        _validate_content(content, Path(path).suffix.casefold(), kind, cancelled, deadline))
-            _check_cancelled(cancelled, deadline)
+                        _validate_content(content, Path(path).suffix.casefold(), kind, cancelled))
+            _check_cancelled(cancelled)
             receipt.update(valid=True, reason="validated", metadata=metadata)
+            receipt["proof"]["content_validation"] = "unsupported" if integrity_only else "passed"
         except _InvalidArtifact as exc:
             receipt["reason"] = exc.reason
             receipt["diagnostics"] = exc.diagnostics
@@ -432,6 +639,6 @@ def validate_artifacts(items: list[dict[str, str]], *, root: Path = ARTIFACT_ROO
         except Exception:
             # Parser/OS messages may contain paths, values or excerpts. The wire
             # response deliberately contains fixed reason codes only.
-            receipt["reason"] = "invalid_content"
+            receipt["reason"] = "unavailable_or_unsafe_path" if delivery else "invalid_content"
         files.append(receipt)
-    return {"version": 1, "files": files}
+    return {"version": 1, "purpose": purpose, "files": files}

@@ -100,7 +100,7 @@ def decode_fixtures(chunks):
 
 def fixtures():
     client, container = docker.from_env(timeout=30), None
-    name = "ai-dataseek-records-fixtures-" + uuid.uuid4().hex
+    name = "datalab-records-fixtures-" + uuid.uuid4().hex
     try:
         container = client.containers.create(image=get_settings().sandbox_image, name=name,
             entrypoint=["/usr/bin/timeout"], command=["--signal=KILL", "20s", "/app/.venv/bin/python", "-c", NATIVE_CODE],
@@ -109,7 +109,7 @@ def fixtures():
             nano_cpus=500_000_000, pids_limit=32,
             environment={"PYTHONDONTWRITEBYTECODE": "1", "FIXTURE_SPEC": json.dumps(FIXTURE_PATHS), "FIXTURE_VERSIONS": json.dumps(VERSIONS)},
             log_config={"type": "json-file", "config": {"max-size": "1m", "max-file": "1"}},
-            labels={"ai-dataseek.component": "visualization-http-fixture", "ai-dataseek.fixture-run": name})
+            labels={"datalab.component": "visualization-http-fixture", "datalab.fixture-run": name})
         container.reload(); config = container.attrs["HostConfig"]
         assert config["NetworkMode"] == "none" and config["ReadonlyRootfs"] is True
         assert container.attrs["Config"]["User"] == "65534:65534" and not container.attrs.get("Mounts")
@@ -124,7 +124,7 @@ def fixtures():
                     except docker.errors.NotFound: time.sleep(.25)
             if container is not None:
                 container.reload(); labels = container.attrs.get("Config", {}).get("Labels", {})
-                assert labels.get("ai-dataseek.component") == "visualization-http-fixture" and labels.get("ai-dataseek.fixture-run") == name
+                assert labels.get("datalab.component") == "visualization-http-fixture" and labels.get("datalab.fixture-run") == name
                 _remove_worker(container)
         finally: client.close()
 
@@ -190,8 +190,8 @@ async def run_acceptance(database, client, data, versions, user_id, run):
 
     try:
         catalog = await request("GET", "/api/v1/visualizations")
-        assert catalog["engine"] == "cordis" and len(catalog["plugins"]) == 83
-        by_id = {p["id"]: p for p in catalog["plugins"]}; assert len(by_id) == 83
+        assert catalog["engine"] == "cordis" and len(catalog["plugins"]) == 84
+        by_id = {p["id"]: p for p in catalog["plugins"]}; assert len(by_id) == 84
         for plugin, (reader, adapter) in PLUGINS.items():
             p = by_id[plugin]; assert p["reader"] == reader and p["adapter"] == adapter and p["contract_version"] == 2
             assert type(p["enabled"]) is bool and p["capabilities"]["operations"] == ["preview"] and p["capabilities"]["shared"] is False

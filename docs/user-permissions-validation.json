@@ -1,0 +1,162 @@
+{
+  "title": "DataLab 用户、权限与数据归属验收",
+  "date": "2026-10-21",
+  "branch": "datalab",
+  "status": "completed_and_deployed",
+  "scope": [
+    "保留管理员审核注册流程，补齐用户搜索、分页、状态及角色管理界面和接口",
+    "个人姓名、密码管理；停用、改密、审核及角色变更撤销旧访问和刷新令牌",
+    "账号管理与审核共用 Redis 锁；MongoDB 原子版本更新；保护最后一名可用管理员",
+    "防止偏好、额度和技能清理覆盖并发更新的密码、角色或账号状态",
+    "登录与注册限流；重置码加密摘要、原子单次消费、尝试上限和发送冷却",
+    "服务端检查资料库、数据集、上传文件、下载任务、会话与成果的用户权限",
+    "管理员无默认私有资料访问权；公开分享及明确协作关系保留原有授权语义",
+    "切换账号清理私人缓存，阻止旧身份的 HTTP、刷新和 SSE 响应进入新身份"
+  ],
+  "entry_points": {
+    "user_management": "/chat/admin?tab=accounts",
+    "account_settings": "/account → 账号与设置 → 账号与安全",
+    "list_users": "GET /api/v1/auth/users",
+    "update_user": "PATCH /api/v1/auth/user/{id}"
+  },
+  "checks": {
+    "frontend_type_check": "passed",
+    "frontend_build": "passed; existing large chunk and third-party eval warnings",
+    "frontend_unit": {
+      "passed": 3081
+    },
+    "backend_full": {
+      "passed": 10261,
+      "skipped": 52,
+      "subtests_passed": 190
+    },
+    "sandbox_full": {
+      "passed": 6164,
+      "skipped": 84,
+      "subtests_passed": 563
+    },
+    "compose_config": "passed",
+    "real_mongo_redis_accounts_and_library": {
+      "passed": 22,
+      "isolated_disposable_databases": true
+    },
+    "real_redis_reset_codes": {
+      "passed": 9
+    },
+    "real_redis_rate_limit": {
+      "passed": 6
+    },
+    "user_management_browsers": {
+      "chromium": "passed",
+      "webkit": "passed",
+      "checks_per_engine": 5,
+      "method": "Built application with isolated mocked HTTP accounts; approval, status, roles, filters, mobile layout, profile, password logout and non-admin route protection"
+    },
+    "full_browser_matrix": {
+      "passed": 16,
+      "total": 16,
+      "engines": [
+        "chromium",
+        "webkit"
+      ],
+      "note": "Initial 14/16; corrected only legacy synthetic login fixture, then both affected recovery scenarios passed with unchanged assertions."
+    }
+  },
+  "compatibility_and_limits": [
+    "旧账号和旧 JWT 缺失 auth_version 时按 0 处理；首次安全变更后旧令牌失效",
+    "不批量转移无明确用户归属的历史数据，不将 anonymous 资料自动分配给管理员",
+    "数据集保持只读挂载及 DATASET_HOST_PATH_ALLOWLIST 校验；浏览器不接收真实宿主路径",
+    "既有文件签名链接保持原到期语义，通常约 30 分钟；不承诺已签发链接即时撤销",
+    "实际 SMTP 投递未向真实收件人发送测试邮件；验证码逻辑及 SMTP 调用边界已测试",
+    "全量测试中的可选外部服务和第三方格式库用例有跳过；新增账号、资料库和 Redis 安全逻辑另用真实隔离服务验证"
+  ],
+  "deployment": {
+    "status": "deployed_and_verified",
+    "url": "http://localhost:10030",
+    "services": [
+      "backend",
+      "frontend"
+    ],
+    "entrypoint": "./run.sh production",
+    "docker_free_before_build": "2.5 GiB",
+    "sandbox_and_jupyter": "reuse_existing_images",
+    "git_commit_or_push": false,
+    "release": "user-permissions-20261021",
+    "http_checks": [
+      {
+        "path": "/",
+        "status": 200
+      },
+      {
+        "path": "/login",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/config/client-contract",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/config/frontend",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/auth/status",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/auth/me",
+        "status": 401
+      },
+      {
+        "path": "/api/v1/auth/users?limit=1",
+        "status": 401
+      },
+      {
+        "path": "/api/v1/auth/registrations?limit=1",
+        "status": 401
+      },
+      {
+        "path": "/api/v1/admin/tasks?limit=1",
+        "status": 401
+      },
+      {
+        "path": "/api/v1/auth/me",
+        "status": 401
+      },
+      {
+        "path": "/release.json",
+        "status": 200
+      }
+    ],
+    "runtime_images": {
+      "frontend": {
+        "reference": "datalab-frontend:user-permissions-20261021",
+        "id": "sha256:5c5e3516111e9c4ba3283fef092003a8a7503d634634c36812702bf86b9ffb55"
+      },
+      "backend": {
+        "reference": "datalab-backend:user-permissions-20261021",
+        "id": "sha256:bcf244a626f4c0f14afb6c40141cfb2fd27c560c1ddb56fc65a5a684fdb73033"
+      },
+      "sandbox": {
+        "reference": "datalab-sandbox:v2-completion-20261021",
+        "id": "sha256:3bfa64052012edafda6e1ff74623d0534462579af34a49e41d9bfdd354e8c914"
+      },
+      "jupyter": {
+        "reference": "datalab-jupyter:v2-completion-20261021",
+        "id": "sha256:cc7f57b9e784adcf3f76a8d782d5bc5f5e4011820ef0f6eec5e0cb5ef4b146bf"
+      }
+    },
+    "frontend_build_id": "cb77145059c7c021e3708ccc2a4375bd669b31ddb97a9df8e45726d71c3ac887",
+    "backend_source_files_verified": 423,
+    "unchanged_other_containers": 28,
+    "persistent_mounts_unchanged": true,
+    "production_accounts_modified_by_verification": false,
+    "reclaimed_unused_build_cache": "2.256 GB; no image or data volume deletion",
+    "temporary_test_containers": "removed"
+  },
+  "automation": {
+    "id": "datalab",
+    "status": "PAUSED",
+    "reason": "本轮开发、检查和部署验收已完成"
+  }
+}

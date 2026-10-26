@@ -1,4 +1,5 @@
 /** Inert range-array schema and exact request binding, independent of renderer. */
+export const ARRAY_PHYSICAL_SEMANTICS = 'physical values; scalar CF scale/add_offset after finite fill masking';
 export const ARRAY_VALUE_SEMANTICS = 'raw storage values; no CF scale/add_offset or finite fill masking';
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, fields: string[]) => Object.keys(v).length === fields.length && fields.every(k => Object.prototype.hasOwnProperty.call(v, k));
@@ -10,21 +11,21 @@ const product = (values: number[]) => values.reduce((a, b) => a * b, 1);
 const reasons = new Set(['', 'link', 'alias', 'depth', 'type', 'shape', 'storage', 'filter', 'chunk']);
 function fail(): never { throw new Error('数组窗口的结构、选择或读取预算无效。'); }
 export interface Slice { start: number; stop: number; step: number }
-export interface ArraySelection { variable: string; selection: (number | Slice)[]; decode: 'raw' }
+export interface ArraySelection { variable: string; selection: (number | Slice)[]; decode: 'raw' | 'physical' }
 export interface ArrayVariable { id: string; label: string; shape: number[]; dtype: string; chunks: number[] | null; selectable: boolean; reason: string }
 export interface ArrayTreeNode { path: string; node_type: 'array' | 'object'; attributes: { label: string; depth: number; reason: string } }
 export interface ArrayWindowData {
   variables: ArrayVariable[]; tree: ArrayTreeNode[]; selected: ArraySelection | null;
   array: { shape: number[]; dimensions: string[]; values: (number | null)[] } | null;
   axes: { dimension: number; indices: number[] }[]; sourceBytes: number; readBytes: number; reads: number;
-  attributes: Record<string, string | number>; truncated: boolean;
+  attributes: Record<string, string | number>; truncated: boolean; units: string; calendar: string; valueSemantics: 'raw'|'physical'; missingValuePolicy: string;
 }
 export function arraySelectionsEqual(left: ArraySelection, right: ArraySelection): boolean {
   const parts = (value: ArraySelection) => [value.variable, value.decode, value.selection.map(v => typeof v === 'number' ? v : [v.start, v.stop, v.step])];
   return JSON.stringify(parts(left)) === JSON.stringify(parts(right));
 }
 export function validateArraySelection(kind: 'series' | 'image', input: unknown, variable?: ArrayVariable): ArraySelection {
-  if (!record(input) || !keys(input, ['variable', 'selection', 'decode']) || !id(input.variable) || input.decode !== 'raw'
+  if (!record(input) || !keys(input, ['variable', 'selection', 'decode']) || !id(input.variable) || !['raw','physical'].includes(String(input.decode))
     || !Array.isArray(input.selection) || !input.selection.length || input.selection.length > 8
     || variable && (variable.id !== input.variable || !variable.selectable || variable.shape.length !== input.selection.length)) fail();
   let slices = 0, elements = 1;
@@ -43,17 +44,19 @@ export function parseArrayWindow(kind: 'tree' | 'series' | 'image', payload: Rec
   const expectedKeys = ['media_type', 'choices', 'selected', 'view_kind', ...(kind === 'tree' ? ['tree'] : ['array', 'axes'])];
   if (!keys(payload, expectedKeys) || payload.view_kind !== kind || payload.media_type !== 'application/json'
     || !record(payload.choices) || !keys(payload.choices, ['variables']) || !Array.isArray(payload.choices.variables) || payload.choices.variables.length > 128
-    || !keys(metadata, ['format', 'container', 'input_mode', 'value_semantics', 'source_bytes', 'read_bytes', 'read_requests', 'chunks_touched', 'decoded_chunk_bytes', 'catalog_truncated', 'attributes', 'nonfinite_values', 'coordinates', 'limits'])
+    || !keys(metadata, ['format', 'container', 'input_mode', 'value_semantics', 'source_bytes', 'read_bytes', 'read_requests', 'chunks_touched', 'decoded_chunk_bytes', 'catalog_truncated', 'attributes', 'nonfinite_values', 'coordinates', 'limits', 'units', 'calendar', 'missing_value_policy', 'coordinate_semantics'])
     || !['h5', 'hdf5', 'hdf', 'nc', 'nc4', 'netcdf', 'mat'].includes(metadata.format as string)
-    || metadata.container !== 'HDF5' || metadata.input_mode !== 'window' || metadata.value_semantics !== ARRAY_VALUE_SEMANTICS
+    || metadata.container !== 'HDF5' || metadata.input_mode !== 'window' || ![ARRAY_VALUE_SEMANTICS,ARRAY_PHYSICAL_SEMANTICS].includes(String(metadata.value_semantics))
+    || !label(metadata.units) || !label(metadata.calendar) || metadata.coordinate_semantics!=='zero-based dimension indices'
+    || metadata.missing_value_policy!==(metadata.value_semantics===ARRAY_PHYSICAL_SEMANTICS?'finite fill values masked before scale/add_offset; non-finite values are null':'non-finite values are null; finite fill values retained')
     || !int(metadata.source_bytes, 8 * 1024 ** 3, 256) || !int(metadata.read_bytes, 8 * 1024 ** 2, 1) || !int(metadata.read_requests, 128, 1)
     || metadata.read_bytes < metadata.read_requests || !int(metadata.chunks_touched, 128) || !int(metadata.decoded_chunk_bytes, 16 * 1024 ** 2)
     || !int(metadata.nonfinite_values, 16384) || typeof metadata.catalog_truncated !== 'boolean'
     || metadata.coordinates !== 'zero-based dimension indices; not geospatial coordinates'
     || !record(metadata.limits) || !keys(metadata.limits, ['max_elements', 'max_chunk_bytes', 'max_decoded_bytes', 'max_nodes'])
     || metadata.limits.max_elements !== 16384 || metadata.limits.max_chunk_bytes !== 4194304 || metadata.limits.max_decoded_bytes !== 16777216 || metadata.limits.max_nodes !== 128
-    || !record(metadata.attributes) || Object.keys(metadata.attributes).some(k => !['units', 'scale_factor', 'add_offset', '_FillValue', 'missing_value'].includes(k))
-    || Object.entries(metadata.attributes).some(([k, v]) => !(k === 'units' ? label(v) : finite(v)))) fail();
+    || !record(metadata.attributes) || Object.keys(metadata.attributes).some(k => !['units', 'calendar', 'scale_factor', 'add_offset', '_FillValue', 'missing_value'].includes(k))
+    || Object.entries(metadata.attributes).some(([k, v]) => !(['units','calendar'].includes(k) ? label(v) : finite(v)))) fail();
   const variables: ArrayVariable[] = payload.choices.variables.map(v => {
     if (!record(v) || !keys(v, ['id', 'label', 'shape', 'dtype', 'chunks', 'selectable', 'reason']) || !id(v.id) || !label(v.label)
       || typeof v.dtype !== 'string' || (v.dtype !== 'unsupported' && !/^[<>=|][iufb][1248]$/.test(v.dtype))
@@ -81,6 +84,7 @@ export function parseArrayWindow(kind: 'tree' | 'series' | 'image', payload: Rec
     if (arrays.size !== variables.length) fail();
   } else {
     selected = validateArraySelection(kind, payload.selected);
+    if(metadata.value_semantics!==(selected.decode==='physical'?ARRAY_PHYSICAL_SEMANTICS:ARRAY_VALUE_SEMANTICS))fail();
     const variable = variables.find(v => v.id === selected!.variable);
     if (!variable) fail();
     selected = validateArraySelection(kind, selected, variable);
@@ -97,9 +101,9 @@ export function parseArrayWindow(kind: 'tree' | 'series' | 'image', payload: Rec
       || JSON.stringify(payload.array.shape) !== JSON.stringify(axes.map(a => a.indices.length))
       || JSON.stringify(payload.array.dimensions) !== JSON.stringify(axes.map(a => `index_${a.dimension}`))
       || !Array.isArray(payload.array.values) || payload.array.values.length !== product(axes.map(a => a.indices.length))
-      || payload.array.values.some(v => v !== null && (!finite(v) || /[iub]/.test(variable.dtype) && !Number.isSafeInteger(v) || variable.dtype[1] === 'u' && v < 0 || variable.dtype[1] === 'b' && v !== 0 && v !== 1)) || payload.array.values.filter(v => v === null).length !== metadata.nonfinite_values) fail();
+      || payload.array.values.some(v => v !== null && (!finite(v) || selected!.decode==='raw' && (/[iub]/.test(variable.dtype) && !Number.isSafeInteger(v) || variable.dtype[1] === 'u' && v < 0 || variable.dtype[1] === 'b' && v !== 0 && v !== 1))) || payload.array.values.filter(v => v === null).length !== metadata.nonfinite_values) fail();
     array = payload.array as unknown as NonNullable<ArrayWindowData['array']>;
   }
   return { variables, selected, array, axes, tree, sourceBytes: metadata.source_bytes, readBytes: metadata.read_bytes, reads: metadata.read_requests,
-    attributes: metadata.attributes as Record<string, string | number>, truncated: metadata.catalog_truncated };
+    attributes: metadata.attributes as Record<string, string | number>, truncated: metadata.catalog_truncated, units: metadata.units, calendar: metadata.calendar, valueSemantics: metadata.value_semantics===ARRAY_PHYSICAL_SEMANTICS?'physical':'raw', missingValuePolicy: String(metadata.missing_value_policy) };
 }

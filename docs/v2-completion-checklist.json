@@ -1,0 +1,327 @@
+{
+  "project": "DataLab",
+  "date": "2026-10-21",
+  "branch": "datalab",
+  "source_commit": "1e3963c84ed376a03941df400a66f4018580f9bf",
+  "status": "implemented_deployed_and_verified",
+  "scope": "此前V2审计的8个缺口、延期功能及配套验收工具；保留DataLab数据分析范围和已有数据权限边界。",
+  "items": [
+    {
+      "id": "F1",
+      "item": "首页首轮请求整体冻结",
+      "implementation": "complete",
+      "verification": "实际HomePage异步提交竞态回归",
+      "evidence": [
+        "frontend/src/pages/HomePage.vue",
+        "frontend/tests/chatRequestLifecycle.test.mjs",
+        "frontend/tests/analysisHome.test.mjs"
+      ]
+    },
+    {
+      "id": "F2",
+      "item": "上传草稿归属、卸载停止及分片清理",
+      "implementation": "complete",
+      "verification": "真实上传组件换草稿及卸载回归",
+      "evidence": [
+        "frontend/src/components/ChatBoxFiles.vue",
+        "frontend/tests/chatBoxUploads.test.mjs"
+      ]
+    },
+    {
+      "id": "F3",
+      "item": "Agent设置保存后刷新及目录竞态",
+      "implementation": "complete",
+      "verification": "真实设置页保存与旧请求并发回归",
+      "evidence": [
+        "frontend/src/components/settings/AgentProfileRuntimeSettings.vue",
+        "frontend/tests/agentProfileSaveRace.test.mjs"
+      ]
+    },
+    {
+      "id": "F4",
+      "item": "阶段部分完成、停止、待确认状态",
+      "implementation": "complete",
+      "verification": "Chat/Share接线及阶段投影回归，保留DataRun总状态",
+      "evidence": [
+        "frontend/src/components/PlanPanel.vue",
+        "frontend/tests/planPresentation.test.mjs",
+        "frontend/tests/browser/followup-outcome-smoke.mjs"
+      ]
+    },
+    {
+      "id": "F5",
+      "item": "成功主成果的非阻断附件问题提示",
+      "implementation": "complete",
+      "verification": "ChatMessage父组件渲染回归",
+      "evidence": [
+        "frontend/src/components/ChatMessage.vue",
+        "frontend/tests/analysisArtifactIssues.test.mjs",
+        "frontend/tests/browser/followup-outcome-smoke.mjs"
+      ]
+    },
+    {
+      "id": "F6",
+      "item": "完整文件修订历史及逐条工具记录入口",
+      "implementation": "complete",
+      "verification": "修订展开、状态、时间和原始请求点击回归",
+      "evidence": [
+        "frontend/src/components/ChatMessage.vue",
+        "frontend/tests/toolTimeline.test.mjs",
+        "frontend/tests/browser/followup-outcome-smoke.mjs"
+      ]
+    },
+    {
+      "id": "B1",
+      "item": "Wait/Error及总结终态的阶段正文和有效成果交付",
+      "implementation": "complete",
+      "verification": "真实_run_flow多阶段有效/失效附件与终态回归",
+      "evidence": [
+        "backend/app/domain/services/agent_task_runner.py",
+        "backend/tests/test_analysis_staged_delivery.py"
+      ]
+    },
+    {
+      "id": "B2",
+      "item": "OpenData worker抗重复取消关闭链",
+      "implementation": "complete",
+      "verification": "实际lifespan重复取消，后续资源清理完整",
+      "evidence": [
+        "backend/app/main.py",
+        "backend/tests/test_application_shutdown.py",
+        "backend/tests/test_shutdown_settlement.py"
+      ]
+    },
+    {
+      "id": "C1",
+      "item": "实际分析对话接线及当前轮科学预览入口",
+      "implementation": "complete",
+      "verification": "生产ChatPage生命周期与OpenData混排浏览器回归",
+      "evidence": [
+        "frontend/src/components/AnalysisConversation.vue",
+        "frontend/src/pages/ChatPage.vue",
+        "frontend/tests/browser/analysis-lifecycle-smoke.mjs"
+      ]
+    },
+    {
+      "id": "C2",
+      "item": "Cesium离线底图与故障降级",
+      "implementation": "complete",
+      "verification": "17项定向回归；42张现有瓦片复用",
+      "evidence": [
+        "frontend/src/visualizations/extended/domains/CesiumPreview.vue",
+        "frontend/tests/cesiumBasemap.test.mjs",
+        "frontend/tests/cesiumOfflineAssets.test.mjs"
+      ]
+    },
+    {
+      "id": "C3",
+      "item": "Jupyter命名卷及宿主归档卷持久化",
+      "implementation": "complete",
+      "verification": "两种模式真实Docker写入、闲置回收、重开保留、跨用户拒绝；临时资源已清理",
+      "evidence": [
+        "backend/app/application/services/jupyter_service.py",
+        "backend/tests/test_jupyter_workspace_storage.py",
+        "backend/tests/test_jupyter_integration.py"
+      ],
+      "operational_note": "默认继续命名卷；Colima宿主归档目录需位于其共享范围。旧会话卷保持兼容。"
+    },
+    {
+      "id": "C4",
+      "item": "受控发布、固定镜像与数据卷、锁及停服归档",
+      "implementation": "complete",
+      "verification": "59项测试、真实私有快照、独立容器归档烟测和实际受控发布通过；原数据卷保留",
+      "evidence": [
+        "run.sh",
+        "deploy/production/deploy.py",
+        "deploy/production/prepare.py",
+        "deploy/production/sandbox_archive.py"
+      ]
+    },
+    {
+      "id": "C5",
+      "item": "前端版本兼容清单、缓存与提示",
+      "implementation": "complete",
+      "verification": "实际生产镜像摘要与页面一致；线上清单/首页禁缓存、静态资产immutable、缺失资源404、API协议均通过",
+      "evidence": [
+        "frontend/release-manifest.ts",
+        "frontend/src/utils/installReleaseCompatibility.ts",
+        "frontend/nginx.conf",
+        "backend/tests/test_client_release_contract.py"
+      ]
+    },
+    {
+      "id": "Q1",
+      "item": "离线评测框架、题库和输入隔离",
+      "implementation": "complete",
+      "verification": "科学镜像81项通过，覆盖18来源36题oracle；真实Docker只读输入烟测通过",
+      "evidence": [
+        "benchmarks/dataseek/README.md",
+        "benchmarks/dataseek/tests/test_datalab_inputs.py"
+      ],
+      "not_run": "未运行付费模型36题质量对比，不能据此断言模型分析质量与V2相同。"
+    },
+    {
+      "id": "Q2",
+      "item": "可视化样例目录、生成脚本和HTTP门禁",
+      "implementation": "complete",
+      "verification": "63样例、84项插件矩阵；相关188项和28子测试通过",
+      "evidence": [
+        "backend/scripts/README.visualization-samples.md"
+      ],
+      "not_run": "完整84项真实文件HTTP预览需准备各公开来源文件及当前用户file_id绑定，尚未整套执行。"
+    },
+    {
+      "id": "Q3",
+      "item": "Chromium和WebKit完整浏览器门禁",
+      "implementation": "complete",
+      "verification": "两种浏览器各7场景，共14/14通过",
+      "evidence": [
+        "frontend/tests/browser/run-gate.mjs",
+        "frontend/package.json"
+      ],
+      "scenarios": [
+        "chat-layout",
+        "followup-outcome",
+        "task-status-focus",
+        "session-recovery",
+        "shell-console",
+        "analysis-lifecycle",
+        "open-data-chat"
+      ]
+    }
+  ],
+  "validation": {
+    "frontend": {
+      "unit_passed": 3059,
+      "unit_failed": 0,
+      "type_check": "passed",
+      "build": "passed",
+      "build_id": "528d600b90494c5eba5e52d5d29cef2ee764742f81510083b9a5674804e71ee7",
+      "chromium_webkit_scenarios_passed": 14,
+      "image_build_id": "fdeb19597e6082e9f0682a0136ffc6cb8ba789e7ee8d62b2318ba7efa79879f0",
+      "additional_connector_browser_smoke": "passed: 50 options, 49 official logos, dark background, mobile widths and focus"
+    },
+    "sandbox": {
+      "passed": 6164,
+      "skipped": 84,
+      "subtests_passed": 563,
+      "image_current_source_hash_matches": true,
+      "runtime_paths_verified": 258
+    },
+    "plugin_host": {
+      "passed": 84
+    },
+    "production_tools": {
+      "passed": 59,
+      "real_isolated_archive": "passed: tar content, SHA256, durable archive before stop, permissions, six rejection cases; temporary resources cleaned"
+    },
+    "jupyter_real_docker": {
+      "named_volume": "passed",
+      "host_backed_volume": "passed",
+      "idle_reopen_preserved": true,
+      "cross_user_rejected": true,
+      "temporary_resources_cleaned": true,
+      "platform": "Colima"
+    },
+    "regression_entrypoint": {
+      "path": "scripts/check-regressions.sh",
+      "container_mode": "disposable containers with isolated database endpoints and datalab-regression labels; no production Compose run",
+      "shell_syntax": "passed"
+    },
+    "compose_config": "passed",
+    "visualization_contract": {
+      "passed": true,
+      "adapters": 78
+    },
+    "persistence_contract": {
+      "ok": true,
+      "changes": []
+    },
+    "shared_source_task": {
+      "frozen": true,
+      "new_independent_sources": 32,
+      "new_connector_entries": 35,
+      "included_in_final_tests_and_build": true,
+      "evidence": "docs/open-data-batch30-validation.json",
+      "runtime_api_smoke": "passed: 49 catalog entries, 35 new entries visible; quoted caffeine search, validation, acquisition, personal-library save and 4002-byte SDF download matched the acquisition SHA256; temporary records and files cleaned"
+    },
+    "backend": {
+      "passed": 10210,
+      "skipped": 42,
+      "subtests_passed": 190,
+      "failed": 0,
+      "duration_seconds": 94.49,
+      "production_source_stable_during_tests": true
+    }
+  },
+  "deployment": {
+    "status": "deployed_and_verified",
+    "release": "v2-completion-20261021-r2",
+    "project": "datalab",
+    "services_updated": [
+      "backend",
+      "frontend"
+    ],
+    "url": "http://localhost:10030",
+    "images": {
+      "frontend": {
+        "reference": "datalab-frontend:v2-completion-20261021-r2",
+        "id": "sha256:05fbccb788fc22d74f4bf0dbc4b973af352fabbbef89a97699966511059ef5fa"
+      },
+      "backend": {
+        "reference": "datalab-backend:v2-completion-20261021-r2",
+        "id": "sha256:47c61683de0515558d52ba5a1321d636a35e7382e0e382b17b60ee290d3101ae"
+      },
+      "sandbox": {
+        "reference": "datalab-sandbox:v2-completion-20261021",
+        "id": "sha256:3bfa64052012edafda6e1ff74623d0534462579af34a49e41d9bfdd354e8c914"
+      },
+      "jupyter": {
+        "reference": "datalab-jupyter:v2-completion-20261021",
+        "id": "sha256:cc7f57b9e784adcf3f76a8d782d5bc5f5e4011820ef0f6eec5e0cb5ef4b146bf"
+      },
+      "mongodb": {
+        "reference": "datalab-mongodb:v2-completion-20261021-r2",
+        "id": "sha256:b6421fd6d1c5ded6377b397d8983e2f82e2100dc5123332dcfda2065a472be5b"
+      },
+      "redis": {
+        "reference": "datalab-redis:v2-completion-20261021-r2",
+        "id": "sha256:352c1fdadc91926edda08f45aeb3f27f37194c2f14101229c0523a11195c96e3"
+      },
+      "minio": {
+        "reference": "datalab-minio:v2-completion-20261021-r2",
+        "id": "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
+      }
+    },
+    "sandbox_and_jupyter_reused": true,
+    "checks": {
+      "status": "passed",
+      "build_id": "fdeb19597e6082e9f0682a0136ffc6cb8ba789e7ee8d62b2318ba7efa79879f0",
+      "frontend_image": "sha256:05fbccb788fc22d74f4bf0dbc4b973af352fabbbef89a97699966511059ef5fa",
+      "backend_image": "sha256:47c61683de0515558d52ba5a1321d636a35e7382e0e382b17b60ee290d3101ae",
+      "homepage_release_contract": "passed",
+      "index_and_manifest_no_store": true,
+      "hashed_asset_immutable": true,
+      "missing_asset_404": true,
+      "offline_cesium_tile": "passed",
+      "backend_source_files_matched": 601,
+      "backend_startup_tracebacks": 0,
+      "existing_backend_data_mounts_preserved": true,
+      "unaffected_containers_verified": 27,
+      "quoted_pubchem_real_api_download": "passed",
+      "test_data_cleanup_verified": true,
+      "active_release_blocks_ordinary_compose_mutation": true
+    },
+    "build_cache_cleanup": {
+      "reclaimed_gb": 5.31,
+      "docker_available_after_gib": 2.5,
+      "images_and_volumes_preserved": true,
+      "passes": 2
+    },
+    "initial_release": "v2-completion-20261021",
+    "final_patch_services": [
+      "backend"
+    ]
+  },
+  "git_commit_or_push": false
+}

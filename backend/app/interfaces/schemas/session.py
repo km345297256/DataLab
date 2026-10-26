@@ -1,8 +1,11 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional, List
+from typing import Any, Optional, List
 from app.interfaces.schemas.event import AgentSSEEvent
 from app.domain.models.session import SessionStatus
 from app.domain.models.event import MAX_EVENT_SEQUENCE
+from app.domain.models.input_admission import InputState
+from app.domain.models.open_data import MAX_SELECTED_DATA_SOURCES
+from app.application.services.visualization_selection import VisualizationViewContext
 
 
 class CreateSessionRequest(BaseModel):
@@ -26,12 +29,17 @@ class ChatRequest(BaseModel):
     timestamp: Optional[int] = None
     message: Optional[str] = None
     client_message_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    observe_client_message_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
     resume_from: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    clarification_id: Optional[str] = Field(default=None, min_length=1, max_length=128,
+                                           pattern=r"^[a-zA-Z0-9_-]+$")
     agent_profile_id: Optional[str] = None
     attachments: Optional[List[dict]] = None
+    input_file_ids: Optional[List[str]] = None
+    visualization_contexts: List[VisualizationViewContext] = Field(default_factory=list, max_length=4)
     skills: Optional[List[str]] = None
     mcp_servers: Optional[List[str]] = None
-    data_connectors: List[str] = Field(default_factory=list, max_length=16)
+    data_connectors: List[str] = Field(default_factory=list, max_length=MAX_SELECTED_DATA_SOURCES)
     dataset_ids: Optional[List[str]] = None
     event_id: Optional[str] = None
     event_seq: Optional[int] = Field(
@@ -43,18 +51,37 @@ class ChatRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_continuation(self):
+        if self.observe_client_message_id is not None:
+            if not self.observe_client_message_id.strip():
+                raise ValueError("An observation requires an input identity")
+            if (self.message or self.resume_from or self.clarification_id or self.client_message_id or self.agent_profile_id
+                    or self.attachments or self.skills or self.mcp_servers or self.data_connectors or self.dataset_ids or self.input_file_ids is not None or self.visualization_contexts):
+                raise ValueError("An input observation cannot submit or change execution inputs")
         if self.resume_from is not None:
             if not self.client_message_id or not self.client_message_id.strip():
                 raise ValueError("A continuation requires a new client_message_id")
-            if ((self.message or "").strip() or self.agent_profile_id or self.attachments
-                    or self.skills or self.mcp_servers or self.data_connectors or self.dataset_ids):
+            if ((self.message or "").strip() or self.clarification_id or self.agent_profile_id or self.attachments
+                    or self.skills or self.mcp_servers or self.data_connectors or self.dataset_ids or self.input_file_ids is not None or self.visualization_contexts):
                 raise ValueError("A continuation cannot change the original task or execution scope")
+        if self.visualization_contexts and not (self.message or "").strip():
+            raise ValueError("A visualization selection requires a new analysis message")
+        if self.clarification_id is not None and not (self.message or "").strip():
+            raise ValueError("A clarification reply requires an answer")
         return self
 
 
 class ShellViewRequest(BaseModel):
     """Shell view request schema"""
     session_id: str
+    output_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$", strict=True)
+    cursor: Optional[int] = Field(default=None, ge=0, strict=True)
+    max_bytes: int = Field(default=8192, ge=4, le=16384, strict=True)
+
+    @model_validator(mode="after")
+    def validate_output_cursor(self):
+        if (self.output_id is None) != (self.cursor is None):
+            raise ValueError("Output pagination requires output_id and cursor together")
+        return self
 
 
 class CreateSessionResponse(BaseModel):
@@ -81,6 +108,14 @@ class GetSessionHistoryResponse(GetSessionResponse):
     next_before_seq: Optional[int] = Field(default=None, ge=1, le=MAX_EVENT_SEQUENCE)
 
 
+class InputReceiptResponse(BaseModel):
+    """Owner-only admission observation, never the private input payload."""
+    client_message_id: str = Field(min_length=1, max_length=128)
+    accepted: bool
+    event_seq: Optional[int] = Field(default=None, ge=1, le=MAX_EVENT_SEQUENCE)
+    state: Optional[InputState] = None
+
+
 class ListSessionItem(BaseModel):
     """List session item schema"""
     session_id: str
@@ -103,6 +138,9 @@ class ConsoleRecord(BaseModel):
     ps1: str
     command: str
     output: str
+    output_truncated: bool = False
+    status: Optional[str] = None
+    returncode: Optional[int] = Field(default=None, strict=True)
 
 
 class ShellViewResponse(BaseModel):
@@ -110,6 +148,9 @@ class ShellViewResponse(BaseModel):
     output: str
     session_id: str
     console: Optional[List[ConsoleRecord]] = None
+    output_metadata: Optional[dict[str, Any]] = None
+    output_page: Optional[dict[str, Any]] = None
+    console_truncated: bool = False
 
 
 class ShareSessionResponse(BaseModel):

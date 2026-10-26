@@ -1,6 +1,9 @@
 import logging
 from functools import lru_cache
 from pathlib import Path
+from fastapi import Depends, Request, WebSocket, WebSocketException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.application.errors.exceptions import UnauthorizedError
 
 from app.core.config import get_settings
 from app.domain.external.plugin_runtime import PluginRuntime
@@ -201,33 +204,44 @@ def get_jupyter_service() -> JupyterService:
     return JupyterService()
 
 
-def _system_user() -> User:
-    """Return the single system identity used by every API caller."""
-    return User(
-        id="anonymous",
-        fullname="DataLab System",
-        email="system@localhost",
-        role=UserRole.ADMIN,
-        is_active=True,
-        token_balance=None,
-    )
+_bearer = HTTPBearer(auto_error=False)
 
 
-async def get_current_user() -> User:
-    """Return the system administrator; the product has no caller authentication."""
-    return _system_user()
+async def get_optional_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> User | None:
+    """A missing identity is allowed only at explicitly public call sites."""
+    if credentials is None:
+        return None
+    user = await auth_service.verify_token(credentials.credentials)
+    if user is None:
+        raise UnauthorizedError("Invalid or expired access token")
+    return user
 
 
-async def get_optional_current_user() -> User:
-    """Return the system administrator for formerly optional-auth endpoints."""
-    return _system_user()
+async def get_current_user(
+    user: User | None = Depends(get_optional_current_user),
+) -> User:
+    if user is None:
+        raise UnauthorizedError("Please log in to continue")
+    return user
 
 
-async def verify_signature() -> str:
-    """Keep signed-URL call sites compatible without requiring a signature."""
-    return ""
+async def verify_signature(
+    request: Request,
+    token_service: TokenService = Depends(get_token_service),
+) -> str:
+    """A signed URL grants temporary access to exactly its path and query."""
+    if not token_service.verify_signed_url(str(request.url)):
+        raise UnauthorizedError("Invalid or expired resource link")
+    return request.query_params["signature"]
 
 
-async def verify_signature_websocket() -> str:
-    """Keep WebSocket call sites compatible without requiring a signature."""
-    return ""
+async def verify_signature_websocket(
+    websocket: WebSocket,
+    token_service: TokenService = Depends(get_token_service),
+) -> str:
+    if not token_service.verify_signed_url(str(websocket.url)):
+        raise WebSocketException(code=1008, reason="Invalid or expired resource link")
+    return websocket.query_params["signature"]

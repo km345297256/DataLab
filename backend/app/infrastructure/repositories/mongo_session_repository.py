@@ -6,13 +6,14 @@ from typing import Optional, List
 from datetime import datetime, UTC
 from pymongo import ReturnDocument
 from pymongo.errors import ConnectionFailure, DuplicateKeyError
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from app.domain.models.session import Session, SessionStatus, SessionSummary
 from app.domain.models.file import FileInfo
 from app.domain.repositories.session_repository import SessionRepository
 from app.domain.models.event import BaseEvent, AgentEvent, MAX_EVENT_SEQUENCE
 from app.domain.models.execution_environment import ExecutionEnvironmentSnapshot
 from app.domain.models.session_history import SessionHistoryPage, page_legacy_history
+from app.domain.services.execution_history import ExecutionHistory
 from app.infrastructure.models.documents import (
     ExecutionEnvironmentSnapshotDocument,
     SessionDocument,
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 SESSION_EVENT_WRITE_ATTEMPTS = 3
 SESSION_EVENT_RETRY_DELAYS = (0.1, 0.3)
 CLIENT_MESSAGE_ID_HISTORY_LIMIT = 512
+EXECUTION_HISTORY_CACHE_BYTES = 4 * 1024 * 1024
 
 SESSION_LIST_PROJECTION = {
     "session_id": 1,
@@ -41,6 +43,34 @@ SESSION_LIST_PROJECTION = {
 
 class MongoSessionRepository(SessionRepository):
     """MongoDB implementation of SessionRepository"""
+
+    async def get_successful_program_sources(self, session_id: str, user_id: str,
+                                             event_sequences: list[int]) -> list[dict]:
+        from app.domain.services.program_method_evidence import validated_method_evidence
+        # Source bytes are private to the owner, even when public session history
+        # can be shared. A creator cannot import evidence from another turn.
+        owned = await SessionDocument.get_pymongo_collection().find_one(
+            {"session_id": session_id, "user_id": user_id}, {"_id": 1})
+        if owned is None:
+            return []
+        sequences = sorted({seq for seq in event_sequences
+                            if type(seq) is int and 0 < seq <= MAX_EVENT_SEQUENCE})
+        if not sequences:
+            return []
+        collection = SessionEventDocument.get_pymongo_collection()
+        result = []
+        # Batch queries without silently dropping later successful modules.
+        for offset in range(0, len(sequences), 128):
+            documents = await collection.find(
+                {"session_id": session_id, "seq": {"$in": sequences[offset:offset + 128]},
+                 "program_method_evidence": {"$ne": None}},
+                {"seq": 1, "program_method_evidence": 1},
+            ).sort("seq", 1).to_list(length=None)
+            for document in documents:
+                evidence = validated_method_evidence(document.get("program_method_evidence"))
+                if evidence is not None:
+                    result.append({**evidence, "event_seq": document["seq"]})
+        return result
 
     async def save_analysis_checkpoint(self, session_id: str, checkpoint: dict) -> None:
         source_seq = checkpoint.get("source_seq")
@@ -138,6 +168,31 @@ class MongoSessionRepository(SessionRepository):
         )
         if not result.matched_count:
             raise ValueError(f"Session {session.id} not found")
+
+    async def compare_and_clear_sandbox(
+        self, session_id: str, *, expected_sandbox_id: str,
+        expected_task_id: str | None,
+    ) -> bool:
+        result = await SessionDocument.get_pymongo_collection().update_one(
+            {"session_id": session_id, "sandbox_id": expected_sandbox_id,
+             "task_id": expected_task_id},
+            {"$set": {"sandbox_id": None, "sandbox_dataset_ids": [], "sandbox_input_signature": None,
+                      "updated_at": datetime.now(UTC)}},
+        )
+        return bool(result.matched_count)
+
+    async def compare_and_set_task_id(
+        self, session_id: str, *, expected_task_id: str | None,
+        task_id: str | None, dataset_ids: list[str] | None = None,
+    ) -> bool:
+        update = {"task_id": task_id, "updated_at": datetime.now(UTC)}
+        if dataset_ids is not None:
+            update["dataset_ids"] = list(dataset_ids)
+        result = await SessionDocument.get_pymongo_collection().update_one(
+            {"session_id": session_id, "task_id": expected_task_id},
+            {"$set": update},
+        )
+        return bool(result.matched_count)
 
 
     async def find_by_id(self, session_id: str) -> Optional[Session]:
@@ -243,6 +298,14 @@ class MongoSessionRepository(SessionRepository):
         if not result:
             raise ValueError(f"Session {session_id} not found")
     
+    async def ensure_discovery_title(self, session_id: str, owner: str, title: str) -> None:
+        """Name an empty discovery without overwriting a concurrent user rename."""
+        await SessionDocument.get_pymongo_collection().update_one(
+            {"session_id": session_id, "user_id": owner,
+             "title": {"$in": [None, ""]}, "title_manually_set": {"$ne": True}},
+            {"$set": {"title": title, "updated_at": datetime.now(UTC)}},
+        )
+
     async def update_title(self, session_id: str, title: str) -> None:
         """Update an automatically generated title unless the user renamed it."""
         result = await SessionDocument.find_one(
@@ -659,6 +722,10 @@ class MongoSessionRepository(SessionRepository):
         }
         if admission is not None:
             document["input_admission"] = admission.model_dump(mode="python")
+        from app.domain.services.program_method_evidence import private_method_evidence_for_event
+        method_evidence = private_method_evidence_for_event(event)
+        if method_evidence is not None:
+            document["program_method_evidence"] = method_evidence
         for attempt in range(SESSION_EVENT_WRITE_ATTEMPTS):
             try:
                 persisted = await collection.find_one_and_update(
@@ -861,6 +928,81 @@ class MongoSessionRepository(SessionRepository):
             used_sequences.add(next_legacy_seq)
             next_legacy_seq += 1
         return sorted(events, key=lambda item: item.seq or 0)
+
+    async def get_execution_history(self, session_id: str, *, before_seq: int) -> ExecutionHistory:
+        """Fold only new event bodies; never use a cache as the source of truth.
+
+        Reserved sequence gaps may be filled by late commits. An indexed prefix
+        count validates cache membership before AND after reading the suffix;
+        immutable event payloads make this sufficient without changing writers.
+        This avoids full-body transfers/decoding, not all O(N) database work:
+        the prefix count still scans index entries. Legacy histories retain their
+        original sequence synthesis. Oversized evidence bypasses persistence,
+        never truncates the execution view or modifies the canonical log.
+        """
+        if type(before_seq) is not int or not 0 < before_seq <= MAX_EVENT_SEQUENCE:
+            raise ValueError("invalid execution history cursor")
+        events = SessionEventDocument.get_pymongo_collection()
+        sessions = SessionDocument.get_pymongo_collection()
+
+        async def rebuild_legacy():
+            state = ExecutionHistory()
+            for event in await self.get_events(session_id):
+                if (event.seq or 0) < before_seq:
+                    state.fold(event)
+            return state
+
+        legacy = await events.find_one({"session_id": session_id, "$or": [
+            {"seq": {"$not": {"$type": ["int", "long"]}}},
+            {"seq": {"$lte": 0}}, {"seq": {"$gt": MAX_EVENT_SEQUENCE}},
+        ]}, {"_id": 1})
+        if legacy is not None:
+            return await rebuild_legacy()
+        document = await sessions.find_one({"session_id": session_id}, {"execution_history_projection": 1})
+        if document is None:
+            raise ValueError("Session not found")
+        state = ExecutionHistory()
+        raw = document.get("execution_history_projection")
+        if isinstance(raw, dict):
+            try:
+                candidate = ExecutionHistory.model_validate(raw)
+                if candidate.seq < before_seq:
+                    count = await events.count_documents({"session_id": session_id, "seq": {"$lte": candidate.seq}})
+                    if count == candidate.event_count:
+                        state = candidate
+            except (ValidationError, ValueError, TypeError):
+                pass  # Unknown/corrupt cache versions rebuild from the log.
+        adapter = TypeAdapter(AgentEvent)
+        for attempt in range(2):
+            cursor = events.find({"session_id": session_id, "seq": {"$gt": state.seq, "$lt": before_seq}},
+                                 {"seq": 1, "event": 1}).sort("seq", 1).batch_size(256)
+            async for stored in cursor:
+                event = adapter.validate_python(stored["event"])
+                if event.seq is not None and event.seq != stored["seq"]:
+                    raise RuntimeError("Persisted event sequence envelope is inconsistent")
+                event.seq = stored["seq"]
+                state.fold(event)
+            count = await events.count_documents({"session_id": session_id, "seq": {"$lte": state.seq}})
+            if count == state.event_count:
+                break
+            if attempt == 1:
+                return await rebuild_legacy()
+            state = ExecutionHistory()  # A late prefix commit invalidated the cut.
+        row = state.model_dump(mode="json")
+        if len(json.dumps(row, ensure_ascii=False).encode("utf-8")) <= EXECUTION_HISTORY_CACHE_BYTES:
+            try:
+                # Cache fields are storage-only; ordinary Session saves and all
+                # browser projections omit them. A slower fold cannot replace
+                # a newer valid watermark. An unknown version is replaceable.
+                await sessions.update_one({"session_id": session_id, "$or": [
+                    {"execution_history_projection.version": {"$ne": 3}},
+                    {"execution_history_projection.seq": {"$lt": state.seq}},
+                    {"execution_history_projection.seq": state.seq,
+                     "execution_history_projection.event_count": {"$lte": state.event_count}},
+                ]}, {"$set": {"execution_history_projection": row}})
+            except Exception as error:
+                logger.warning("Execution history cache write skipped error_type=%s", type(error).__name__)
+        return state
 
     async def get_events_after(self, session_id: str, seq: int) -> List[AgentEvent]:
         """Return replay events, using the sequence index when history permits.

@@ -35,7 +35,7 @@ async function checkLayout(page, width) {
     };
     const app = document.querySelector('#app');
     const section = document.querySelector('.plotly-controls').closest('section');
-    const controls = document.querySelector('.plotly-controls');
+    const controls = document.querySelector('.plotly-chart-settings');
     const chart = document.querySelector('.plotly-chart');
     const list = document.querySelector('.plotly-series-list');
     return {
@@ -156,7 +156,7 @@ export const plotlyLayoutCases = [
     const chartScreenshot = join(await mkdtemp(join(tmpdir(), 'dataseek-plotly-layout-')), `plotly-layout-${width}-chart.png`);
     await page.locator('.plotly-chart').screenshot({ path: chartScreenshot });
     await page.locator('.plotly-series-list').evaluate((element) => { element.scrollTop = 0; });
-    await page.locator('.plotly-controls').evaluate((element) => { element.closest('section').scrollTop = 0; });
+    await page.locator('.plotly-window-settings').evaluate((element) => { element.closest('section').scrollTop = 0; });
     return { width, height, controlsHeight: initial.controls.height, chartHeight: after.chart.height, plotWidth: after.chart.plotWidth, plotHeight: after.chart.plotHeight, horizontalOverflow: after.section.scrollWidth - after.section.clientWidth, chartScreenshot, ...interaction };
   },
 }));
@@ -208,9 +208,69 @@ plotlyLayoutCases.push({
     await waitForTraces(page, 1, 'heatmap');
     await page.getByRole('status').waitFor({ state: 'hidden' });
     const heatmap = await page.evaluate(() => document.querySelector('.js-plotly-plot')._fullData[0].z);
-    assert.equal(heatmap.length, 6); assert.equal(heatmap[0].length, 12); assert.equal(heatmap[0][0], 1);
+    assert.equal(heatmap.length, 6); assert.equal(heatmap[0].length, 12); assert.equal(heatmap[0][0], 2, 'Switching view retains the valid leading slice index');
     const layout = await checkArrayLayout();
     await page.locator('.plotly-controls').evaluate((element) => { element.closest('section').scrollTop = 0; });
     return { width: 360, height: 500, dimensions: 6, sliceValuesVerified: true, heatmapVerified: true, ...layout };
+  },
+});
+
+const windowRequests = [];
+plotlyLayoutCases.push({
+  name: 'plotly-window-360', component: 'scientific/PlotlyPreview.vue', filename: 'synthetic-windows.csv', reader: 'tabular', kind: 'series',
+  bytes: Buffer.from('synthetic-bounded-table-window', 'utf8'),
+  preview(request) {
+    windowRequests.push(structuredClone(request));
+    const { row_offset: row, column_offset: column } = request.options;
+    const height = Math.min(200, 405 - row), width = Math.min(100, 103 - column);
+    return { contract_version: 2, type: 'tabular', reader: 'tabular', kind: 'table', media_type: 'application/json', metadata: {}, warnings: [], sampled: true,
+      table: { columns: Array.from({ length: width }, (_, index) => `value_${column + index + 1}`),
+        rows: Array.from({ length: height }, (_, index) => Array.from({ length: width }, (_, col) => (row + index + 1) * 1000 + column + col)),
+        row_offset: row, column_offset: column, total_rows: row + height === 405 ? 405 : null, total_columns: 103 } };
+  },
+  async setup(page) {
+    await page.locator('#app').evaluate(app => { app.style.width = '360px'; app.style.height = '650px'; });
+  },
+  ready: plotReady,
+  async verify(page) {
+    const count = windowRequests.length;
+    assert.ok(count >= 1);
+    assert.match(await page.locator('.plotly-window-summary').textContent(), /数据行 1–200，列 1–100 \/ 103；总行数未统计/);
+    const checkboxes = page.locator('.plotly-series input[type="checkbox"]');
+    await checkboxes.nth(1).check();
+    const mode = page.locator('.plotly-table-settings select').nth(1);
+    await mode.selectOption('histogram'); await page.getByRole('button', { name: '绘制', exact: true }).click();
+    await waitForTraces(page, 2, 'histogram');
+    assert.equal(windowRequests.length, count, 'Plot modes and column changes reuse the bounded window');
+    await mode.selectOption('lines'); await page.getByRole('button', { name: '绘制', exact: true }).click();
+    await waitForTraces(page, 2, 'scatter', 'lines');
+    await page.getByRole('button', { name: '读取窗口', exact: true }).click();
+    assert.equal(windowRequests.length, count, 'An unchanged window does not reread the source');
+    await page.getByRole('button', { name: '下一行窗口', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.js-plotly-plot')?._fullData?.[0]?.x?.[0] === 201);
+    assert.equal(await page.locator('.plotly-series input:checked').count(), 2);
+    assert.equal(windowRequests.at(-1).version, '1'.repeat(64));
+    assert.deepEqual(windowRequests.at(-1).options, { row_offset: 200, column_offset: 0 });
+    await page.getByRole('status').waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: '下一行窗口', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.js-plotly-plot')?._fullData?.[0]?.x?.[0] === 401);
+    assert.match(await page.locator('.plotly-window-summary').textContent(), /数据行 401–405.*共 405 行/);
+    assert.equal(await page.getByRole('button', { name: '下一行窗口', exact: true }).isDisabled(), true);
+    await page.getByRole('status').waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: '下一列窗口', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.js-plotly-plot')?._fullData?.[0]?.y?.[0] === 401100);
+    assert.equal(await page.getByRole('button', { name: '下一列窗口', exact: true }).isDisabled(), true);
+    assert.match(await page.locator('.plotly-window-summary').textContent(), /列 101–103 \/ 103/);
+    await page.getByRole('status').waitFor({ state: 'hidden' });
+    await page.getByLabel('起始数据行', { exact: true }).fill('203');
+    await page.getByLabel('起始列', { exact: true }).fill('102');
+    await page.getByRole('button', { name: '读取窗口', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.js-plotly-plot')?._fullData?.[0]?.x?.[0] === 203);
+    assert.deepEqual(windowRequests.at(-1).options, { row_offset: 202, column_offset: 101 });
+    assert.match(await page.locator('.plotly-window-summary').textContent(), /数据行 203–402，列 102–103/);
+    assert.deepEqual(await page.locator('[role="alert"]').allTextContents(), []);
+    const overflow = await page.locator('.plotly-preview').evaluate(element => element.scrollWidth - element.clientWidth);
+    assert.ok(overflow <= 1, 'Window inputs and paging buttons fit a narrow panel');
+    return { windowsRead: windowRequests.length - count + 1, localPlotChangesVerified: true, globalRowNumbersVerified: true, boundedNavigationVerified: true, horizontalOverflow: overflow };
   },
 });

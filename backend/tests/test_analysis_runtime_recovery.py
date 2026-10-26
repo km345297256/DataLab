@@ -102,6 +102,7 @@ async def test_real_agent_budget_boundary_continues_in_place_or_stops_before_dis
     service = AnalysisBudgetService(repository, policy=BudgetPolicy(initial_batches=2, hard_batches=4, max_grants=1))
     handle = await service.open(user_id="owner", session_id="session", origin_input_id="1", scope_digest="a" * 64)
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 2
     agent.max_retries = 0
     calls = []
@@ -163,7 +164,7 @@ async def test_runtime_scope_is_private_restored_and_bound_to_original_input():
     runner._session_repository = SimpleNamespace(find_by_id_and_user_id=AsyncMock(return_value=SimpleNamespace(llm_overrides={})))
     runner._analysis_source_fingerprints = None
     runner._analysis_budget_service = AnalysisBudgetService(repository, policy=BudgetPolicy())
-    runner._input_delivery = SimpleNamespace(_require_live=AsyncMock())
+    runner._input_delivery = SimpleNamespace(_require_live=AsyncMock(), mark_analysis_started=AsyncMock())
     runner._accepted_input_key = "original-input"
     message = Message(message="original analysis")
     with ExitStack() as stack:
@@ -189,7 +190,7 @@ async def test_step_contract_prevents_unnecessary_grants_and_attachments_fail_cl
     tool = SimpleNamespace(name="operation")
     runner._flow = SimpleNamespace(plan=Plan(steps=[Step(status=ExecutionStatus.RUNNING,
         deliverables=[DeliverableRequirement(kind="image")])]),
-        executor=SimpleNamespace(get_tool=lambda name: tool, _blocked_runtime_install_reason=lambda call: None))
+        executor=SimpleNamespace(get_tool=lambda name: tool))
     path = "/home/ubuntu/output/chart.png"
     runner._list_sandbox_artifacts = AsyncMock(return_value=[path])
     runner._sandbox = SimpleNamespace(validate_artifacts=AsyncMock(return_value=ToolResult(success=True, data={
@@ -211,6 +212,7 @@ async def test_step_contract_prevents_unnecessary_grants_and_attachments_fail_cl
 
 def agent_with_messages(first, later, tools):
     agent = object.__new__(BaseAgent)
+    agent._add_to_memory = AsyncMock()
     agent.max_iterations = 1
     agent.max_retries = 0
     agent.ask = AsyncMock(return_value=first)

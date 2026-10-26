@@ -48,6 +48,7 @@ export interface RoleTokenQuotaListResponse {
 }
 
 export interface AdminTaskInfo {
+  can_replay: boolean;
   session_id: string;
   user_id: string;
   user_fullname?: string | null;

@@ -4,8 +4,8 @@ New dataset/general-analysis requests have no cumulative tool-batch, model-call,
 token or wall-clock quota. This is an explicit product policy for the local
 installation, not a larger numerical allowance. Execution continues while it
 can make progress, until completion, cancellation or an unrecoverable failure.
-The service remains at `127.0.0.1:7001`; updates use the existing Compose project
-and `./run.sh`.
+DataLab defaults to `http://localhost:10030` (the local `.env` may override it).
+Updates use the isolated `datalab` Compose project and `./run.sh`.
 
 ## Removed task limits
 

@@ -78,6 +78,7 @@ class AdminTaskResponse(BaseModel):
     status: SessionStatus
     unread_message_count: int = 0
     is_shared: bool = False
+    can_replay: bool = False
     created_at: datetime
     updated_at: datetime
 

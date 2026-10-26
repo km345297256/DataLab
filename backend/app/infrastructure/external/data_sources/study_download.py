@@ -85,7 +85,17 @@ class StudyDownloadClient:
             available=size is None or 0 < size <= MAX_BYTES,
             unavailable_reason='文件超过 64 MiB 单文件下载上限' if size and size > MAX_BYTES else '')
 
-    async def list_files(self, connector, accession):
+    async def list_files(self, connector, accession, *, ignore_legacy_size_limit=False, file_limit=20):
+        # Legacy in-memory downloads keep their existing default. The persistent
+        # acquisition flow requests the complete manifest with file_limit=None.
+        if file_limit is not None and (not isinstance(file_limit, int) or file_limit < 1):
+            raise ValueError('file_limit must be positive or None')
+        def visible(rows):
+            if ignore_legacy_size_limit:
+                for row in rows:
+                    row['available'] = row['size'] is None or row['size'] > 0
+                    row['unavailable_reason'] = '' if row['available'] else '文件为空'
+            return rows
         if connector == 'ncbi-geo':
             if not re.fullmatch(r'GSE[0-9]+', accession):
                 raise SourceConnectorError('invalid_study_accession')
@@ -96,7 +106,9 @@ class StudyDownloadClient:
                 body = await self.get(base + folder + '/', missing_ok=True)
                 parser = Links()
                 parser.feed(body.decode('utf-8', errors='replace'))
-                names = list(dict.fromkeys(parser.names))[:20-len(rows)]
+                names = list(dict.fromkeys(parser.names))
+                if file_limit is not None:
+                    names = names[:max(0, file_limit-len(rows))]
                 # Bounded concurrency and source directory; never follow arbitrary listing links.
                 for start in range(0, len(names), 5):
                     batch = names[start:start+5]
@@ -109,7 +121,7 @@ class StudyDownloadClient:
             manifest = await self.get(base + 'suppl/filelist.txt', missing_ok=True)
             in_raw = False
             for entry in csv.reader(manifest.decode('utf-8', errors='replace').splitlines(), delimiter='\t'):
-                if len(rows) >= 20:
+                if file_limit is not None and len(rows) >= file_limit:
                     break
                 if len(entry) < 4:
                     continue
@@ -125,7 +137,7 @@ class StudyDownloadClient:
                 size = await self.size(url)
                 if size is not None:
                     rows.append(self.record(connector, accession, url, size, '原始样本文件（RAW 清单成员）'))
-            return rows
+            return visible(rows)
         if connector != 'ncbi-sra' or not re.fullmatch(r'[SED]R[XR][0-9]+', accession):
             raise SourceConnectorError('invalid_study_accession')
         url = ('https://www.ebi.ac.uk/ena/portal/api/filereport?accession=' + accession
@@ -149,7 +161,7 @@ class StudyDownloadClient:
                     if not re.fullmatch(r'[a-fA-F0-9]{32}', checksum) or not size.isdigit() or int(size) <= 0:
                         raise ValueError()
                     rows.append(self.record(connector, accession, 'https://' + path, int(size), '原始测序 FASTQ', checksum.lower(), entry['run_accession']))
-            return rows[:20]
+            return visible(rows if file_limit is None else rows[:file_limit])
         except (ValueError, KeyError, TypeError):
             raise SourceConnectorError('invalid_response') from None
 

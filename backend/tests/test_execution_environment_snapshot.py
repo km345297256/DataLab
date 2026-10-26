@@ -462,7 +462,7 @@ async def test_lightweight_snapshot_is_persisted_before_first_stream_output():
     )
     runner._record_safety_audit = AsyncMock()
     runner._completion_advice = SimpleNamespace(
-        default_advice=lambda: SimpleNamespace(),
+        analyze=AsyncMock(return_value=SimpleNamespace()),
         to_payload=lambda _advice: {},
     )
 

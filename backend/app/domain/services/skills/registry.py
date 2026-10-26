@@ -12,6 +12,7 @@ from typing import BinaryIO, List, Optional
 
 from app.domain.models.skill import Skill, SkillScope
 from app.domain.repositories.skill_repository import SkillRepository
+from app.domain.services.skills.catalog_lock import serialized_skill_catalog
 from app.domain.services.skills.package import (
     parse_manifest, read_package, package_digest, MAX_PACKAGE_BYTES, MAX_PACKAGE_FILES,
 )
@@ -39,6 +40,7 @@ class SkillRegistry:
         self._resource_snapshots: dict[str, dict[str, bytes]] = {}
         self.reload()
 
+    @serialized_skill_catalog
     async def load(self) -> None:
         if self._pinned:
             return
@@ -85,10 +87,15 @@ class SkillRegistry:
         self._apply_restriction()
         logger.info("Loaded %d skills for user %s", len(self._skills), self.user_id or "<global>")
 
+    @serialized_skill_catalog
     async def sync_files_to_repository(self) -> None:
         if not self.repository:
             return
-        self._skills = [await self.repository.save(skill) for skill in self._skills]
+        # A request may have loaded its snapshot before a concurrent deletion.
+        # Reload inside the same lock used by deletion before any upsert.
+        await self.load()
+        self._skills = [await self.repository.save(skill) for skill in self._skills
+                        if Path(skill.path).is_file()]
 
     def _global_dir(self) -> Path:
         legacy_has_skills = any(self.skills_dir.glob("*/SKILL.md")) if self.skills_dir.exists() else False
@@ -307,6 +314,7 @@ class SkillRegistry:
                 continue
         return files
 
+    @serialized_skill_catalog
     async def save_markdown_skill(
         self,
         filename: str,
@@ -329,6 +337,7 @@ class SkillRegistry:
         await self.load()
         return skill
 
+    @serialized_skill_catalog
     async def save_zip_skills(
         self,
         fileobj: BinaryIO,
@@ -365,7 +374,7 @@ class SkillRegistry:
                     # Ownership is installation metadata, not supplied by the
                     # uploader's package or another user's archived metadata.
                     self._write_metadata(staged, owner_user_id=owner_id, workspace_id=workspace_id,
-                                         created_from_session_id=None)
+                                         created_from_session_id=None, generated_draft_id=None)
                     skill = self._load_skill(staged / "SKILL.md", scope, owner_id)
                     if not skill:
                         raise ValueError("No valid skills were loaded: invalid skill package")
@@ -394,6 +403,7 @@ class SkillRegistry:
         await self.load()
         return saved_skills
 
+    @serialized_skill_catalog
     async def save_generated_skill(
         self,
         name: str,
@@ -406,39 +416,91 @@ class SkillRegistry:
         references: Optional[dict[str, str]] = None,
         scripts: Optional[dict[str, str]] = None,
         assets: Optional[dict[str, bytes]] = None,
+        generated_draft_id: Optional[str] = None,
     ) -> Skill:
+        if not user_id or self.user_id != user_id:
+            raise ValueError("Generated skills require the current user's private registry")
+        if generated_draft_id:
+            if not re.fullmatch(r"[a-f0-9]{32}", generated_draft_id):
+                raise ValueError("Invalid generated skill draft")
+            # Recover after a successful package commit but a failed draft
+            # status update. Never create a second package on an owner retry.
+            for existing_path in self._user_dir(user_id).glob("*/SKILL.md"):
+                metadata = self._load_metadata(existing_path.parent)
+                if metadata.get("generated_draft_id") == generated_draft_id and metadata.get("owner_user_id") == user_id:
+                    existing = self._load_skill(existing_path, SkillScope.USER, user_id)
+                    if existing is None:
+                        raise ValueError("Installed skill draft is invalid")
+                    existing.id = hashlib.sha256(f"skill-draft:{user_id}:{generated_draft_id}".encode()).hexdigest()[:32]
+                    return await self.repository.save(existing) if self.repository else existing
         skill_name = self._normalize_skill_name(name)
-        target_dir = self._unique_skill_dir(self._user_dir(user_id), skill_name)
-        target_dir.mkdir(parents=True, exist_ok=False)
-        skill_md = self._build_skill_markdown(skill_name, description, triggers, content)
-        (target_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
-        for relative_path, text in (references or {}).items():
-            target_path = self._safe_child_path(target_dir, relative_path)
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(text, encoding="utf-8")
-        for relative_path, text in (scripts or {}).items():
-            target_path = self._safe_child_path(target_dir, relative_path)
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(text, encoding="utf-8")
-            target_path.chmod(0o755)
-        for relative_path, data in (assets or {}).items():
-            target_path = self._safe_child_path(target_dir, relative_path)
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_bytes(data)
-        (target_dir / "metadata.json").write_text(
-            json.dumps({"created_from_session_id": created_from_session_id}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        skill = self._load_skill(target_dir / "SKILL.md", SkillScope.USER, user_id)
-        if not skill:
-            raise ValueError(f"Failed to load generated skill: {skill_name}")
-        skill.owner_user_id = user_id
-        skill.workspace_id = workspace_id
-        if self.repository:
-            skill = await self.repository.save(skill)
+        resources: dict[str, bytes] = {}
+        for directory, mapping in (("references", references or {}), ("scripts", scripts or {}), ("assets", assets or {})):
+            for relative_path, value in mapping.items():
+                path = Path(relative_path)
+                if (path.is_absolute() or ".." in path.parts or "\\" in relative_path or ":" in relative_path
+                        or len(path.parts) < 2 or path.parts[0] != directory or relative_path in resources):
+                    raise ValueError("Unsafe generated skill resource path")
+                resources[relative_path] = value.encode("utf-8") if isinstance(value, str) else value
+        if len(resources) + 2 > MAX_PACKAGE_FILES or sum(len(value) for value in resources.values()) + len(content.encode("utf-8")) > MAX_PACKAGE_BYTES:
+            raise ValueError("Generated skill package is too large")
+        if any("\n" in value or "\r" in value for value in (description, *triggers)):
+            raise ValueError("Generated skill metadata must use single-line values")
+        target_root = self._user_dir(user_id)
+        target_root.mkdir(parents=True, exist_ok=True)
+        base_name = skill_name
+        occupied = {skill.name.casefold() for skill in self._skills}
+        # A turn can restrict and pin the in-memory registry. Persisted global
+        # and current-user packages still occupy their selection names even
+        # when excluded from that turn; other users' packages never do.
+        for directory, scope, owner in ((self._global_dir(), SkillScope.GLOBAL, None),
+                                        (target_root, SkillScope.USER, user_id)):
+            occupied.update(skill.name.casefold() for skill in self._load_dir(directory, scope, owner))
+        suffix = 2
+        while (target_root / skill_name).exists() or skill_name.casefold() in occupied:
+            skill_name = f"{base_name[:55]}-{suffix}"
+            suffix += 1
+        # JSON strings are valid YAML scalars, including descriptions containing
+        # colons or brackets. Installation ownership is never model-authored.
+        skill_md = ("---\n" + f"name: {skill_name}\n"
+                    + "description: " + json.dumps(description, ensure_ascii=False) + "\n"
+                    + "triggers: " + json.dumps(triggers, ensure_ascii=False) + "\n---\n\n" + content.strip() + "\n")
+        target_root = self._user_dir(user_id)
+        target_root.mkdir(parents=True, exist_ok=True)
+        target_dir = None
+        try:
+            with tempfile.TemporaryDirectory(prefix=".skill-generated-", dir=target_root) as staging:
+                staged = Path(staging) / "package"
+                staged.mkdir()
+                (staged / "SKILL.md").write_text(skill_md, encoding="utf-8")
+                for relative_path, data in resources.items():
+                    target_path = self._safe_child_path(staged, relative_path)
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    target_path.write_bytes(data)
+                    if relative_path.startswith("scripts/"):
+                        target_path.chmod(0o755)
+                self._write_metadata(staged, owner_user_id=user_id, workspace_id=workspace_id,
+                                     created_from_session_id=created_from_session_id,
+                                     generated_draft_id=generated_draft_id)
+                if self._load_skill(staged / "SKILL.md", SkillScope.USER, user_id) is None:
+                    raise ValueError("Failed to validate generated skill")
+                target_dir = target_root / skill_name
+                staged.rename(target_dir)
+            skill = self._load_skill(target_dir / "SKILL.md", SkillScope.USER, user_id)
+            if skill is None:
+                raise ValueError("Failed to load generated skill")
+            if generated_draft_id:
+                skill.id = hashlib.sha256(f"skill-draft:{user_id}:{generated_draft_id}".encode()).hexdigest()[:32]
+            if self.repository:
+                skill = await self.repository.save(skill)
+        except BaseException:
+            if target_dir is not None and target_dir.exists():
+                shutil.rmtree(target_dir)
+            raise
         await self.load()
         return skill
 
+    @serialized_skill_catalog
     async def change_scope(
         self,
         skill: Skill,

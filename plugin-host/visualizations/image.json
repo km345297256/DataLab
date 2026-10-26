@@ -11,7 +11,6 @@
     "gif",
     "bmp",
     "webp",
-    "svg",
     "ico",
     "avif",
     "heic",
@@ -27,7 +26,7 @@
     "file:read"
   ],
   "limits": {
-    "max_input_bytes": 268435456,
+    "max_input_bytes": 33554432,
     "max_output_bytes": 16777216
   },
   "capabilities": {

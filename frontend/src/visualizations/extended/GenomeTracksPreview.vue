@@ -21,8 +21,8 @@
       </svg></div>
       <p class="mt-2 text-xs text-slate-500">拖动平移、滚轮缩放，松开后读取新区域；点击元素查看详情。信号条之间的空白表示未提供数据，不补零。BED 零长度区间显示为位置标记。</p>
       <p v-if="!displayed.tracks?.length" class="py-4 text-center">当前区域没有记录。</p>
-      <div v-if="selected" class="mt-3 rounded border border-blue-200 bg-blue-50 p-3 text-xs" data-testid="track-detail"><div class="flex justify-between"><strong>{{ selected.label }}</strong><button aria-label="关闭轨道详情" @click="selected=undefined">×</button></div><p>{{ title(selected) }}</p><p class="break-all">{{ selected.detail }}</p></div>
-      <div class="mt-3 overflow-x-auto"><p class="text-xs text-slate-500">图中包含所选区域全部元素；下表列出前 50 项供键盘选择。</p><table class="w-full text-left text-xs"><thead><tr><th>名称</th><th>位置（1 起）</th><th>方向</th><th>值</th></tr></thead><tbody><tr v-for="f in (displayed.tracks??[]).slice(0,50)" :key="f.id"><td><button class="text-blue-700 underline" @click="selected=f">{{ f.label }}</button></td><td>{{ f.start===f.end?`插入边界 ${f.start}`:`${f.start+1}–${f.end}` }}</td><td>{{ f.strand }}</td><td>{{ f.value??'—' }}</td></tr></tbody></table></div>
+      <div v-if="selected" class="mt-3 rounded border border-[var(--border-input-active)] bg-[var(--control-selected-fill)] p-3 text-xs" data-testid="track-detail"><div class="flex justify-between"><strong>{{ selected.label }}</strong><button aria-label="关闭轨道详情" @click="selected=undefined">×</button></div><p>{{ title(selected) }}</p><p class="break-all">{{ selected.detail }}</p></div>
+      <div class="mt-3 overflow-x-auto"><p class="text-xs text-slate-500">图中包含所选区域全部元素；下表列出前 50 项供键盘选择。</p><table class="w-full text-left text-xs"><thead><tr><th>名称</th><th>位置（1 起）</th><th>方向</th><th>值</th></tr></thead><tbody><tr v-for="f in (displayed.tracks??[]).slice(0,50)" :key="f.id"><td><button class="text-[var(--control-focus-color)] underline" @click="selected=f">{{ f.label }}</button></td><td>{{ f.start===f.end?`插入边界 ${f.start}`:`${f.start+1}–${f.end}` }}</td><td>{{ f.strand }}</td><td>{{ f.value??'—' }}</td></tr></tbody></table></div>
     </div>
   </section>
 </template>

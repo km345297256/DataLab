@@ -4,6 +4,12 @@ import { test } from 'node:test';
 import * as vue from 'vue';
 import { compileScript, parse } from '@vue/compiler-sfc';
 import ts from 'typescript';
+import { createRequire } from 'node:module';
+import * as imagePolicy from '../src/visualizations/imagePreflight.ts';
+import * as htmlPolicy from '../src/visualizations/htmlPreviewPolicy.ts';
+const require = createRequire(import.meta.url);
+const { JSDOM } = createRequire(require.resolve('jsroot'))('jsdom');
+const png = () => Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPQCOgBAAGoAQW7cALPAAAAAElFTkSuQmCC', 'base64')).buffer;
 import { usePreviewLoad } from '../src/composables/usePreviewLoad.ts';
 import { readBoundedBinary, validateTiffDimensions } from '../src/visualizations/boundedBinary.ts';
 
@@ -13,7 +19,7 @@ const deferred = () => {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 };
-const flush = async () => { for (let n = 0; n < 12; n++) await Promise.resolve(); };
+const flush = async () => { for (let n = 0; n < 24; n++) await Promise.resolve(); };
 
 // Execute the actual SFC setup with real Vue refs/watch/effect scopes. This
 // deliberately allows ignored aborts and late response bodies to settle.
@@ -22,6 +28,8 @@ function mountPreview(t, name, options = {}) {
   const script = compileScript(parse(source).descriptor, { id: name });
   const compiled = ts.transpileModule(script.content, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const relatedFiles = options.relatedFiles || vue.ref([]);
+  const dom = name === 'HtmlFilePreview' ? new JSDOM('') : null;
+  if (dom) t.after(() => dom.window.close());
   const loadBytes = options.loadBytes || (async (value, _plugin, signal, resource) => {
     const url = await (options.getUrl || (async value => value.file_id))(resource || value);
     if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -36,6 +44,8 @@ function mountPreview(t, name, options = {}) {
     }) },
     '../../api/agent': { getSessionFiles: options.getFiles || (async () => []), getSharedSessionFiles: options.getFiles || (async () => []) },
     '../../composables/usePreviewLoad': { usePreviewLoad },
+    '../../visualizations/imagePreflight': imagePolicy,
+    '../../visualizations/htmlPreviewPolicy': { ...htmlPolicy, prepareHtmlPreview: (...args) => htmlPolicy.prepareHtmlPreview(...args, dom.window.document) },
     '../../visualizations/boundedBinary': { readBoundedBinary, validateTiffDimensions },
     '../../composables/useFilePanel': { useFilePanel: () => ({ relatedFiles }) },
     '../../composables/useSessionFileList': { useSessionFileList: () => ({ shared: vue.ref(false) }) },
@@ -131,7 +141,7 @@ test('late signed URLs cannot start downloads after replacement or unmount', asy
 test('image preview clears old image immediately and ignores late protected bytes', async (t) => {
   const first = deferred();
   t.mock.method(URL, 'createObjectURL', () => 'blob:new-image');
-  const preview = mountPreview(t, 'ImageFilePreview', { loadBytes: (value) => value.file_id === 'a' ? first.promise : Promise.resolve(new ArrayBuffer(1)) });
+  const preview = mountPreview(t, 'ImageFilePreview', { loadBytes: (value) => value.file_id === 'a' ? first.promise : Promise.resolve(png()) });
   await preview.select('b');
   await flush();
   first.resolve(new ArrayBuffer(2));
@@ -250,25 +260,26 @@ test('HTML resource finishing after unmount does not create or leak a blob URL',
   const preview = mountPreview(t, 'HtmlFilePreview', { relatedFiles });
   await flush();
   preview.unmount();
-  body.resolve(new Blob(['image']));
+  body.resolve(new Blob([png()]));
   await flush();
   assert.equal(create.mock.callCount(), 0);
 });
 
-test('HTML blob resources are released on replacement and on unmount', async (t) => {
+test('HTML embedded resources are replaced without allocating parent-origin blobs', async (t) => {
   const relatedFiles = vue.ref([file('report', 'html'), file('asset', 'png')]);
-  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, text: async () => '<img src="asset.png">', blob: async () => new Blob(['image']) }));
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, text: async () => '<img src="asset.png">', blob: async () => new Blob([png()]) }));
   let count = 0;
   t.mock.method(URL, 'createObjectURL', () => `blob:test-${++count}`);
   const revoked = [];
   t.mock.method(URL, 'revokeObjectURL', (url) => revoked.push(url));
   const preview = mountPreview(t, 'HtmlFilePreview', { relatedFiles });
   await flush();
-  assert.equal(preview.state.objectUrls.value.length, 1);
+  assert.equal(preview.state.resolvedCount.value, 1);
   await preview.select('b');
   await flush();
-  assert.deepEqual(revoked, ['blob:test-1']);
-  assert.deepEqual(preview.state.objectUrls.value, ['blob:test-2']);
+  assert.deepEqual(revoked, []);
+  assert.equal(count, 0);
+  assert.equal(preview.state.resolvedCount.value, 1);
   preview.unmount();
-  assert.deepEqual(revoked, ['blob:test-1', 'blob:test-2']);
+  assert.deepEqual(revoked, []);
 });

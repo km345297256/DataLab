@@ -23,12 +23,6 @@ from app.infrastructure.storage.mongodb import get_mongodb
 from app.interfaces.dependencies import get_current_user
 
 
-class ReadOnlyDatasets(DataCenterDatasetService):
-    async def ensure_seed_data(self):
-        # A diagnostic must never create missing seed records as a side effect.
-        return None
-
-
 async def main():
     logging.disable(logging.CRITICAL)
     mongo = get_mongodb()
@@ -38,7 +32,7 @@ async def main():
         database = mongo.client[get_settings().mongodb_database]
         await init_beanie(database=database, document_models=[DataCenterDatasetDocument, TemporaryDatasetDocument], skip_indexes=True)
         actor = await get_current_user()
-        service = ReadOnlyDatasets()
+        service = DataCenterDatasetService()
         documents = await database.data_center_datasets.find({
             "enabled": True,
             "$or": [{"is_submission": {"$ne": True}}, {"created_by": actor.id}],

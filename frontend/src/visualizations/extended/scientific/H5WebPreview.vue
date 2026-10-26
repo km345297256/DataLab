@@ -14,8 +14,11 @@
       <label v-for="(size, index) in sliceShape" :key="index">dim_{{ index }} <input v-model.number="indices[index]" type="number" min="0" :max="size - 1" step="1" class="w-16 border" /></label>
       <button class="rounded border px-2" type="submit" :disabled="loading || !path">读取切片</button>
     </form>
+    <ViewToolbar :context="viewContext" :color="renderedArray?.shape.length === 2" :extent="renderedArray ? finiteExtent(renderedArray.values) : null" @restore="restoreView" @color-range="setColorRange" @reset="resetView" />
+    <p v-if="viewContext" class="mb-2 text-xs">{{ semanticNote }}；其余维度按当前索引固定。参数恢复会重新校验文件版本。</p>
     <div v-show="datasets.length" ref="target" class="flex flex-none flex-col bg-white" style="height: 480px" />
     <p v-if="!loading && !datasets.length" class="text-xs">目录中没有当前预算内可绘制的数值节点；元数据仍可浏览。</p>
+    <p v-if="typeof metadata.calendar === 'string' && metadata.calendar" class="text-xs">时间日历：{{ metadata.calendar }}；时间值未转换为公历日期。</p>
     <p v-if="sampled" class="text-xs text-amber-700">显示有界切片／降采样；其余维度默认索引 0。</p>
   </PreviewFrame>
 </template>
@@ -25,19 +28,33 @@ import type { FileInfo } from '../../../api/file';
 import type { VisualizationPlugin } from '../../contract';
 import { usePreviewLoad } from '../../../composables/usePreviewLoad';
 import { requestPreview } from '../runtime';
-import { parseArray, plainLabel } from './data';
+import { parseArray, plainLabel, type PreviewArray } from './data';
+import ViewToolbar from '../../ViewToolbar.vue';
+import { viewSemantics, type NumericRange, type VisualizationViewContext } from '../../viewContext';
+import { finiteExtent } from '../../plot';
 import PreviewFrame from './PreviewFrame.vue';
 const props = defineProps<{ file: FileInfo; plugin: VisualizationPlugin }>();
+const emit=defineEmits<{(e:'view-context',context:VisualizationViewContext|null):void}>();
+const viewContext=ref<VisualizationViewContext|null>(null),colorRange=ref<NumericRange>(),renderedArray=ref<PreviewArray>(),metadata=ref<Record<string,unknown>>({});
+let appliedParams:Record<string,unknown>={},redraw:(()=>void)|undefined,renderEpoch=0;
+const semanticNote=computed(()=>`${viewSemantics(metadata.value).valueSemantics==='physical'?'物理值':'原始存储值'}${typeof metadata.value.units==='string'&&metadata.value.units?' · '+metadata.value.units:''}；${typeof metadata.value.missing_value_policy==='string'?metadata.value.missing_value_policy:'非有限值保持缺失'}`);
+function publishContext(){if(!version.value||!renderedArray.value)return;viewContext.value={schemaVersion:1,fileId:props.file.file_id,version:version.value,pluginId:props.plugin.id,pluginVersion:props.plugin.version,adapter:props.plugin.adapter,family:'h5web',request:{operation:'preview',params:JSON.parse(JSON.stringify(appliedParams))},view:{kind:String(appliedParams.kind),title:String(appliedParams.path),...viewSemantics(metadata.value),sampled:sampled.value,...(colorRange.value?{colorRange:[...colorRange.value] as NumericRange}:{})}};emit('view-context',viewContext.value);}
+function clearContext(){viewContext.value=null;emit('view-context',null);redraw=undefined;}
+function setColorRange(range:NumericRange|undefined){colorRange.value=range;redraw?.();publishContext();}
+function resetView(){renderEpoch++;redraw?.();publishContext();}
+async function restoreView(context:VisualizationViewContext){const p=context.request.params;if(!datasets.value.some(d=>d.path===p.path)){error.value='恢复参数中的变量不在当前目录。';return;}path.value=String(p.path);kind.value=p.kind as 'series'|'heatmap';indices.value=[...(p.indices as number[])];colorRange.value=context.view.colorRange;await loadData();}
 const scope = usePreviewLoad(), target = ref<HTMLDivElement>(), loading = ref(false), error = ref(''), sampled = ref(false);
 const datasets = ref<Array<{ path: string; shape?: number[] }>>([]), path = ref(''), kind = ref<'series' | 'heatmap'>('series');
 const nodes = ref<Array<{ path: string; node_type: string; shape?: number[]; dtype?: string }>>([]), warnings = ref<string[]>([]), version = ref<string>();
 const indices = ref<number[]>([]);
 const sliceShape = computed(() => { const shape = datasets.value.find((node) => node.path === path.value)?.shape ?? []; return shape.slice(0, Math.max(0, shape.length - (kind.value === 'series' ? 1 : 2))); });
 async function loadData() {
-  const load = scope.begin(); loading.value = true; error.value = '';
+  clearContext();const load = scope.begin(); loading.value = true; error.value = '';
   try {
-    const result = await requestPreview(props.file, props.plugin, { version: version.value, path: path.value, kind: kind.value, indices: sliceShape.value.map((_, index) => indices.value[index] ?? 0) }, load.signal);
+  const requested={path:path.value,kind:kind.value,indices:sliceShape.value.map((size,index)=>{const n=indices.value[index]??0;if(!Number.isSafeInteger(n)||n<0||n>=size)throw new Error('切片索引超出范围。');return n;})};
+    const result = await requestPreview(props.file, props.plugin, { version: version.value, ...requested }, load.signal);
     load.assertCurrent();
+    if(result.version!==version.value)throw new Error('文件版本变化，请重新打开。');
     const array = parseArray(result.array);
     const [React, ReactDom, H5, ndarray] = await Promise.all([import('react'), import('react-dom/client'), import('@h5web/lib'), import('ndarray'), import('@h5web/lib/styles.css')]);
     load.assertCurrent(); await nextTick(); load.assertCurrent();
@@ -47,16 +64,18 @@ async function loadData() {
     const finite = array.values.filter((value): value is number => value !== null);
     const domain: [number, number] | undefined = finite.length ? [Math.min(...finite), Math.max(...finite)] : undefined;
     const dataArray = ndarray.default(Float64Array.from(array.values.map((value) => value ?? NaN)), array.shape);
-    const metadata = result.metadata as Record<string, unknown> | undefined;
-    const steps = Array.isArray(metadata?.strides) && metadata.strides.every((step) => typeof step === 'number' && step >= 1) ? metadata.strides as number[] : array.shape.map(() => 1);
-    const common = { dataArray, domain, title: plainLabel(path.value), showGrid: true, abscissaParams: { label: '原数组索引', value: Float64Array.from({ length: array.shape[array.shape.length - 1]! }, (_, index) => index * (steps[steps.length - 1] ?? 1)) } };
-    root.render(array.shape.length === 1 ? react.createElement(H5.LineVis, common) : react.createElement(H5.HeatmapVis, { ...common, colorMap: 'Viridis', ordinateParams: { label: '原数组索引', value: Float64Array.from({ length: array.shape[0]! }, (_, index) => index * (steps[0] ?? 1)) } }));
+    const meta = result.metadata as Record<string, unknown> | undefined;
+    metadata.value=meta??{};renderedArray.value=array;appliedParams=requested;
+    const steps = Array.isArray(meta?.strides) && meta.strides.every((step) => typeof step === 'number' && step >= 1) ? meta.strides as number[] : array.shape.map(() => 1);
+    const common = { dataArray, domain, title: plainLabel(requested.path), showGrid: true, abscissaParams: { label: '原数组索引', value: Float64Array.from({ length: array.shape[array.shape.length - 1]! }, (_, index) => index * (steps[steps.length - 1] ?? 1)) } };
+    redraw=()=>root.render(array.shape.length === 1 ? react.createElement(H5.LineVis, {...common,key:renderEpoch}) : react.createElement(H5.HeatmapVis, { ...common,key:renderEpoch,domain:colorRange.value??domain, colorMap: 'Viridis', ordinateParams: { label: '原数组索引', value: Float64Array.from({ length: array.shape[0]! }, (_, index) => index * (steps[0] ?? 1)) } }));redraw();
     warnings.value = Array.isArray(result.warnings) ? result.warnings.map(value => plainLabel(value)) : [];
-    sampled.value = result.sampled === true;
+    sampled.value = result.sampled === true;publishContext();
   } catch (reason) { if (load.isCurrent()) error.value = reason instanceof Error ? reason.message : 'HDF5 切片读取失败。'; }
   finally { if (load.isCurrent()) loading.value = false; }
 }
 watch([() => props.file.file_id, () => props.plugin.id], async () => {
+  clearContext();colorRange.value=undefined;renderedArray.value=undefined;
   const load = scope.begin(); loading.value = true; error.value = ''; datasets.value = []; nodes.value = []; warnings.value = []; version.value = undefined; path.value = '';
   try {
     const result = await requestPreview(props.file, props.plugin, { kind: 'tree' }, load.signal); load.assertCurrent();

@@ -1,0 +1,5 @@
+{
+  "kind": "response",
+  "stage": "synthetic_plan_review",
+  "content": "{\"scripts\":[{\"script_path\":\"scripts/longitudinal_report.py\",\"support\":{\"status\":\"accepted\",\"explanation\":\"公开接口以 --input 读取 JSON、以 --output 指定输出目录，支持将该无效用例的输出位置绑定为同一输入文件，并在写操作前执行路径相异校验；该脚本可承载本用例的路径保护与输入只读验收。\"},\"cases\":[{\"case_id\":\"invalid_same_path\",\"input_validity\":{\"status\":\"accepted\",\"explanation\":\"same_path.json 五张表齐全且类型为数组；observations 标识与单位有效；pairs 的 A、B 两组各有 2 个完整配对，满足每组 2 至 12 个；associations 有 2 个完整行；hypotheses 与 long_rows 为空数组合法。数据本身满足输入契约，非法性来自 --output 与 --input 解析为同一实际路径。\"},\"exit_behavior\":{\"status\":\"accepted\",\"explanation\":\"契约要求 --input 与 --output 解析后的实际路径不同，并在任何写操作前拒绝。该用例把 --output 绑定到已声明的输入文件本身，因此应非零退出且不产生或覆盖输出；reference_evidence 记录实际退出码 2 且输入哈希不变，与本项 nonzero 预期一致，不额外猜测精确代码。\"},\"method_coverage\":{\"status\":\"accepted\",\"explanation\":\"本用例针对路径冲突保护，实际覆盖 R002 的输入输出路径必须不同、R020 的写操作须在校验之后、R019 的输入文件不被修改，以及 R018 的无效任务不产生部分输出；不进行统计计算符合其无效路径用例目的。其余六类科学计算由完整计划中的正常与边界用例覆盖，本片段未遗漏本用例应检验的关键行为。\"},\"assertions\":[]}]}]}"
+}

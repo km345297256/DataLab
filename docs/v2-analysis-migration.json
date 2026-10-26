@@ -1,0 +1,405 @@
+{
+  "project": "DataLab",
+  "date": "2026-10-21",
+  "branch": "datalab",
+  "source": {
+    "repository": "km345297256/AI-DATASEEK",
+    "branch": "v2",
+    "commit": "1e3963c84ed376a03941df400a66f4018580f9bf"
+  },
+  "categories": [
+    {
+      "id": 1,
+      "name": "可信程序执行与长任务",
+      "batch": 1,
+      "code": [
+        "backend/app/domain/services/program_execution.py",
+        "sandbox/app/services/program.py"
+      ],
+      "regression_tests": [
+        "backend/tests/test_program_execution.py",
+        "backend/tests/test_program_long_running.py",
+        "sandbox/tests/test_program_execution.py"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": []
+    },
+    {
+      "id": 2,
+      "name": "成果版本、局部修复与重复失败治理",
+      "batch": 1,
+      "code": [
+        "backend/app/domain/services/artifact_write_progress.py",
+        "backend/app/domain/services/agent_task_runner.py"
+      ],
+      "regression_tests": [
+        "backend/tests/test_artifact_submitted_revision.py",
+        "backend/tests/test_analysis_artifact_repair.py"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": [
+        "F6"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "请求回执、断线恢复、停止观察与终态持久化",
+      "batch": 1,
+      "code": [
+        "backend/app/domain/services/input_delivery.py",
+        "frontend/src/pages/ChatPage.vue"
+      ],
+      "regression_tests": [
+        "backend/tests/test_input_receipt.py",
+        "frontend/tests/inputReceiptLifecycle.test.mjs",
+        "frontend/tests/chatRequestLifecycle.test.mjs"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": []
+    },
+    {
+      "id": 4,
+      "name": "CSV、Unicode、Excel、NetCDF与GeoTIFF探查",
+      "batch": 2,
+      "code": [
+        "sandbox/scripts/dataset_quicklook.py"
+      ],
+      "regression_tests": [
+        "sandbox/tests/test_dataset_quicklook.py"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": []
+    },
+    {
+      "id": 5,
+      "name": "冻结分析输入、同名文件隔离与连续追问",
+      "batch": 2,
+      "code": [
+        "backend/app/domain/services/analysis_input_selection.py",
+        "backend/app/domain/services/execution_history.py",
+        "frontend/src/utils/analysisInputs.ts"
+      ],
+      "regression_tests": [
+        "backend/tests/test_execution_history_projection.py",
+        "backend/tests/test_user_evaluated_history.py"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": [
+        "F1",
+        "F2"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "成果字节、版本、Markdown与IPYNB校验",
+      "batch": 2,
+      "code": [
+        "sandbox/app/services/artifact_validation.py",
+        "backend/app/domain/services/analysis_checkpoint.py"
+      ],
+      "regression_tests": [
+        "sandbox/tests/test_artifact_validation.py",
+        "backend/tests/test_analysis_delivery_flow.py",
+        "backend/tests/test_datalab_persistence_compatibility.py"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": [
+        "F5",
+        "B1"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "工具真实状态、长对话视图与日志分页",
+      "batch": 3,
+      "code": [
+        "frontend/src/utils/conversationViewport.ts",
+        "frontend/src/utils/shellOutputPage.ts"
+      ],
+      "regression_tests": [
+        "frontend/tests/toolTimeline.test.mjs",
+        "frontend/tests/conversationViewport.test.mjs",
+        "frontend/tests/shellOutputPage.test.mjs"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": [
+        "F4",
+        "F6"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "SVG矢量下载、安全预览与结果图片",
+      "batch": 3,
+      "code": [
+        "backend/app/application/services/svg_visualization.py",
+        "sandbox/app/services/svg_validation.py"
+      ],
+      "regression_tests": [
+        "backend/tests/test_svg_delivery_contract.py",
+        "sandbox/tests/test_svg_preview.py",
+        "frontend/tests/svgPreview.test.mjs"
+      ],
+      "coverage_status": "implemented_with_regression_coverage",
+      "resolved_coverage_findings": []
+    }
+  ],
+  "preserved": [
+    "DataLab身份认证",
+    "个人数据与上传文件",
+    "开放数据检索和获取",
+    "DataRun与阶段成果",
+    "FASTQ和自定义格式交付",
+    "只读数据挂载及主机路径隐私"
+  ],
+  "supporting_changes": [
+    "模型路由、重试与响应投影",
+    "资源关闭与输入租约",
+    "持久化冻结合同及旧DataLab记录兼容"
+  ],
+  "deferred": [],
+  "rollback_limit": "旧DataLab记录可以读取；新增非空output_paths/objective成果合同不能降级交给旧版严格读取器。源v2也不是DataLab记录的回滚目标。",
+  "validation": {
+    "frontend": {
+      "unit_passed": 3059,
+      "unit_failed": 0,
+      "type_check": "passed",
+      "build": "passed",
+      "build_id": "528d600b90494c5eba5e52d5d29cef2ee764742f81510083b9a5674804e71ee7",
+      "chromium_webkit_scenarios_passed": 14,
+      "image_build_id": "fdeb19597e6082e9f0682a0136ffc6cb8ba789e7ee8d62b2318ba7efa79879f0",
+      "additional_connector_browser_smoke": "passed: 50 options, 49 official logos, dark background, mobile widths and focus"
+    },
+    "sandbox": {
+      "passed": 6164,
+      "skipped": 84,
+      "subtests_passed": 563,
+      "image_current_source_hash_matches": true,
+      "runtime_paths_verified": 258
+    },
+    "plugin_host": {
+      "passed": 84
+    },
+    "production_tools": {
+      "passed": 59,
+      "real_isolated_archive": "passed: tar content, SHA256, durable archive before stop, permissions, six rejection cases; temporary resources cleaned"
+    },
+    "jupyter_real_docker": {
+      "named_volume": "passed",
+      "host_backed_volume": "passed",
+      "idle_reopen_preserved": true,
+      "cross_user_rejected": true,
+      "temporary_resources_cleaned": true,
+      "platform": "Colima"
+    },
+    "regression_entrypoint": {
+      "path": "scripts/check-regressions.sh",
+      "container_mode": "disposable containers with isolated database endpoints and datalab-regression labels; no production Compose run",
+      "shell_syntax": "passed"
+    },
+    "compose_config": "passed",
+    "visualization_contract": {
+      "passed": true,
+      "adapters": 78
+    },
+    "persistence_contract": {
+      "ok": true,
+      "changes": []
+    },
+    "shared_source_task": {
+      "frozen": true,
+      "new_independent_sources": 32,
+      "new_connector_entries": 35,
+      "included_in_final_tests_and_build": true,
+      "evidence": "docs/open-data-batch30-validation.json",
+      "runtime_api_smoke": "passed: 49 catalog entries, 35 new entries visible; quoted caffeine search, validation, acquisition, personal-library save and 4002-byte SDF download matched the acquisition SHA256; temporary records and files cleaned"
+    },
+    "backend": {
+      "passed": 10210,
+      "skipped": 42,
+      "subtests_passed": 190,
+      "failed": 0,
+      "duration_seconds": 94.49,
+      "production_source_stable_during_tests": true
+    }
+  },
+  "deployment": {
+    "status": "deployed_and_verified",
+    "release": "v2-completion-20261021-r2",
+    "project": "datalab",
+    "services_updated": [
+      "backend",
+      "frontend"
+    ],
+    "url": "http://localhost:10030",
+    "images": {
+      "frontend": {
+        "reference": "datalab-frontend:v2-completion-20261021-r2",
+        "id": "sha256:05fbccb788fc22d74f4bf0dbc4b973af352fabbbef89a97699966511059ef5fa"
+      },
+      "backend": {
+        "reference": "datalab-backend:v2-completion-20261021-r2",
+        "id": "sha256:47c61683de0515558d52ba5a1321d636a35e7382e0e382b17b60ee290d3101ae"
+      },
+      "sandbox": {
+        "reference": "datalab-sandbox:v2-completion-20261021",
+        "id": "sha256:3bfa64052012edafda6e1ff74623d0534462579af34a49e41d9bfdd354e8c914"
+      },
+      "jupyter": {
+        "reference": "datalab-jupyter:v2-completion-20261021",
+        "id": "sha256:cc7f57b9e784adcf3f76a8d782d5bc5f5e4011820ef0f6eec5e0cb5ef4b146bf"
+      },
+      "mongodb": {
+        "reference": "datalab-mongodb:v2-completion-20261021-r2",
+        "id": "sha256:b6421fd6d1c5ded6377b397d8983e2f82e2100dc5123332dcfda2065a472be5b"
+      },
+      "redis": {
+        "reference": "datalab-redis:v2-completion-20261021-r2",
+        "id": "sha256:352c1fdadc91926edda08f45aeb3f27f37194c2f14101229c0523a11195c96e3"
+      },
+      "minio": {
+        "reference": "datalab-minio:v2-completion-20261021-r2",
+        "id": "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
+      }
+    },
+    "sandbox_and_jupyter_reused": true,
+    "checks": {
+      "status": "passed",
+      "build_id": "fdeb19597e6082e9f0682a0136ffc6cb8ba789e7ee8d62b2318ba7efa79879f0",
+      "frontend_image": "sha256:05fbccb788fc22d74f4bf0dbc4b973af352fabbbef89a97699966511059ef5fa",
+      "backend_image": "sha256:47c61683de0515558d52ba5a1321d636a35e7382e0e382b17b60ee290d3101ae",
+      "homepage_release_contract": "passed",
+      "index_and_manifest_no_store": true,
+      "hashed_asset_immutable": true,
+      "missing_asset_404": true,
+      "offline_cesium_tile": "passed",
+      "backend_source_files_matched": 601,
+      "backend_startup_tracebacks": 0,
+      "existing_backend_data_mounts_preserved": true,
+      "unaffected_containers_verified": 27,
+      "quoted_pubchem_real_api_download": "passed",
+      "test_data_cleanup_verified": true,
+      "active_release_blocks_ordinary_compose_mutation": true
+    },
+    "build_cache_cleanup": {
+      "reclaimed_gb": 5.31,
+      "docker_available_after_gib": 2.5,
+      "images_and_volumes_preserved": true,
+      "passes": 2
+    },
+    "initial_release": "v2-completion-20261021",
+    "final_patch_services": [
+      "backend"
+    ]
+  },
+  "git_commit_or_push": false,
+  "coverage_audit": {
+    "date": "2026-10-21",
+    "status": "all_confirmed_gaps_resolved_and_deployed",
+    "report": "docs/v2-coverage-audit.json",
+    "note": "8项审计缺口、全部延期功能和配套验收工具均已实现并部署；核对表区分已执行测试与尚未执行的付费模型质量/整套84类HTTP专项。"
+  },
+  "prior_implementation": {
+    "note": "第一轮三批迁入的历史测试及部署记录，后经审计发现8项缺口。本次状态见当前validation/deployment和completion_checklist。",
+    "validation": {
+      "backend": {
+        "passed": 9625,
+        "skipped": 43,
+        "subtests_passed": 190
+      },
+      "sandbox": {
+        "passed": 6164,
+        "skipped": 84,
+        "subtests_passed": 563
+      },
+      "plugin_host": {
+        "passed": 84
+      },
+      "frontend": {
+        "passed": 3008,
+        "final_focused_passed": 63,
+        "type_check": "passed",
+        "build": "passed",
+        "chromium_chat_page_checks": 8,
+        "chromium_open_data_regression": "passed",
+        "webkit": "not installed; not run",
+        "dist_sha256": "f60e2ac4a13a3d766aa333bdf368788a4053b968df886ef33075c1894e5c3e4f"
+      },
+      "compose_config": "passed",
+      "persistence_contract": "passed",
+      "real_mongodb": {
+        "isolated_tests_passed": 15,
+        "checkpoint_checks_passed": 15,
+        "input_delivery_checks_passed": 6,
+        "cleanup_verified": true
+      },
+      "parallel_source_updates": {
+        "included": true,
+        "source_task_freeze_confirmed": true,
+        "note": "最终全量后端回归包含数据源底座的13个新增测试"
+      },
+      "runtime_http_smoke": {
+        "program_exit_status": "passed",
+        "base_agent_same_argument_recovery": "passed",
+        "long_running_seconds": 125.38,
+        "cancellation_and_terminal_receipt": "passed",
+        "unicode_log_bytes": 230000,
+        "unicode_log_pages": 57,
+        "safe_svg_png": "passed",
+        "script_svg_rejected": true,
+        "disposable_container_cleaned": true
+      }
+    },
+    "deployment": {
+      "status": "deployed_and_verified",
+      "project": "datalab",
+      "default_url": "http://localhost:10030",
+      "reuse": "沙盒依赖文件哈希一致，复用现有科学运行时；Jupyter镜像不变",
+      "url": "http://localhost:10030",
+      "images": {
+        "backend": {
+          "image_id": "sha256:ff60862ba6f0c7294e0e3e8061da0fcd77e4c03c1932a8c24d4c3361b1c18e13",
+          "state": "running"
+        },
+        "frontend": {
+          "image_id": "sha256:e7a0aa089fbdc354a1cc88e62f235a41af4912e094125d4fda730182e42b9298",
+          "state": "running"
+        },
+        "sandbox-image": {
+          "image_id": "sha256:3bfa64052012edafda6e1ff74623d0534462579af34a49e41d9bfdd354e8c914",
+          "state": "exited"
+        }
+      },
+      "checks": {
+        "frontend_html_and_js": "HTTP 200",
+        "backend_frontend_config": "HTTP 200",
+        "client_protocol": 1,
+        "input_selection_and_receipt_routes": "registered",
+        "startup_errors": 0,
+        "startup_tracebacks": 0,
+        "existing_download": "resumed with bytes above pre-deployment checkpoint",
+        "other_existing_containers_unchanged": 14
+      },
+      "build_cache_cleanup": {
+        "reclaimed_gb": 2.472,
+        "docker_available_gib_after": 5.6,
+        "images_and_data_volumes_preserved": true
+      }
+    }
+  },
+  "previously_deferred": [
+    "离线Cesium底图",
+    "Jupyter长期归档",
+    "DataSeek生产部署治理"
+  ],
+  "additional_completed": [
+    "Cesium离线底图与故障降级",
+    "Jupyter宿主持久归档及闲置回收保留",
+    "DataLab受控发布与停服归档",
+    "前端实际构建版本清单与兼容提示",
+    "当前用户file_id输入的离线评测框架",
+    "可视化样例目录与HTTP门禁",
+    "完整Chromium/WebKit浏览器矩阵"
+  ],
+  "completion_checklist": "docs/v2-completion-checklist.json"
+}

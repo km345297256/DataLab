@@ -48,6 +48,7 @@ OFFICE_PDF_SETTINGS = {
     "ExportFormFields": False,
 }
 FORMATS = {
+    "svg": {"svg"},
     "mysql-sdi": {"ibd"}, "sst-records": {"sst", "ldb"},
     "database-table": {"duckdb", "ddb", "dbf", "mdb", "accdb"},
     "sql-dump": {"sql"}, "pg-dump": {"pgdump", "dump", "backup", "tar"},
@@ -70,6 +71,7 @@ FORMATS = {
     "geoformat": {"asc", "grd", "kml"}, "mca": {"mca"}, "czi": {"czi"},
 }
 KINDS = {
+    "svg": {"image"},
     "mysql-sdi": {"tree"}, "sst-records": {"tree"},
     "database-table": {"tree", "table"},
     "sql-dump": {"tree", "table"}, "pg-dump": {"tree"},
@@ -88,6 +90,7 @@ KINDS = {
     "geoformat": {"map"}, "mca": {"series"}, "czi": {"tree", "image"},
 }
 OPTIONS = {
+    "svg": set(),
     "mysql-sdi": set(), "sst-records": set(),
     "database-table": {"table", "columns", "row_offset", "row_limit"},
     "sql-dump": {"dialect", "table", "columns", "row_offset", "row_limit"}, "pg-dump": set(),
@@ -188,13 +191,20 @@ def _cell(value):
     if isinstance(value, (datetime, date, datetime_time)):
         return value.isoformat()
     if isinstance(value, (int, float)):
+        if isinstance(value, int) and abs(value) > 2**53 - 1:
+            return str(value)  # Tables retain exact integers as text; plots reject unsafe conversion.
         return value if math.isfinite(value) else None
     return _label(value, 512)
 
 
 def _numbers(values):
     import numpy as np
-    array = np.ma.asarray(values, dtype=float).filled(float("nan"))
+    source = np.ma.asarray(values)
+    if source.dtype.kind in "iu" and any(abs(int(value)) > 2**53 - 1 for value in source.compressed()):
+        raise PreviewError("整数超出浏览器可精确表示的范围，请使用表格原文或分析工具。")
+    if source.dtype.kind == "f" and source.dtype.itemsize > 8:
+        raise PreviewError("当前数值精度超出 Float64 预览范围，请使用分析工具。")
+    array = source.astype(float).filled(float("nan"))
     if array.size > MAX_ARRAY_VALUES:
         raise PreviewError("数组超过交互式显示预算。")
     return [float(v) if math.isfinite(float(v)) else None for v in array.flat]
@@ -241,7 +251,10 @@ def _array_result(reader, kind, array, options):
                        "values": _numbers(selected)}
     result["selected"] = {"indices": fixed}
     result["metadata"] = {"source_shape": list(array.shape), "strides": steps,
-                          "axis_coordinates": "index", "selection": "strided sample; no aggregation"}
+                          "axis_coordinates": "index", "selection": "strided sample; no aggregation",
+                          "value_semantics": "raw", "units": "", "calendar": "",
+                          "missing_value_policy": "non-finite values are null; finite fill values retained",
+                          "coordinate_semantics": "zero-based dimension indices"}
     result["sampled"] = bool(fixed) or any(step > 1 for step in steps)
     if result["sampled"]:
         result["warnings"].append("显示固定切片与等间隔抽样；未作全数组聚合，横轴为索引。")
@@ -328,7 +341,14 @@ def tabular_preview(data, fmt, kind, options, path):
             raise PreviewError("文本表格不支持数组变量和切片参数。")
         table, more = _csv_window(data, fmt, options.get("row_offset", 0), options.get("column_offset", 0))
         result = _base("tabular", kind)
-        result["table"], result["sampled"] = table, more or table["column_offset"] > 0 or table["total_columns"] > MAX_COLUMNS
+        result["table"], result["sampled"] = table, more or table["row_offset"] > 0 or table["column_offset"] > 0 or table["total_columns"] > MAX_COLUMNS
+        result["metadata"].update({"row_limit": MAX_ROWS, "column_limit": MAX_COLUMNS,
+                                  "selection": "contiguous data rows and columns; no aggregation",
+                                  "value_semantics": "raw", "units": "", "calendar": "",
+                                  "missing_value_policy": "empty and non-numeric cells are not plotted",
+                                  "coordinate_semantics": "selected column values or one-based data row indices"})
+        if result["sampled"]:
+            result["warnings"].append("仅显示当前连续行列窗口，曲线和直方图不代表完整文件的分布。")
         if kind != "table":
             x_col, y_cols = options.get("x_column"), options.get("y_columns")
             width = len(table["columns"])
@@ -478,6 +498,11 @@ def hdf5_preview(path, kind, options):
             array_result = _array_result("hdf5", kind, datasets[selected], options)
             result.update(array_result)
             result["selected"]["path"] = selected
+            attrs = _hdf_attributes(datasets[selected])
+            result["metadata"]["attributes"] = {key: attrs[key] for key in ("units", "calendar", "scale_factor", "add_offset", "_FillValue", "missing_value") if key in attrs}
+            result["metadata"]["units"] = attrs.get("units", "") if isinstance(attrs.get("units", ""), str) else ""
+            result["metadata"]["calendar"] = attrs.get("calendar", "") if isinstance(attrs.get("calendar", ""), str) else ""
+            result["warnings"].append("显示原始存储值；未应用 CF 缩放、偏移或有限填充值掩膜。物理解码请使用数组窗口的物理值模式。")
         result["tree"] = tree
         result["choices"] = {"variables": list(datasets)}
         if any(node["node_type"].startswith("blocked-") for node in tree):
@@ -1064,14 +1089,24 @@ FORMATS.update(migration.FORMATS)
 KINDS.update(migration.KINDS)
 
 
+def _input_limit(reader):
+    return 8 * 1024 * 1024 if reader == "svg" else migration.input_limit(reader)
+
+
 def preview_bytes(data, reader, kind, options=None, *, format=None, truncated=False):
     if reader not in FORMATS or kind not in KINDS[reader] or format not in FORMATS[reader]:
         raise PreviewError("未注册的扩展读取器、视图或格式。")
     options = _options(reader, {} if options is None else options)
     if type(truncated) is not bool or truncated:
         raise PreviewError("此扩展读取器需要完整的有界文件。")
-    if not isinstance(data, bytes) or not 0 < len(data) <= migration.input_limit(reader):
+    if not isinstance(data, bytes) or not 0 < len(data) <= _input_limit(reader):
         raise PreviewError("文件为空或超出此读取器的独立预算。")
+    if reader == "svg":
+        from app.services.svg_preview import svg_preview
+        try:
+            return svg_preview(data)
+        except (ValueError, TypeError):
+            raise PreviewError("SVG 内容或大小不符合静态预览要求；不支持脚本、外部资源或动态内容。") from None
     if reader in {"sql-dump", "pg-dump", "bson", "redis-rdb", "mysql-sdi", "sst-records"}:
         if len(data) > 16 * 1024 * 1024:
             raise PreviewError("数据库文件超过独立只读预算。")
@@ -1202,7 +1237,7 @@ def _encoded_result(stream=None):
         if (not isinstance(header, dict)
                 or set(header) - {"contract_version", "size", "reader", "kind", "format", "options", "truncated"}
                 or type(header.get("contract_version")) is not int or header["contract_version"] != 2
-                or type(header.get("size")) is not int or not 0 < header["size"] <= migration.input_limit(header.get("reader"))):
+                or type(header.get("size")) is not int or not 0 < header["size"] <= _input_limit(header.get("reader"))):
             raise PreviewError("无效的预览协议版本或大小。")
         data = stream.read(header["size"])
         if len(data) != header["size"] or stream.read(1):

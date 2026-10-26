@@ -40,12 +40,8 @@ from app.infrastructure.external.sandbox.node_health import execution_node_auth_
 from app.infrastructure.external.sandbox.runtime import WorkerAgentSandbox
 from app.infrastructure.external.sandbox.sandbox_pool import SandboxPool
 from app.interfaces.schemas.event import EventMapper
-from app.domain.services.skills.session_skill_creator import (
-    _derive_skill_metadata,
-    build_reference_files,
-    build_script_files,
-    build_skill_content_from_events,
-)
+from app.domain.services.skills.session_skill_creator import select_analysis_turn
+
 from app.domain.models.event import PlanEvent, PlanStatus
 from app.domain.models.plan import Plan
 from app.domain.utils.robust_json_parser import parse_json_lenient
@@ -822,7 +818,7 @@ async def test_explicit_attachment_outside_output_is_preserved_and_deduplicated(
 async def test_file_read_tool_event_does_not_upload_the_file_directly():
     class FakeSandbox:
         async def file_read(self, file_path):
-            return ToolResult(success=True, data={"content": "print('ready')"})
+            pytest.fail("Completed file_read events must not read the file again")
 
     runner = AgentTaskRunner.__new__(AgentTaskRunner)
     runner._agent_id = "agent-1"
@@ -840,6 +836,7 @@ async def test_file_read_tool_event_does_not_upload_the_file_directly():
         function_name="file_read",
         function_args={"file": "/home/ubuntu/output/plot.py"},
         status=ToolStatus.CALLED,
+        function_result=ToolResult(success=True, data={"content": "print('ready')"}),
     )
 
     await runner._handle_tool_event(event)
@@ -985,11 +982,24 @@ async def test_chat_recreates_missing_running_task(monkeypatch):
             )
             self.events = []
 
+        async def get_events(self, session_id):
+            return list(self.events)
+
         async def find_by_id_and_user_id(self, session_id, user_id):
             return self.session
 
         async def save(self, session):
             self.session = session
+
+        async def compare_and_set_task_id(
+            self, _session_id, *, expected_task_id, task_id, dataset_ids=None,
+        ):
+            if self.session.task_id != expected_task_id:
+                return False
+            self.session.task_id = task_id
+            if dataset_ids is not None:
+                self.session.dataset_ids = list(dataset_ids)
+            return True
 
         async def update_latest_message(self, session_id, message, timestamp):
             self.session.latest_message = message
@@ -1103,6 +1113,9 @@ async def test_chat_bootstrap_survives_sse_cancellation(monkeypatch):
             self.session = Session(id="session-1", user_id="user-1", agent_id="agent-1")
             self.events = []
             self.statuses = []
+
+        async def get_events(self, session_id):
+            return list(self.events)
 
         async def find_by_id_and_user_id(self, session_id, user_id):
             return self.session
@@ -1228,7 +1241,12 @@ async def test_chat_bootstrap_failure_after_sse_cancellation_is_persisted(monkey
 
     assert repository.session.status == SessionStatus.COMPLETED
     assert repository.events
-    assert repository.events[-1].error == "sandbox failed"
+    assert repository.events[-2].metadata["analysis_outcome"]["status"] == "failed"
+    assert repository.events[-2].metadata["analysis_outcome"]["reason_code"] == "input_preparation_failed"
+    assert repository.events[-2].metadata["execution_stage"] == "input_preparation"
+    assert repository.events[-2].metadata["analysis_started"] is False
+    assert repository.events[-1].error == repository.events[-2].message
+    assert "分析尚未开始" in repository.events[-1].error
 
 
 @pytest.mark.asyncio
@@ -1392,6 +1410,9 @@ async def test_agent_domain_service_resumes_paused_session_sandbox_before_reuse(
         async def save(self, session):
             self.saved.append(session.task_id)
 
+        async def compare_and_set_task_id(self, _session_id, **_kwargs):
+            return True
+
     sandbox = FakeSandbox()
     runtime = FakeRuntime(sandbox)
     service = AgentDomainService(
@@ -1419,7 +1440,7 @@ async def test_agent_domain_service_resumes_paused_session_sandbox_before_reuse(
 
 
 @pytest.mark.asyncio
-async def test_agent_domain_service_hydrates_replacement_sandbox_from_session_files():
+async def test_agent_domain_service_does_not_copy_persisted_files_to_replacement_sandbox():
     class FakeSandbox:
         id = "sandbox-new"
 
@@ -1460,16 +1481,12 @@ async def test_agent_domain_service_hydrates_replacement_sandbox_from_session_fi
         async def save(self, session):
             return None
 
+        async def compare_and_set_task_id(self, _session_id, **_kwargs):
+            return True
+
     class FakeFileStorage:
         async def download_file(self, file_id, user_id=None):
-            assert file_id == "minio:file-1"
-            assert user_id == "user-1"
-            return io.BytesIO(b"restored-data"), FileInfo(
-                file_id=file_id,
-                filename="AT-CORPUS-B006-test.zip",
-                file_path="/home/ubuntu/upload/AT-CORPUS-B006-test.zip",
-                content_type="application/zip",
-            )
+            raise AssertionError("Rebuilding a sandbox must not copy object storage inputs")
 
     sandbox = FakeSandbox()
     runtime = FakeRuntime(sandbox)
@@ -1501,9 +1518,7 @@ async def test_agent_domain_service_hydrates_replacement_sandbox_from_session_fi
 
     assert task.id == "task-1"
     assert session.sandbox_id == "sandbox-new"
-    assert sandbox.uploads == [
-        ("/home/ubuntu/upload/AT-CORPUS-B006-test.zip", "AT-CORPUS-B006-test.zip", b"restored-data")
-    ]
+    assert sandbox.uploads == []
     assert runtime.assigned == [("sandbox-new", "session-1", "task-1")]
 
 
@@ -1594,14 +1609,13 @@ async def test_agent_service_updates_session_collaborators_owner_only():
 
 
 @pytest.mark.asyncio
-async def test_agent_task_runner_syncs_non_seekable_storage_stream_to_sandbox():
-    class NonSeekableStream(io.BytesIO):
-        def seek(self, *args, **kwargs):
-            raise io.UnsupportedOperation("seek")
-
+async def test_agent_task_runner_uses_metadata_and_readonly_mount_without_storage_stream():
     class FakeFileStorage:
         async def download_file(self, file_id, user_id):
-            return NonSeekableStream(b"hello"), FileInfo(
+            raise AssertionError("Analysis inputs must not be copied from storage")
+
+        async def get_file_info(self, file_id, user_id):
+            return FileInfo(
                 file_id=file_id,
                 filename="数据文件.md",
                 user_id=user_id,
@@ -1609,11 +1623,13 @@ async def test_agent_task_runner_syncs_non_seekable_storage_stream_to_sandbox():
 
     class FakeSandbox:
         def __init__(self):
-            self.uploaded = None
+            self.verified = []
 
         async def file_upload(self, file_data, file_path, filename=None):
-            self.uploaded = (file_data.read(), file_path, filename)
-            return ToolResult(success=True)
+            raise AssertionError("Analysis inputs must not be uploaded into sandbox")
+
+        async def verify_readonly_inputs(self, files):
+            self.verified = files
 
     sandbox = FakeSandbox()
     runner = AgentTaskRunner.__new__(AgentTaskRunner)
@@ -1625,16 +1641,20 @@ async def test_agent_task_runner_syncs_non_seekable_storage_stream_to_sandbox():
     file_info = await runner._sync_file_to_sandbox("minio:file-1")
 
     assert file_info is not None
-    assert file_info.file_path == "/home/ubuntu/upload/数据文件.md"
-    assert sandbox.uploaded == (b"hello", "/home/ubuntu/upload/数据文件.md", "数据文件.md")
+    from app.domain.models.analysis_input import upload_runtime_path
+    assert file_info.file_path == upload_runtime_path(file_info)
+    assert file_info.file_path.startswith("/home/ubuntu/inputs/")
+    assert file_info.file_path.endswith("/数据文件.md")
+    assert len(sandbox.verified) == 1
+    assert sandbox.verified[0].file_id == "minio:file-1"
+    assert sandbox.verified[0].file_path is None
 
 
 @pytest.mark.asyncio
-async def test_optional_current_user_uses_system_identity():
-    user = await get_optional_current_user()
+async def test_optional_current_user_does_not_invent_an_identity():
+    user = await get_optional_current_user(credentials=None, auth_service=None)
 
-    assert user.id == "anonymous"
-    assert user.role == UserRole.ADMIN
+    assert user is None
 
 
 @pytest.mark.asyncio
@@ -1803,6 +1823,7 @@ async def test_sandbox_pool_discards_unavailable_warm_sandbox():
 
         async def destroy(self):
             self.destroyed = True
+            return True
 
     pool = SandboxPool(pool_size=1)
     stale = FakeSandbox("stale", False)
@@ -1829,7 +1850,8 @@ async def test_sandbox_pool_replenish_creates_one_sandbox_per_run():
     attempts = 0
     scheduled = 0
 
-    async def create_and_warm():
+    async def create_and_warm(*, wait_for_capacity):
+        assert wait_for_capacity is False
         nonlocal attempts
         attempts += 1
         return FakeSandbox()
@@ -1855,7 +1877,8 @@ async def test_sandbox_pool_replenish_schedules_retry_after_failure():
     attempts = 0
     scheduled = 0
 
-    async def create_and_warm():
+    async def create_and_warm(*, wait_for_capacity):
+        assert wait_for_capacity is False
         nonlocal attempts
         attempts += 1
         raise RuntimeError("node temporarily unavailable")
@@ -2177,8 +2200,12 @@ async def test_node_monitor_destroys_expired_paused_sandboxes(monkeypatch):
         type=ExecutionNodeType.LOCAL_DOCKER,
         runtime_config={"paused_sandbox_destroy_after_minutes": 30},
     )
+    from unittest.mock import AsyncMock
+    release_mounts = AsyncMock()
+    monkeypatch.setattr(node_monitor_module, "release_object_mount_helpers", release_mounts)
 
     await monitor._destroy_expired_paused_sandboxes(node)
+    release_mounts.assert_awaited_once()
 
     assert expired.status == "destroyed"
     assert expired.destroyed_at is not None
@@ -2241,7 +2268,7 @@ def test_agent_message_content_normalization_handles_none_and_non_string():
 
     assert normalize(None, None) == ""
     assert normalize(None, "skills") == "skills"
-    assert normalize(None, [{"type": "text", "text": "skills"}]) == "[{'type': 'text', 'text': 'skills'}]"
+    assert normalize(None, [{"type": "text", "text": "skills"}]) == "skills"
 
 
 def test_mcp_toolkit_exposes_builtin_list_tool_without_selected_servers():
@@ -2488,56 +2515,10 @@ async def test_message_event_metadata_survives_sse_mapping():
     assert sse_event.data.metadata["mcp_servers"] == ["mcp_demo"]
 
 
-def test_session_skill_generation_creates_real_referenced_resources():
-    events = [
-        MessageEvent(role="user", message="Analyze CSV revenue"),
-        ToolEvent(
-            tool_call_id="1",
-            tool_name="shell",
-            function_name="shell_exec",
-            function_args={"command": "python analyze.py revenue.csv"},
-            status=ToolStatus.CALLED,
-        ),
-        MessageEvent(role="assistant", message="Revenue analysis complete."),
-    ]
-
-    references = build_reference_files(events)
-    scripts = build_script_files(events)
-    skill_content = build_skill_content_from_events(events, references, scripts)
-
-    assert "references/session-summary.md" in references
-    assert "references/final-output.md" in references
-    assert "scripts/replay-commands.sh" in scripts
-    assert "`references/session-summary.md`" in skill_content
-    assert "`scripts/replay-commands.sh`" in skill_content
-
-
-def test_session_skill_name_uses_task_plan_not_skill_create_request():
-    events = [
-        MessageEvent(role="user", message="分析 Landsat 8 OLI 数据并计算 NDVI"),
-        PlanEvent(
-            status=PlanStatus.COMPLETED,
-            plan=Plan(
-                title="Landsat 8 OLI NDVI分析",
-                goal="分析用户上传的Landsat 8 OLI数据产品，计算并分析NDVI数值",
-            ),
-        ),
-        MessageEvent(role="user", message="使用/skill-create将这个流程替保存为可复用的技能"),
-        PlanEvent(
-            status=PlanStatus.COMPLETED,
-            plan=Plan(
-                title="Save Task Skill",
-                goal="Create a skill from the current session",
-            ),
-        ),
-    ]
-
-    name, description, triggers = _derive_skill_metadata(events)
-
-    assert name != "save-task-skill"
-    assert name == "landsat-8-oli-ndvi"
-    assert "NDVI" in description
-    assert "Landsat" in triggers
+def test_session_skill_selection_uses_latest_analysis_not_creation_turn():
+    events = [MessageEvent(role="user", message="分析 Landsat 数据并计算 NDVI"), MessageEvent(message="完成计算与验证。"),
+              DoneEvent(), MessageEvent(role="user", message="使用 /skill-creator 将这个流程保存为可复用的技能")]
+    assert select_analysis_turn(events) == events[:3]
 
 
 @pytest.mark.asyncio
@@ -2578,11 +2559,16 @@ async def test_plan_act_executes_skill_create_as_a_builtin_command():
     assert events[2].status == ToolStatus.CALLED
     assert isinstance(events[3], MessageEvent)
     assert "reusable-rainfall-analysis" in events[3].message
+    assert "尚未添加" in events[3].message
+    assert "添加到我的技能" in events[3].message
+    assert "下载技能包" in events[3].message
+    assert "尚未在新数据上运行验证" in events[3].message
     assert isinstance(events[4], DoneEvent)
 
 
 @pytest.mark.asyncio
-async def test_skill_toolkit_creates_private_skill_from_current_session(tmp_path):
+async def test_skill_toolkit_creates_draft_without_installing_from_current_session(tmp_path, monkeypatch):
+    from app.domain.models.skill_draft import SkillCreationView
     class FakeSessionRepository:
         async def find_by_id_and_user_id(self, session_id, user_id):
             return Session(id=session_id, user_id=user_id, agent_id="agent-1")
@@ -2608,25 +2594,46 @@ async def test_skill_toolkit_creates_private_skill_from_current_session(tmp_path
                 MessageEvent(role="user", message="/skill-create save this workflow"),
             ]
 
+    async def generated_skill(**kwargs):
+        assert kwargs["llm_overrides"] == {"model_name": "session-model"}
+        assert kwargs["usage_context"]["task_id"] == "task-1"
+        view = SkillCreationView(
+            id="a" * 32, name="csv-revenue-analysis",
+            description="Analyze revenue tables with a reusable monthly aggregation workflow",
+            triggers=["revenue aggregation"], applicability=["Revenue tables with date and amount columns"],
+            capabilities=["Monthly aggregation"],
+            resources=["SKILL.md", "references/input-contract.json", "references/validation.json"],
+            validation={"package": "passed", "script_syntax": "not_applicable", "workflow_execution": "not_run"},
+            installed=False, installed_skill_id=None,
+        )
+        return SimpleNamespace(name=view.name, public_view=lambda: view,
+                               owner_id="private-owner", package_file_id="private-object")
+    monkeypatch.setattr("app.domain.services.tools.skill.create_skill_from_session", generated_skill)
+
     registry = SkillRegistry(str(tmp_path / "skills"), user_id="user-1")
     toolkit = SkillToolkit(
         registry,
         session_id="session-1",
         user_id="user-1",
         session_repository=FakeSessionRepository(),
+        llm_overrides={"model_name": "session-model"},
+        usage_context={"task_id": "task-1"},
     )
 
     result = (await toolkit.get_tool("skill_create_from_session").ainvoke({"id": "1", "args": {}})).artifact
 
     assert result.success is True
-    assert result.data["scope"] == "user"
-    assert result.data["user_id"] == "user-1"
-    assert result.data["created_from_session_id"] == "session-1"
+    assert result.data["installed"] is False
+    assert result.data["installed_skill_id"] is None
+    assert {"user_id", "owner_id", "created_from_session_id", "package_file_id"}.isdisjoint(result.data)
     assert result.data["name"] == "csv-revenue-analysis"
     skill_dir = tmp_path / "skills" / "users" / "user-1" / result.data["name"]
-    assert (skill_dir / "SKILL.md").exists()
-    assert (skill_dir / "references" / "session-summary.md").exists()
-    assert (skill_dir / "scripts" / "replay-commands.sh").exists()
+    assert not skill_dir.exists()
+    assert registry.list_skills() == []
+    assert "SKILL.md" in result.data["resources"]
+    assert result.data["validation"]["workflow_execution"] == "not_run"
+    assert "path" not in result.data
+    assert not (skill_dir / "scripts" / "replay-commands.sh").exists()
 
 
 @pytest.mark.asyncio
@@ -2646,8 +2653,10 @@ async def test_approval_decision_enables_and_disables_mcp_server(monkeypatch):
                 }
             )
 
-        async def save_mcp_config(self, config):
-            saved_configs.append(config)
+        async def upsert_server(self, name, server, *, expected):
+            assert name == "sensitive-db"
+            assert expected.enabled is False
+            saved_configs.append(MCPConfig(mcpServers={name: server}))
 
     monkeypatch.setattr(
         "app.domain.services.approval_service.MongoMCPRepository",

@@ -7,6 +7,20 @@ from app.infrastructure.models.documents import SkillDocument
 
 
 class MongoSkillRepository(SkillRepository):
+    async def get_by_id(self, skill_id: str) -> Optional[Skill]:
+        doc = await SkillDocument.find_one(SkillDocument.skill_id == skill_id)
+        return doc.to_domain() if doc else None
+
+    async def delete_owned(self, skill: Skill, owner_id: str) -> None:
+        # Match identity and actual ownership again at the durable write.
+        result = await SkillDocument.get_pymongo_collection().delete_one({
+            "skill_id": skill.id, "path": skill.path,
+            "$or": [{"owner_user_id": owner_id},
+                    {"owner_user_id": {"$in": [None, ""]}, "user_id": owner_id}],
+        })
+        if not result.deleted_count:
+            raise ValueError("Skill changed before deletion")
+
     async def save(self, skill: Skill) -> Skill:
         existing = await SkillDocument.find_one(SkillDocument.skill_id == skill.id)
         if not existing:

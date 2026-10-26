@@ -1,0 +1,5 @@
+{
+  "kind": "response",
+  "stage": "synthetic_plan_review",
+  "content": "{\"scripts\":[{\"script_path\":\"scripts/longitudinal_report.py\",\"support\":{\"status\":\"accepted\",\"explanation\":\"该脚本为单个标准库实现，公开 --input JSON 文件与 --output 目录接口，能够承载本片段所审无效输入的拒绝检查；不将未审其他 case 的覆盖视为已通过。\"},\"cases\":[{\"case_id\":\"invalid_duplicate_long\",\"input_validity\":{\"status\":\"accepted\",\"explanation\":\"该合成输入符合 invalid 条件：五张表均为对象数组，long_rows 中同一 (id,feature) 组合重复；其余观测单位在默认 units 中、每组配对数与关联完整行数均可解析，因此无效性由重复键规则明确触发。\"},\"exit_behavior\":{\"status\":\"accepted\",\"explanation\":\"预期使用 nonzero 而非猜测具体退出码，符合公开接口对无效输入在任何写操作前拒绝的契约；参考证据显示实际非零退出，与预期不冲突。\"},\"method_coverage\":{\"status\":\"rejected\",\"explanation\":\"该 case 只检查非零退出码，未断言错误确实由 long_rows 重复 (id,feature) 引起；其他无关校验错误同样会导致非零退出。同时没有断言未创建输出目录及 report.json/wide.csv，无法检验 R018 要求的“不产生部分输出”。因此 R016 的重复键拒绝与 R018 的整体拒绝覆盖不完整，不能 accepted。\"},\"assertions\":[]}]}]}"
+}

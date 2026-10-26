@@ -7,6 +7,8 @@ import glob
 import asyncio
 import subprocess
 import mimetypes
+import stat
+import hashlib
 from typing import Optional, BinaryIO
 from fastapi import UploadFile
 from app.models.file import (
@@ -14,13 +16,16 @@ from app.models.file import (
     FileSearchResult, FileFindResult, FileUploadResult
 )
 from app.core.exceptions import AppException, ResourceNotFoundException, BadRequestException
+from app.services.file_patch import MAX_PATCH_BYTES, file_identity, directory_write_lock, apply_patch
+from app.schemas.file import FilePatchRequest
 
 
 class FileService:
     """File Operation Service"""
 
     async def read_file(self, file: str, start_line: Optional[int] = None, 
-                 end_line: Optional[int] = None, sudo: bool = False, max_length: Optional[int] = 10000) -> FileReadResult:
+                 end_line: Optional[int] = None, sudo: bool = False, max_length: Optional[int] = 10000,
+                 include_version: bool = False) -> FileReadResult:
         """
         Asynchronously read file content
         
@@ -36,6 +41,7 @@ class FileService:
         
         try:
             content = ""
+            version = {}
             
             # Read with sudo
             if sudo:
@@ -55,27 +61,54 @@ class FileService:
                 # Asynchronously read file
                 def read_file_async():
                     try:
+                        if include_version:
+                            with open(file, "rb") as snapshot:
+                                before = os.fstat(snapshot.fileno())
+                                if stat.S_ISREG(before.st_mode) and before.st_size <= MAX_PATCH_BYTES:
+                                    raw = snapshot.read(MAX_PATCH_BYTES + 1)
+                                    after = os.fstat(snapshot.fileno())
+                                    if (len(raw) != before.st_size or file_identity(before) != file_identity(after)
+                                            or file_identity(os.stat(file)) != file_identity(after)):
+                                        raise BadRequestException("File changed during versioned read; read it again")
+                                    version.update(file_sha256=hashlib.sha256(raw).hexdigest(),
+                                                   sha256_scope="full_file", file_size_bytes=len(raw),
+                                                   version_available=True)
+                                    return raw.decode("utf-8")
                         with open(file, 'r', encoding='utf-8') as f:
+                            # A preview must not allocate/decode the full source
+                            # before truncation. One extra character determines
+                            # whether the visible prefix is actually truncated.
+                            # Full-file search/replace explicitly pass None.
+                            if (
+                                start_line is None and end_line is None
+                                and max_length is not None and max_length > 0
+                            ):
+                                return f.read(max_length + 1)
                             return f.read()
                     except Exception as e:
+                        if isinstance(e, AppException):
+                            raise
                         raise AppException(message=f"Failed to read file: {str(e)}")
                 
                 # Execute IO operation in thread pool
                 content = await asyncio.to_thread(read_file_async)
             
             # Process line range
+            scope = "full_file"
             if start_line is not None or end_line is not None:
+                scope = "line_range"
                 lines = content.splitlines()
                 start = start_line if start_line is not None else 0
                 end = end_line if end_line is not None else len(lines)
                 content = '\n'.join(lines[start:end])
             
             if max_length is not None and max_length > 0 and len(content) > max_length:
+                scope = "prefix" if scope == "full_file" else "line_range_prefix"
                 content = content[:max_length] + "(truncated)"
             
             return FileReadResult(
                 content=content,
-                file=file
+                file=file, content_scope=scope, complete_content=scope == "full_file", **version
             )
         except Exception as e:
             if isinstance(e, BadRequestException) or isinstance(e, ResourceNotFoundException):
@@ -139,11 +172,41 @@ class FileService:
                 
                 # Asynchronously write file
                 def write_file_async():
+                    with directory_write_lock(os.path.dirname(file)):
+                        return write_locked()
+
+                def write_locked():
+                    # Compare bounded byte chunks before opening for mutation.
+                    # A matching request must not truncate, touch mtime, or
+                    # rewrite a saved script/report. Read errors still fall
+                    # through to normal write permission checks.
+                    encoded = content.encode('utf-8')
+                    try:
+                        with open(file, 'rb') as current:
+                            info = os.fstat(current.fileno())
+                            if stat.S_ISREG(info.st_mode):
+                                if append and not encoded:
+                                    return 0, False
+                                if not append and info.st_size == len(encoded):
+                                    offset = 0
+                                    while offset < len(encoded):
+                                        chunk = current.read(min(65536, len(encoded) - offset))
+                                        if not chunk or chunk != encoded[offset:offset + len(chunk)]:
+                                            break
+                                        offset += len(chunk)
+                                    if offset == len(encoded) and not current.read(1):
+                                        return 0, False
+                    except (FileNotFoundError, PermissionError):
+                        pass
                     mode = 'a' if append else 'w'
                     with open(file, mode, encoding='utf-8') as f:
-                        return f.write(content)
+                        f.write(content)
+                    return len(encoded), True
                 
-                bytes_written = await asyncio.to_thread(write_file_async)
+                bytes_written, changed = await asyncio.to_thread(write_file_async)
+                if not changed:
+                    return FileWriteResult(file=file, bytes_written=0, changed=False,
+                                           write_action="reuse", side_effect_state="not_started")
             
             return FileWriteResult(
                 file=file,
@@ -153,6 +216,9 @@ class FileService:
             if isinstance(e, BadRequestException):
                 raise e
             raise AppException(message=f"Failed to write file: {str(e)}")
+
+    async def apply_patch(self, request: FilePatchRequest):
+        return await asyncio.to_thread(apply_patch, request)
 
     async def str_replace(self, file: str, old_str: str, new_str: str, 
                    sudo: bool = False) -> FileReplaceResult:
@@ -172,6 +238,9 @@ class FileService:
         # the shortened preview.
         file_result = await self.read_file(file, sudo=sudo, max_length=None)
         content = file_result.content
+        if old_str == new_str:
+            return FileReplaceResult(file=file, replaced_count=0, changed=False,
+                                     write_action="reuse", side_effect_state="not_started")
         
         # Calculate replacement count
         replaced_count = content.count(old_str)

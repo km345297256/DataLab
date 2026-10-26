@@ -21,6 +21,7 @@ from app.domain.models.event import (
     ToolEvent,
     WaitEvent,
     StepEvent,
+    PlanEvent,
     StepStatus,
     FileToolContent,
     ShellToolContent,
@@ -32,6 +33,7 @@ from app.domain.models.event import (
     SkillToolContent,
 )
 from app.domain.utils.public_error import public_error_message
+from app.domain.utils.robust_json_parser import ToolCallParseError
 from app.domain.services.flows.plan_act import AgentStatus, PlanActFlow
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.browser import Browser
@@ -45,9 +47,16 @@ from app.domain.repositories.session_repository import SessionRepository
 from app.domain.repositories.mcp_repository import MCPRepository
 from app.domain.models.session import SessionStatus
 from app.domain.models.file import FileInfo
+from app.domain.models.analysis_input import (
+    assign_upload_namespace, build_analysis_inputs, upload_runtime_path, UPLOAD_INPUT_ROOT,
+)
+from app.domain.services.analysis_input_selection import snapshot_files
+from app.domain.services.analysis_terminal import terminal_analysis_message
 from app.domain.models.execution_environment import ExecutionEnvironmentSnapshot
 from app.domain.services.execution_environment import create_agent_execution_snapshot
 from app.domain.services.model_runtime import ModelBudgetStopped, model_execution_scope, model_stop_reason, analysis_budget_scope
+from app.domain.services.tool_settlement import tool_settlement_scope
+from app.domain.utils.shutdown import cleanup_steps, join_cleanup
 from app.infrastructure.repositories.mongo_model_trace_repository import get_model_trace_repository
 from app.domain.services.tools.mcp import MCPToolkit
 from app.domain.services.tools.interceptors import (
@@ -179,7 +188,18 @@ class AgentTaskRunner(TaskRunner):
         self._tool_approval_views: dict[str, Any] = {}
         self._llm_overrides = dict(llm_overrides or {})
         self._execution_snapshot: ExecutionEnvironmentSnapshot | None = None
-        self._mcp_tool = MCPToolkit()
+        from app.domain.services.tools.mcp_images import MCPImageContext
+        from app.domain.models.spill import SpillArtifactOwner
+        from app.core.config import get_settings
+        image_settings = get_settings()
+        mcp_images = None
+        if image_settings.mcp_image_results_enabled and image_settings.spill_enabled and spill_artifact_store is not None:
+            mcp_images = MCPImageContext(store=spill_artifact_store,
+                owner=SpillArtifactOwner(user_id=user_id, session_id=session_id),
+                provider=str(self._llm_overrides.get("model_provider") or image_settings.model_provider).lower().strip(),
+                model_name=self._llm_overrides.get("model_name") or image_settings.model_name,
+                settings=image_settings)
+        self._mcp_tool = MCPToolkit(image_context=mcp_images)
         self._front_controller_resolution = front_controller_resolution
         self._safety_policy_store = get_safety_policy_store()
         self._audit_service = AuditService()
@@ -333,6 +353,19 @@ class AgentTaskRunner(TaskRunner):
             # XADD would make live events and persisted history disagree.
             await reserve_sequence(self._session_id, event)
         await self._session_repository.add_event(self._session_id, event)
+        if isinstance(event, MessageEvent) and event.role == "assistant":
+            metadata = event.metadata or {}
+            if metadata.get("analysis_outcome"):
+                # Per-step delivery is not the final verdict of a multi-step
+                # turn. A later interrupted step must remain visibly unfinished.
+                if not metadata.get("step_id"):
+                    self._analysis_outcome_published = True
+                if metadata["analysis_outcome"].get("status") in {"succeeded", "partial"}:
+                    self._analysis_has_verified_result = True
+            preserved = getattr(self, "_prior_artifact_file_ids", None)
+            if preserved is None:
+                preserved = self._prior_artifact_file_ids = set()
+            preserved.update(item.file_id for item in event.attachments or [] if item.file_id)
         try:
             event_id = await task.output_stream.put(event.model_dump_json())
             event.id = event_id
@@ -632,6 +665,14 @@ class AgentTaskRunner(TaskRunner):
         """Only delete storage objects that this session created as artifacts."""
         if not file_info or not file_info.file_id or not file_info.metadata:
             return False
+        if file_info.file_id in getattr(self, "_analysis_preserved_file_ids", set()):
+            return False
+        # Output paths are working copies, but previously published object IDs
+        # are immutable history. A later turn may replace the path, never the
+        # storage object still referenced by an earlier message.
+        if (file_info.file_id in getattr(self, "_prior_artifact_file_ids", set())
+                or getattr(self, "_artifact_history_known", True) is False):
+            return False
         metadata = file_info.metadata
         return (
             metadata.get("source") == "sandbox_artifact"
@@ -668,7 +709,8 @@ class AgentTaskRunner(TaskRunner):
     ) -> Optional[FileInfo]:
         """Upload a changed file once and return its current FileInfo."""
         try:
-            if not file_path:
+            if (not file_path or self._is_data_center_dataset_path(file_path)
+                    or self._is_private_artifact_path(file_path)):
                 return None
             # A local repair must never replace/delete a previously verified
             # uploaded object. Validation later observes the current sandbox
@@ -690,6 +732,9 @@ class AgentTaskRunner(TaskRunner):
             )
             if self._file_matches_fingerprint(existing_file, fingerprint):
                 existing_file.file_path = file_path
+                existing_file.metadata = {**(existing_file.metadata or {}),
+                                          "artifact_validation_scope": "file_integrity",
+                                          "content_assessment": "user_evaluated"}
                 self._remember_artifact_fingerprint(file_path, fingerprint)
                 return existing_file
 
@@ -699,6 +744,8 @@ class AgentTaskRunner(TaskRunner):
                 "session_id": self._session_id,
                 "file_path": file_path,
                 "source": "sandbox_artifact",
+                "artifact_validation_scope": "file_integrity",
+                "content_assessment": "user_evaluated",
                 ARTIFACT_SIZE_METADATA_KEY: artifact_size,
                 ARTIFACT_HASH_METADATA_KEY: artifact_hash,
             }
@@ -761,6 +808,8 @@ class AgentTaskRunner(TaskRunner):
     def _is_syncable_artifact(self, file_path: str) -> bool:
         if not file_path:
             return False
+        if not self._is_deliverable_artifact(file_path):
+            return False
         path = PurePosixPath(file_path)
         if path.name == "result.json" and any(
             part.startswith("analysis-") for part in path.parts
@@ -772,6 +821,24 @@ class AgentTaskRunner(TaskRunner):
             return False
         return bool(path.name) and not path.name.startswith(".")
 
+    def _is_deliverable_artifact(self, file_path: str) -> bool:
+        """Analysis implementation files are private unless code was requested.
+
+        A model's attachment list is not a request to deliver its helper script.
+        The contract is set for each user turn before discovery or uploads run;
+        legacy storage-only callers without a request keep their existing scope.
+        """
+        from app.domain.services.analysis_completion import artifact_kind
+        if not isinstance(file_path, str) or not file_path:
+            return False
+        requested = getattr(self, "_requested_code_deliverables", None)
+        if requested is None or artifact_kind(file_path) != "code":
+            return True
+        suffix = PurePosixPath(file_path).suffix.lower().lstrip(".")
+        return any((not item.formats or suffix in item.formats)
+                   and (not item.output_paths or file_path in item.output_paths
+                        or item.min_count > len(item.output_paths)) for item in requested)
+
     def _is_private_artifact_path(self, file_path: str) -> bool:
         if not file_path:
             return False
@@ -780,6 +847,30 @@ class AgentTaskRunner(TaskRunner):
             path == PurePosixPath(root) or PurePosixPath(root) in path.parents
             for root in getattr(self, "_private_artifact_roots", set())
         )
+
+    @staticmethod
+    def _step_delivery_scope(step, requirements) -> Optional[tuple[str, ...]]:
+        """Explicit outputs bound discovery; directories include their children.
+
+        This only selects candidates. Every file still needs its own safe,
+        stable sandbox receipt and an uploaded object before publication.
+        None keeps discovery for tasks which did not name outputs at all.
+        """
+        declared = [*(step.attachments or []),
+                    *(path for item in requirements for path in item.output_paths)]
+        if not declared:
+            return None
+        return tuple(sorted({path.rstrip("/") for path in declared
+                             if isinstance(path, str)
+                             and (path.rstrip("/") == "/home/ubuntu/output"
+                                  or path.startswith("/home/ubuntu/output/"))
+                             and str(PurePosixPath(path)) == path.rstrip("/")
+                             and ".." not in PurePosixPath(path).parts and "\\" not in path
+                             and not any(ord(char) < 32 for char in path)}))
+
+    @staticmethod
+    def _within_delivery_scope(path: str, scope: Optional[tuple[str, ...]]) -> bool:
+        return scope is None or any(path == root or path.startswith(root + "/") for root in scope)
 
     def _remember_private_tool_output(self, event: ToolEvent) -> None:
         """Exclude exact dataset-unpack working roots from artifact delivery."""
@@ -848,6 +939,7 @@ class AgentTaskRunner(TaskRunner):
             if (
                 not file_path
                 or file_path in seen_paths
+                or not self._is_deliverable_artifact(file_path)
                 or self._is_data_center_dataset_path(file_path)
                 or self._is_private_artifact_path(file_path)
             ):
@@ -908,8 +1000,14 @@ class AgentTaskRunner(TaskRunner):
         # session files have no metadata, so hash them once at task start; a
         # later overwrite can then be delivered normally.
         files_by_path: dict[str, FileInfo] = {}
+        self._prior_artifact_file_ids = set()
+        self._artifact_history_known = False
         try:
             session = await self._session_repository.find_by_id(self._session_id)
+            self._prior_artifact_file_ids = {
+                item.file_id for item in (getattr(session, "files", None) or []) if item.file_id
+            }
+            self._artifact_history_known = session is not None
             files_by_path = {
                 item.file_path: item
                 for item in (getattr(session, "files", None) or [])
@@ -983,6 +1081,9 @@ class AgentTaskRunner(TaskRunner):
             baseline.discard(removed_path)
             fingerprints.pop(removed_path, None)
 
+        scope = getattr(self, "_active_artifact_delivery_scope", None)
+        current_paths = [path for path in current_paths if self._within_delivery_scope(path, scope)]
+
         attachments: List[FileInfo] = []
         skipped = skip_paths or set()
         remote_fingerprints, unavailable = await self._sandbox_artifact_fingerprints([
@@ -991,7 +1092,7 @@ class AgentTaskRunner(TaskRunner):
         for file_path in current_paths:
             if len(attachments) >= MAX_AUTO_SYNC_ARTIFACTS:
                 break
-            if file_path in skipped or file_path in unavailable:
+            if file_path in skipped or file_path in unavailable or not self._is_deliverable_artifact(file_path):
                 continue
             if file_path in remote_fingerprints and remote_fingerprints[file_path] == fingerprints.get(file_path):
                 continue
@@ -1031,36 +1132,56 @@ class AgentTaskRunner(TaskRunner):
     async def _validate_staged_artifact_files(self, files: List[FileInfo]) -> List[FileInfo]:
         """Check staged uploads without declaring completion or scheduling repair.
 
-        A durable object alone is not a usable result. Every attachment leaving
-        a non-step boundary needs a content receipt bound to its uploaded bytes.
+        Every attachment leaving a non-step boundary needs a mechanical file
+        receipt bound to its uploaded bytes; content is assessed by the user.
         Unavailable/malformed batches are withheld, without suppressing the
         surrounding question, error, completion event, or cancellation.
         """
         from app.domain.services.analysis_completion import artifact_kind, verified_deliveries
 
+        # A receipt is bound to the immutable uploaded object, not to its
+        # mutable sandbox working path. Revalidating that path at Done can
+        # discard an already verified version after a repair or read outage.
+        pinned_uploads = {}
+        for step_id, files_by_path in getattr(self, "_analysis_verified_files", {}).items():
+            receipts = getattr(self, "_analysis_verified_receipts", {}).get(step_id, {})
+            for path, info in files_by_path.items():
+                if info.file_id and path in receipts:
+                    pinned_uploads[info.file_id] = (info, receipts[path])
+        retained = []
         candidates = []
         paths = set()
         for info in files:
             path = info.file_path
             if (not isinstance(path, str) or not path.startswith("/home/ubuntu/output/")
+                    or not self._is_deliverable_artifact(path)
+                    or self._is_data_center_dataset_path(path) or self._is_private_artifact_path(path)
                     or str(PurePosixPath(path)) != path or ".." in PurePosixPath(path).parts
                     or "\\" in path or any(ord(char) < 32 for char in path)
                     or not artifact_kind(path)):
                 continue
+            pinned = pinned_uploads.get(info.file_id)
+            if pinned is not None:
+                original, receipt = pinned
+                if (info.file_path == original.file_path and info.size == original.size
+                        and (info.metadata or {}).get("artifact_sha256")
+                        == (original.metadata or {}).get("artifact_sha256")
+                        and verified_deliveries([receipt], [info])):
+                    retained.append(info)
+                    continue
             candidates.append(info)
             paths.add(path)
         if not candidates:
-            return []
+            return self._unique_files(retained)
         validate = getattr(getattr(self, "_sandbox", None), "validate_artifacts", None)
         if not callable(validate):
-            return []
+            return self._unique_files(retained)
         items = [{"path": path, "kind": artifact_kind(path)} for path in sorted(paths)]
         records = []
         for offset in range(0, len(items), 32):
             batch = items[offset:offset + 32]
             try:
-                async with asyncio.timeout(35):
-                    result = await validate(batch)
+                result = await validate(batch, purpose="delivery")
                 data = getattr(result, "data", None)
                 batch_ok = (getattr(result, "success", None) is True and isinstance(data, dict)
                             and type(data.get("version")) is int and data["version"] == 1)
@@ -1076,25 +1197,47 @@ class AgentTaskRunner(TaskRunner):
                 # CancelledError intentionally propagates. No model/tool retry
                 # is appropriate merely because verification is unavailable.
                 logger.warning("Staged artifact validation unavailable error_type=%s", type(exc).__name__)
-        return verified_deliveries(records, candidates)
+        return self._unique_files(retained + verified_deliveries(records, candidates))
 
-    async def _sync_file_to_sandbox(self, file_id: str) -> Optional[FileInfo]:
-        """Download file from storage to sandbox"""
+    async def _sync_file_to_sandbox(self, file_id: str, *, input_info: FileInfo | None = None) -> FileInfo:
+        """Resolve a legacy single attachment through its existing read-only mount."""
+        identity = input_info
+        if identity is None:
+            info = await self._file_storage.get_file_info(file_id, self._user_id)
+            if info is None:
+                raise ValueError("分析资料不存在或无权访问，任务未执行；请重新选择文件。")
+            identity = assign_upload_namespace([info])[0]
+        if not file_id or identity.file_id != file_id:
+            raise ValueError("分析资料与已选择的文件不一致，任务未执行；请重新选择文件。")
+        runtime_path = upload_runtime_path(identity)
+        await self._verify_readonly_analysis_inputs([identity])
+        return identity.model_copy(deep=True, update={"file_path": runtime_path})
+
+    async def _verify_readonly_analysis_inputs(self, files: list[FileInfo]) -> None:
+        if not files:
+            return
+        verify = getattr(self._sandbox, "verify_readonly_inputs", None)
         try:
-            file_data, file_info = await self._file_storage.download_file(file_id, self._user_id)
-            file_path = "/home/ubuntu/upload/" + file_info.filename
-            file_data = _rewind_or_buffer_stream(file_data)
-            result = await self._sandbox.file_upload(file_data, file_path, filename=file_info.filename)
-            if result.success:
-                file_info.file_path = file_path
-                return file_info
-        except Exception as e:
-            logger.error(
-                "Failed to sync storage file into sandbox agent=%s object=%s error_type=%s",
-                opaque_log_identifier(self._agent_id, namespace="agent"),
-                opaque_log_identifier(file_id, namespace="object"),
-                type(e).__name__,
-            )
+            if not callable(verify) or await verify(files) is not None:
+                raise ValueError("Read-only input verification unavailable")
+        except Exception as error:
+            logger.warning("Read-only analysis input verification failed error_type=%s", type(error).__name__)
+            raise ValueError("分析资料的只读挂载不可用，任务未执行；请重新选择文件或联系管理员检查。") from None
+
+    async def _sync_analysis_inputs_to_sandbox(self, event: MessageEvent) -> list[FileInfo]:
+        """Verify the accepted immutable input snapshot without copying any bytes."""
+        selected = snapshot_files(event.metadata)
+        materialized = [info.model_copy(deep=True, update={"file_path": upload_runtime_path(info)})
+                        for info in selected]
+        # Resume verifies the existing mount as well. It never recreates inputs
+        # before checkpoint fingerprints can observe a changed/missing source.
+        await self._verify_readonly_analysis_inputs(selected)
+        if not (event.metadata or {}).get("resume_from"):
+            for actual in materialized:
+                await self._session_repository.add_file(self._session_id, actual)
+        by_id = {item.file_id: item for item in materialized}
+        event.attachments = [by_id.get(item.file_id, item) for item in event.attachments or []] or None
+        return materialized
 
     async def _sync_message_attachments_to_storage(self, event: MessageEvent) -> None:
         """Sync message attachments and update event attachments"""
@@ -1103,7 +1246,7 @@ class AgentTaskRunner(TaskRunner):
             if event.attachments:
                 paths_to_sync: List[str] = []
                 for attachment in event.attachments:
-                    if not attachment.file_path:
+                    if not attachment.file_path or not self._is_deliverable_artifact(attachment.file_path):
                         continue
                     known = self._known_generated_file(attachment.file_path)
                     if known is not None:
@@ -1183,7 +1326,6 @@ class AgentTaskRunner(TaskRunner):
                     f"spill={notice.status}; locator={locator}]"
                 ),
                 "status": "completed" if succeeded else "failed",
-                "returncode": 0 if succeeded else 1,
             }]
 
         function_result = event.function_result
@@ -1245,7 +1387,6 @@ class AgentTaskRunner(TaskRunner):
                 "command": "分析数据集并生成成果",
                 "output": output,
                 "status": "completed" if success else "failed",
-                "returncode": 0 if success else 1,
             }]
         result = event.function_result if isinstance(event.function_result, dict) else {}
         success = bool(result.get("success"))
@@ -1257,7 +1398,6 @@ class AgentTaskRunner(TaskRunner):
             "command": "分析数据集并生成成果",
             "output": output.strip(),
             "status": "completed" if success else "failed",
-            "returncode": 0 if success else 1,
         }]
 
     @staticmethod
@@ -1286,7 +1426,6 @@ class AgentTaskRunner(TaskRunner):
                 "command": "快速探查数据集",
                 "output": output,
                 "status": "completed" if success else "failed",
-                "returncode": 0 if success else 1,
             }]
         if isinstance(function_result, ToolResult):
             data = function_result.data if isinstance(function_result.data, dict) else {}
@@ -1328,34 +1467,23 @@ class AgentTaskRunner(TaskRunner):
             "command": "快速探查数据集",
             "output": output,
             "status": "completed" if success else "failed",
-            "returncode": 0 if success else 1,
         }]
     
     async def _sync_message_attachments_to_sandbox(self, event: MessageEvent) -> None:
-        """Sync message attachments and update event attachments"""
-        attachments: List[FileInfo] = []
-        try:
-            if event.attachments:
-                for attachment in event.attachments:
-                    file_info = await self._sync_file_to_sandbox(attachment.file_id)
-                    if file_info:
-                        attachments.append(file_info)
-                        await self._session_repository.add_file(self._session_id, file_info)
-                    else:
-                        attachments.append(attachment)
-                        logger.warning(
-                            "Kept unsynced attachment agent=%s object=%s filename_chars=%d",
-                            opaque_log_identifier(self._agent_id, namespace="agent"),
-                            opaque_log_identifier(attachment.file_id, namespace="object"),
-                            len(attachment.filename or ""),
-                        )
-            event.attachments = attachments
-        except Exception as e:
-            logger.error(
-                "Failed to sync attachments to event agent=%s error_type=%s",
-                opaque_log_identifier(self._agent_id, namespace="agent"),
-                type(e).__name__,
-            )
+        """Verify legacy attachments as one scoped mount; never silently skip a failure."""
+        infos = []
+        for attachment in event.attachments or []:
+            info = await self._file_storage.get_file_info(attachment.file_id, self._user_id)
+            if info is None or info.file_id != attachment.file_id:
+                raise ValueError("分析资料不存在或无权访问，任务未执行；请重新选择文件。")
+            infos.append(info)
+        selected = assign_upload_namespace(infos)
+        await self._verify_readonly_analysis_inputs(selected)
+        attachments = [info.model_copy(deep=True, update={"file_path": upload_runtime_path(info)})
+                       for info in selected]
+        for info in attachments:
+            await self._session_repository.add_file(self._session_id, info)
+        event.attachments = attachments
     
 
     # TODO: refactor this function
@@ -1406,6 +1534,22 @@ class AgentTaskRunner(TaskRunner):
                         event.tool_content = FileToolContent(content=event.function_result.model_dump_json() if hasattr(event.function_result, "model_dump_json") else str(event.function_result))
                     elif event.function_name == "file_find_in_content":
                         event.tool_content = FileToolContent(content=event.function_result.model_dump_json() if hasattr(event.function_result, "model_dump_json") else str(event.function_result))
+                    elif event.function_name == "file_read":
+                        # Render the completed observation. A fresh read can
+                        # change its version, discard a requested line range,
+                        # or replace a failed read with unrelated later data.
+                        result = event.function_result
+                        result = result.model_dump(mode="python") if isinstance(result, ToolResult) else result
+                        result = result if isinstance(result, dict) else {}
+                        data = result.get("data")
+                        content = data.get("content") if isinstance(data, dict) else None
+                        if result.get("success") is True and isinstance(content, str):
+                            file_content = content
+                        elif result.get("success") is False:
+                            file_content = "(File read failed)"
+                        else:
+                            file_content = "(No Content)"
+                        event.tool_content = FileToolContent(content=file_content)
                     elif "file" in event.function_args:
                         file_path = event.function_args["file"]
                         file_read_result = await self._sandbox.file_read(file_path)
@@ -1498,6 +1642,51 @@ class AgentTaskRunner(TaskRunner):
         if reports:
             await asyncio.gather(*reports)
 
+    def _bind_clarification_message(self, message: Message, metadata: dict) -> None:
+        """Restore only a host-bound answer's original task and pending step."""
+        from app.domain.services.analysis_clarification import clarified_request, get_clarification_context
+        from app.domain.models.analysis_outcome import DeliverableRequirement
+        from app.domain.models.plan import Plan
+        from app.domain.models.request_intent import RequestIntent
+        resolution = getattr(self, "_front_controller_resolution", None)
+        decision = getattr(resolution, "decision", None)
+        response = getattr(decision, "clarification_response", None)
+        context = getattr(resolution, "clarification_context", None) or get_clarification_context(metadata)
+        if not context:
+            return
+        message._clarification_response = response
+        if response != "continue":
+            return
+        message.message = clarified_request(context, response, message.message)
+        message._clarification_context = context
+        if context.get("stage") != "execution":
+            return
+        saved = context.get("execution_context")
+        if not isinstance(saved, dict) or saved.get("schema") != "analysis_clarification_execution/v1":
+            raise ValueError("待确认任务的执行上下文不可用，请重新发起分析。")
+        plan = Plan.model_validate(saved.get("plan"))
+        step = plan.get_next_step()
+        if step is None or step.id != saved.get("step_id"):
+            raise ValueError("待确认步骤已经变化，系统没有重新执行。")
+        if (sorted(saved.get("input_file_ids", [])) != sorted(message.attachment_file_ids)
+                or sorted(saved.get("dataset_ids", [])) != sorted(item.dataset_id for item in message.datasets)):
+            raise ValueError("待确认任务的数据范围已经变化，请重新发起分析。")
+        if (any(sorted(saved.get(field, [])) != sorted(getattr(message, field))
+                for field in ("skills", "mcp_servers", "data_connectors"))
+                or saved.get("mcp_access_all", False) != message.mcp_access_all):
+            raise ValueError("待确认任务的工具或技能配置已经变化，请重新发起分析。")
+        turns = context.get("turns") or []
+        answer = turns[-1].get("answer") if turns and isinstance(turns[-1], dict) else None
+        if not isinstance(answer, str) or not answer.strip():
+            raise ValueError("缺少对当前确认问题的回答。")
+        message.deliverables = [DeliverableRequirement.model_validate(item) for item in saved.get("deliverables", [])]
+        message.controller_requires_artifacts = saved.get("controller_requires_artifacts")
+        message.controller_target_files = list(saved.get("controller_target_files", []))
+        message._completion_mode = saved.get("completion_mode", "inline")
+        if message.request_intent is None and saved.get("request_intent") is not None:
+            message.request_intent = RequestIntent.model_validate(saved["request_intent"])
+        message._clarification_resume = {"plan": plan.model_dump(mode="json"), "step_id": step.id, "answer": answer}
+
     async def run(self, task: Task) -> None:
         task_id = getattr(task, "id", None)
         if isinstance(task_id, str) and task_id:
@@ -1510,6 +1699,9 @@ class AgentTaskRunner(TaskRunner):
 
     async def _run_with_model_budget(self, task: Task) -> None:
         """Process agent's message queue and run the agent's flow"""
+        skill_toolkit = getattr(getattr(self, "_flow", None), "skill_toolkit", None)
+        if skill_toolkit is not None:
+            skill_toolkit.creation_progress_sink = lambda event: self._put_and_add_event(task, event)
         if getattr(self, "_analysis_job_service", None) is not None or getattr(self, "_tool_approval_service", None) is not None:
             task_id = self._execution_task_id(task)
             self._flow._analysis_job_identity_provider = lambda: {
@@ -1522,6 +1714,9 @@ class AgentTaskRunner(TaskRunner):
             }
             self._flow._analysis_job_event_sink = lambda view, context: self._publish_analysis_job(task, view, context)
             self._flow._tool_approval_event_sink = lambda view, context: self._publish_tool_approval(task, view, context)
+        self._analysis_outcome_published = False
+        self._analysis_has_verified_result = False
+        self._analysis_turn_started = False
         try:
             logger.info(
                 "Message processing task started agent=%s",
@@ -1545,8 +1740,12 @@ class AgentTaskRunner(TaskRunner):
                         break
                     event = await self._pop_event(task)
                 message = ""
+                analysis_uploads = []
                 metadata = {}
                 if isinstance(event, MessageEvent):
+                    self._analysis_outcome_published = False
+                    self._analysis_has_verified_result = False
+                    self._analysis_turn_started = False
                     self._accepted_input_key = None
                     self._accepted_input_finished = False
                     delivery = getattr(self, "_input_delivery", None)
@@ -1564,7 +1763,11 @@ class AgentTaskRunner(TaskRunner):
                         ))
                     message = event.message or ""
                     metadata = event.metadata or {}
-                    await self._sync_message_attachments_to_sandbox(event)
+                    if "analysis_input_files" in metadata:
+                        analysis_uploads = await self._sync_analysis_inputs_to_sandbox(event)
+                    else:
+                        await self._sync_message_attachments_to_sandbox(event)
+                        analysis_uploads = list(event.attachments or [])
                 dataset_service = getattr(self, "_dataset_service", None)
                 if dataset_service is None:
                     dataset_service = DataCenterDatasetService()
@@ -1585,7 +1788,9 @@ class AgentTaskRunner(TaskRunner):
                 mounted_dataset_ids.update(item.dataset_id for item in datasets)
                 self._active_datasets = list(datasets)
                 self._remember_mounted_dataset_paths(datasets)
-                # Capture the baseline after catalog files have been materialized;
+                if analysis_uploads:
+                    self._protected_dataset_roots.add(UPLOAD_INPUT_ROOT)
+                # Capture the baseline after input mounts have been verified;
                 # otherwise the read-only source files look like new artifacts.
                 if not artifact_baseline_initialized:
                     await self._capture_artifact_baseline()
@@ -1599,7 +1804,7 @@ class AgentTaskRunner(TaskRunner):
 
                 sandbox_attachment_paths = [
                     attachment.file_path
-                    for attachment in (event.attachments or [])
+                    for attachment in analysis_uploads
                     if attachment.file_path
                 ]
                 logger.info(
@@ -1613,20 +1818,23 @@ class AgentTaskRunner(TaskRunner):
                 execution_decision = getattr(decision, "execution", None)
                 message_obj = Message(
                     message=message,
+                    request_intent=getattr(decision, "intent", None),
                     resume_from=metadata.get("resume_from"),
                     client_message_id=metadata.get("client_message_id"),
                     deliverables=list(getattr(execution_decision, "deliverables", []) or []),
+                    controller_requires_artifacts=getattr(execution_decision, "requires_artifacts", None),
                     attachments=sandbox_attachment_paths,
                     attachment_file_ids=[
                         attachment.file_id
-                        for attachment in (event.attachments or [])
+                        for attachment in analysis_uploads
                         if attachment.file_id
                     ],
-                    attachment_file_infos=list(event.attachments or []),
+                    attachment_file_infos=analysis_uploads,
                     skills=metadata.get("skills", []),
                     mcp_servers=metadata.get("mcp_servers", []),
                     data_connectors=metadata.get("data_connectors", []),
                     datasets=datasets,
+                    analysis_inputs=build_analysis_inputs(datasets, analysis_uploads),
                     controller_target_files=list(
                         self._front_controller_resolution.target_files
                         if getattr(self, "_front_controller_resolution", None) is not None
@@ -1635,7 +1843,9 @@ class AgentTaskRunner(TaskRunner):
                     mcp_access_all=bool(metadata.get("mcp_access_all", False)),
                 )
                 message_obj._session_events_snapshot = getattr(self, "_session_events_snapshot", None)
+                message_obj._completion_mode = getattr(execution_decision, "completion_mode", "inline")
                 message_obj._accepted_event_seq = event.seq
+                self._bind_clarification_message(message_obj, metadata)
                 self._session_events_snapshot = None
 
                 # Generated attachments belong to one user turn.  Keeping files
@@ -1643,6 +1853,7 @@ class AgentTaskRunner(TaskRunner):
                 # stale artifacts even when nothing changed.
                 self._generated_files = []
                 self._pending_artifact_paths = set()
+                self._active_artifact_delivery_scope = None
                 execution_task_id = self._execution_task_id(task)
                 flow_events = (
                     self._run_flow(
@@ -1653,8 +1864,14 @@ class AgentTaskRunner(TaskRunner):
                     if execution_task_id is not None
                     else self._run_flow(message_obj)
                 )
-                async with aclosing(flow_events):
+                async with aclosing(flow_events), tool_settlement_scope(
+                    lambda terminal: self._put_and_add_event(task, terminal),
+                ) as settle_tools:
                     async for event in flow_events:
+                        if isinstance(event, (DoneEvent, ErrorEvent, WaitEvent)):
+                            # Input completion relinquishes the live-owner
+                            # lease. Settle interrupted/WAIT siblings first.
+                            await settle_tools()
                         await self._put_and_add_event(task, event)
                         if isinstance(event, TitleEvent):
                             await self._session_repository.update_title(self._session_id, event.title)
@@ -1683,24 +1900,39 @@ class AgentTaskRunner(TaskRunner):
                 opaque_log_identifier(self._agent_id, namespace="agent"),
             )
             if isinstance(error, ModelBudgetStopped) or model_stop_reason():
-                await self._put_and_add_event(task, MessageEvent(
-                    message=("本次分析已达到执行时间上限，已有结果保持不变。"
+                await self._put_and_add_event(task, self._terminal_failure_event(
+                    ("本次分析已达到执行时间上限，已有结果保持不变。"
                              if getattr(error, "code", None) == "analysis_budget_deadline_exceeded" or model_stop_reason() == "analysis_budget_deadline_exceeded"
                              else "本轮执行已达到模型运行边界，或运行记录暂时无法保存。已有分析结果会保留，请检查模型运行记录后继续。"),
+                    reason_code="model_runtime_stopped",
                 ))
             elif isinstance(error, ToolAuthorizationStopped):
-                await self._put_and_add_event(task, MessageEvent(
-                    message="本次工具调用未获得有效授权（可能已拒绝、过期、凭据未配置或权限检查未通过），本轮执行已停止。请检查调用权限和凭据配置后重新发起。",
+                await self._put_and_add_event(task, self._terminal_failure_event(
+                    "本次工具调用未获得有效授权（可能已拒绝、过期、凭据未配置或权限检查未通过），本轮执行已停止。请检查调用权限和凭据配置后重新发起。",
+                    reason_code="tool_authorization_stopped",
                 ))
             elif isinstance(error, AnalysisJobCancelled):
-                await self._put_and_add_event(task, MessageEvent(
-                    message="当前分析作业已取消，本轮执行已停止。你可以调整要求后继续分析。",
+                await self._put_and_add_event(task, self._terminal_failure_event(
+                    "当前分析作业已取消，本轮执行已停止。你可以调整要求后继续分析。",
+                    reason_code="request_cancelled",
                 ))
-            elif isinstance(error, AnalysisJobInterrupted):
-                await self._put_and_add_event(task, MessageEvent(
-                    message="当前分析作业的执行已中断，本轮执行已停止。系统没有自动重跑，请检查已有结果后再继续。",
+            else:
+                await self._put_and_add_event(task, self._terminal_failure_event(
+                    "当前执行已中断，本轮执行已停止。系统没有自动重跑，请检查运行记录和已有结果后再继续。",
+                    reason_code="execution_interrupted",
                 ))
             await self._put_and_add_event(task, DoneEvent())
+            await self._session_repository.update_status(self._session_id, SessionStatus.COMPLETED)
+        except ToolCallParseError:
+            # The entire malformed batch was rejected before tool dispatch.
+            # Preserve any earlier committed verdict and never publish raw
+            # provider arguments or parser excerpts as a user-facing error.
+            message = "模型未能生成完整、有效的工具参数，本次分析已停止。已有结果保持不变。"
+            logger.warning("Analysis stopped after bounded native tool argument retries")
+            await self._put_and_add_event(task, self._terminal_failure_event(
+                message, reason_code="tool_protocol_error",
+            ))
+            await self._put_and_add_event(task, ErrorEvent(error=message))
             await self._session_repository.update_status(self._session_id, SessionStatus.COMPLETED)
         except Exception as e:
             logger.error(
@@ -1718,11 +1950,27 @@ class AgentTaskRunner(TaskRunner):
                 )
                 debugpy.breakpoint()  # This will pause execution if a debugger is attached
             
+            await self._put_and_add_event(task, self._terminal_failure_event(
+                "本轮执行因运行错误停止（execution_failed）。系统没有自动重跑，请检查运行记录后再继续。",
+                reason_code="execution_failed",
+            ))
             await self._put_and_add_event(
                 task,
                 ErrorEvent(error=public_error_message(f"Task error: {e}")),
             )
             await self._session_repository.update_status(self._session_id, SessionStatus.COMPLETED)
+
+    def _terminal_failure_event(self, message: str, *, reason_code: str) -> MessageEvent:
+        # A transport/cleanup failure after a committed scientific verdict must
+        # not replace that verdict. Never infer a lease cause or artifact health.
+        if getattr(self, "_analysis_outcome_published", False):
+            return MessageEvent(message=message)
+        started = getattr(self, "_analysis_turn_started", False)
+        event = terminal_analysis_message(message, reason_code=reason_code,
+            stage="execution" if started else "input_preparation", analysis_started=started)
+        if getattr(self, "_analysis_has_verified_result", False):
+            event.metadata["analysis_outcome"]["status"] = "partial"
+        return event
 
     async def _initialize_mcp_tool(self, selected_servers: List[str], *, is_admin: bool = False) -> None:
         await self._mcp_tool.cleanup()
@@ -1781,6 +2029,7 @@ class AgentTaskRunner(TaskRunner):
         if not hasattr(self._flow, "_artifact_repair_requests"):
             self._flow._artifact_repair_requests = {}
         tracker = trackers.get(step.id)
+        rejected_paths = frozenset()
         handler = getattr(self._flow, "enabled_subagents", {}).get(step.agent)
         supported = (getattr(self._flow, "supports_artifact_repair", False) is True
                      and getattr(handler, "handler_type", None) == "execution"
@@ -1812,8 +2061,18 @@ class AgentTaskRunner(TaskRunner):
             outcome.status = "partial" if pins or checked_files else "failed"
             outcome.reason_code = "execution_failed"
         if not protected_changed:
+            receipts = getattr(self, "_analysis_verified_receipts", None)
+            if receipts is None:
+                receipts = self._analysis_verified_receipts = {}
+            pinned_receipts = receipts.setdefault(step.id, {})
+            records_by_path = {item.get("path"): item for item in records if item.get("valid") is True}
             for item in checked_files:
-                pins.setdefault(item.file_path, item)
+                if item.file_path not in rejected_paths:
+                    pins.setdefault(item.file_path, item.model_copy(deep=True))
+                    if item.file_path in records_by_path:
+                        pinned_receipts.setdefault(item.file_path, dict(records_by_path[item.file_path]))
+            for path in rejected_paths:
+                pinned_receipts.pop(path, None)
 
         # Production diagnostics survive a restart, separately from chat/SSE.
         # An audit failure prevents a new autonomous repair, not an honest
@@ -1825,10 +2084,9 @@ class AgentTaskRunner(TaskRunner):
                 from app.domain.services.analysis_delivery_audit import AnalysisDeliveryAuditStore
                 audit = self._delivery_audit_store = AnalysisDeliveryAuditStore()
             try:
-                async with asyncio.timeout(3):
-                    await audit.record(user_id=self._user_id, session_id=self._session_id,
-                        input_seq=source_seq, step_id=step.id, records=records, requirements=requirements,
-                        outcome=outcome, repair_reason=repair_reason)
+                await audit.record(user_id=self._user_id, session_id=self._session_id,
+                    input_seq=source_seq, step_id=step.id, records=records, requirements=requirements,
+                    outcome=outcome, repair_reason=repair_reason)
             except Exception as error:
                 audit_ok = False
                 logger.warning("Analysis delivery audit unavailable error_type=%s", type(error).__name__)
@@ -1836,6 +2094,25 @@ class AgentTaskRunner(TaskRunner):
         # regenerate verified bytes while storage is still unavailable.
         allowed = bool(decision and decision.allowed and audit_ok and not delivery_blocked)
         if allowed:
+            # A local repair may later alter a protected working copy. Freeze
+            # the observations that justified the immutable uploads now, so
+            # those original facts can still be reviewed without trusting
+            # replacement bytes or a later model draft.
+            from app.domain.services.analysis_answer_review import AnswerEvidence
+            snapshots = getattr(self, "_analysis_preserved_answer_evidence", None)
+            if snapshots is None:
+                snapshots = self._analysis_preserved_answer_evidence = {}
+            snapshots.pop(step.id, None)
+            evidence = getattr(self, "_analysis_answer_evidence", None)
+            if isinstance(evidence, AnswerEvidence):
+                step_ids = {item.id for item in getattr(getattr(self._flow, "plan", None), "steps", [])}
+                try:
+                    snapshots[step.id] = AnswerEvidence.from_checkpoint_snapshot(
+                        evidence.checkpoint_snapshot(step_ids=step_ids), step_ids=step_ids)
+                except ValueError:
+                    # Missing or oversized proof cannot authorize prose based
+                    # on a subsequently changed output.
+                    logger.warning("Analysis repair evidence snapshot unavailable")
             feedback = dict(decision.feedback)
             feedback["previous_analysis"] = (step.result or "")[:32000]
             self._flow._artifact_repair_requests[step.id] = feedback
@@ -1843,33 +2120,379 @@ class AgentTaskRunner(TaskRunner):
                     allowed, repair_reason, len(records), len(outcome.missing))
         return allowed, protected_changed
 
+    def _observe_answer_tool_event(self, event: ToolEvent) -> None:
+        """Join source versions only to the current executor's private receipt.
+
+        An identically named plugin, public result field or another step's
+        ledger cannot attest that this step ran particular source bytes.
+        This lookup observes host memory only; it never invokes a tool.
+        """
+        evidence = self._analysis_answer_evidence
+        self._observe_scope_repair_tool(event, evidence.current_step_id)
+        proof = None
+        if event.status == ToolStatus.CALLED and event.function_name == "program_run":
+            from app.domain.services.execution_evidence import ToolExecutionLedger
+            from app.domain.services.program_execution import trusted_program_execution_feedback
+            steps = getattr(getattr(self._flow, "plan", None), "steps", [])
+            step = next((item for item in steps if item.id == evidence.current_step_id), None)
+            if step is not None:
+                profile = getattr(self._flow, "enabled_subagents", {}).get(step.agent)
+                executor = (getattr(self._flow, "vision", None)
+                            if getattr(profile, "handler_type", None) == "vision" else
+                            getattr(self._flow, "_domain_agents", {}).get(
+                                step.agent, getattr(self._flow, "executor", None)))
+                ledger = getattr(executor, "_tool_execution_ledger", None)
+                if type(ledger) is ToolExecutionLedger:
+                    try:
+                        tool = executor.get_tool(event.function_name)
+                        if event.tool_name == getattr(getattr(tool, "toolkit", None), "name", None):
+                            proof = trusted_program_execution_feedback(tool, {
+                                "name": event.function_name, "id": event.tool_call_id,
+                                "args": event.function_args}, None, ledger)
+                    except Exception:
+                        # An unavailable private link does not invalidate the
+                        # observed result, but cannot attest source execution.
+                        logger.warning("Analysis program source proof unavailable")
+        evidence.observe(event, trusted_program_execution=proof)
+
+    def _observe_scope_repair_tool(self, event, step_id):
+        """Record only resolved native reads and affirmative pre-dispatch failures."""
+        states = getattr(self, "_analysis_scope_observations", None)
+        if states is None or not step_id or event.status != ToolStatus.CALLED:
+            return
+        state = states.setdefault(step_id, {"reads": set(), "blocked": False})
+        from app.domain.services.execution_evidence import ToolExecutionLedger
+        from app.domain.services.tools.file import FileToolkit
+        from app.domain.models.tool_result import ToolResult
+        steps = getattr(getattr(self._flow, "plan", None), "steps", [])
+        step = next((item for item in steps if item.id == step_id), None)
+        executor = (getattr(self._flow, "_domain_agents", {}).get(step.agent, getattr(self._flow, "executor", None))
+                    if step is not None else None)
+        ledger = getattr(executor, "_tool_execution_ledger", None)
+        result = event.function_result
+        if type(ledger) is not ToolExecutionLedger or not isinstance(result, ToolResult):
+            state["blocked"] = True
+            return
+        if result.success is False and ledger.failure_state(event.tool_call_id) == "not_started":
+            return
+        try:
+            tool = executor.get_tool(event.function_name)
+            args = event.function_args
+            native = (type(getattr(tool, "toolkit", None)) is FileToolkit
+                      and getattr(getattr(tool, "_tool", None), "coroutine", None) is FileToolkit.file_read.coroutine
+                      and event.function_name == "file_read" and event.tool_name == "file")
+            full = (isinstance(args, dict) and args.get("start_line") is None
+                    and args.get("end_line") is None and args.get("sudo", False) is False)
+            content = result.data.get("content") if isinstance(result.data, dict) else None
+            if native and full and result.success is True and isinstance(content, str) and content.strip():
+                path = args.get("file")
+                if isinstance(path, str) and path in {item.get("path") for item in self._analysis_source_fingerprints or []}:
+                    state["reads"].add(path)
+                    return
+        except (AttributeError, TypeError, ValueError):
+            pass
+        state["blocked"] = True
+
+    async def _review_scope_completion(self, step, message, files, requirements, outcome, execution,
+                                       reviewed, *, source_seq):
+        """Narrow same-input completion after reads; no scientific-error reexecutor."""
+        from datetime import UTC, datetime
+        from app.domain.services.analysis_scope_repair import ScopeRepairGuards, ScopeRepairTracker, ScopeReviewBinding
+        from app.domain.services.analysis_checkpoint import fingerprints, approved_upload_paths
+        from app.domain.services.model_runtime import current_analysis_budget
+        from app.domain.services.analysis_scope_repair_audit import ScopeRepairAuditStore
+        from copy import deepcopy
+        # Freeze the complete review verdict before any runtime/storage await.
+        # Mutable diagnostic mappings must not switch the eligible candidate.
+        metadata = deepcopy(getattr(reviewed, "metadata", {}))
+        scope = metadata.get("answer_scope_review", {})
+        final_review = metadata.get("final_candidate_review", {})
+        candidate = getattr(reviewed, "scope_completion_candidate", None)
+        original = getattr(reviewed, "scope_completion_request", None)
+        # An unavailable scientific check alone is never a reason to execute.
+        if (files or requirements or message._resume_checkpoint or step.attachments
+                or type(source_seq) is not int or source_seq < 1
+                or (step.inputs or {}).get("dataset_intent") != "analysis"
+                or scope.get("status") != "incomplete" or scope.get("completion_blocker") != "none"
+                or candidate is None or original != message.message
+                or metadata.get("evidence_truncated") is not False
+                or metadata.get("review_schema_repair_attempted") or metadata.get("citation_repair_attempted")
+                or not isinstance(final_review, dict)
+                or type(final_review.get("protocol_attempts")) is not int
+                or final_review.get("protocol_attempts") != 1
+                or final_review.get("schema_recovered") or final_review.get("error")
+                or any(issue.blocking for issue in outcome.issues)):
+            return False
+        def rejected(value):
+            if isinstance(value, dict):
+                return value.get("status") == "rejected" or any(rejected(v) for v in value.values())
+            return isinstance(value, list) and any(rejected(v) for v in value)
+        if any(rejected(metadata.get(key)) for key in ("answer_scientific_review", "scientific_review", "report_review")):
+            return False
+        resolution = getattr(self, "_front_controller_resolution", None)
+        state = getattr(self, "_analysis_scope_observations", {}).get(step.id, {})
+        trackers = getattr(self, "_analysis_scope_trackers", None)
+        budget = current_analysis_budget()
+        delivery, identity = getattr(self, "_input_delivery", None), getattr(self, "_accepted_input_key", None)
+        if (trackers is None or budget is None or delivery is None or identity is None
+                or not self._answer_scientific_scope(step, message)
+                or getattr(resolution, "mode", None) != "sandbox"
+                or resolution.decision.safety.allowed is not True
+                or not state.get("reads") or state.get("blocked") is not False
+                or model_stop_reason()):
+            return False
+        key = source_seq
+        tracker = trackers.setdefault(key, ScopeRepairTracker(input_seq=source_seq, step_id=step.id, request=message.message))
+        if tracker.snapshot()["consumed"]:
+            return False
+        try:
+            await delivery._require_live(self._session_id, identity)
+            snapshot = await budget.snapshot()
+            if (snapshot.lineage_id != message._budget_lineage_id
+                    or snapshot.model_call_limit is not None and snapshot.model_calls >= snapshot.model_call_limit
+                    or snapshot.model_token_limit is not None and snapshot.charged_tokens >= snapshot.model_token_limit
+                    or snapshot.hard_limit is not None and snapshot.tool_batches_used >= snapshot.hard_limit):
+                return False
+            expected = [dict(item) for item in self._analysis_source_fingerprints if item.get("path") in state["reads"]]
+            current = await fingerprints(self._sandbox, sorted(state["reads"]), approved_upload_paths=approved_upload_paths(message))
+            if not current or sorted(current, key=lambda item:item["path"]) != sorted(expected, key=lambda item:item["path"]):
+                return False
+            await delivery._require_live(self._session_id, identity)
+            decision = tracker.review(binding=ScopeReviewBinding(input_seq=source_seq, step_id=step.id,
+                    request=original, paragraphs=candidate, metadata=scope), execution=execution,
+                guards=ScopeRepairGuards(analysis_authorized=True, current_input=True, original_request_complete=True,
+                    candidate_complete=True, read_only_observations=True, prerequisites_met=scope.get("completion_blocker")=="none",
+                    no_user_input_required=scope.get("completion_blocker")=="none", no_policy_refusal=True, runtime_live=True,
+                    no_artifacts_or_requirements=True, no_review_repair=True),
+                now=datetime.now(UTC), deadline_at=None)
+            if not decision.allowed:
+                return False
+            audit = getattr(self, "_scope_repair_audit_store", None) or ScopeRepairAuditStore()
+            recorded = await audit.claim(user_id=self._user_id, session_id=self._session_id, snapshot=tracker.snapshot())
+            if not recorded:
+                return False
+            await delivery._require_live(self._session_id, identity)
+            if (getattr(self, "_accepted_input_key", None) != identity or message.message != original or model_stop_reason()):
+                return False
+            feedback = dict(decision.feedback)
+            feedback["previous_analysis"] = "\n\n".join(candidate)
+            self._flow._artifact_repair_requests[step.id] = feedback
+            logger.info("analysis_scope_completion allowed=True reason=scope_completion_allowed")
+            return True
+        except Exception as error:
+            # Runtime admission failures are not permission to retry. Original
+            # CancelledError and ModelBudgetStopped (BaseException) propagate.
+            logger.info("analysis_scope_completion allowed=False reason=host_evidence_unavailable error_type=%s", type(error).__name__)
+            return False
+
+    def _answer_scientific_scope(self, step, message) -> bool:
+        """Select factual analysis review from this admission and step only.
+
+        Input identities do not by themselves turn a greeting or a file-copy
+        operation into analysis. Conversely, dataset structure/unit explanation
+        is analysis even when it produces no artifact or fitted model.
+        """
+        resolution = getattr(self, "_front_controller_resolution", None)
+        admission_mode = getattr(resolution, "mode", None)
+        inputs = step.inputs or {}
+        mode = inputs.get("execution_mode")
+        intent = inputs.get("dataset_intent")
+        mode = mode.strip().casefold() if isinstance(mode, str) else None
+        intent = intent.strip().casefold() if isinstance(intent, str) else None
+        if admission_mode in {"direct", "catalog", "reject"}:
+            return False
+        if intent in {
+            "file_preview", "preview_file", "preview", "file_inventory", "inventory", "files",
+            "catalog_description", "catalog_semantics", "dataset_purpose", "purpose", "use_cases",
+            "catalog_metadata", "metadata", "size", "file_count", "file_formats", "formats",
+        }:
+            # Copy/navigation and pure catalog metadata do not claim measured
+            # scientific findings. Mixed field/unit explanations use analysis
+            # or file_structure, not a test of the model's final draft.
+            return False
+        context = message.analysis_inputs
+        has_current_inputs = bool(
+            message.datasets or (context is not None and context.sources)
+            or any(isinstance(value, str) and value.strip() for value in message.attachment_file_ids)
+        )
+        if not has_current_inputs:
+            return False
+        if mode == "dataset_fast_path":
+            return True
+        if intent in {
+            "analysis", "custom_question", "question", "visualization", "visualisation",
+            "visualize", "visualise", "plot", "file_structure", "archive_structure",
+        }:
+            return True
+        # Skill/domain/multistep analysis can bypass the one-step dataset fast
+        # path. Its host admission still binds the request to file contents;
+        # do not let a missing planner intent disable factual verification.
+        decision = getattr(resolution, "decision", None)
+        execution = getattr(decision, "execution", None)
+        return admission_mode == "sandbox" and getattr(execution, "required_evidence", None) == "file_content"
+
+    async def _review_analysis_answer(self, step, message, files, requirements, outcome, *, evidence=None):
+        """Ground prose independently of the minimum artifact-count verdict."""
+        from app.domain.services.analysis_answer_review import AnswerEvidence, review_answer
+        if evidence is None:
+            evidence = getattr(self, "_analysis_answer_evidence", None) or AnswerEvidence()
+        executor = getattr(self._flow, "_domain_agents", {}).get(step.agent, getattr(self._flow, "executor", None))
+        reviewer = getattr(executor, "review_delivery_answer", None)
+        question = json.dumps({"user_question": message.message, "current_step": {
+            "id": step.id, "description": step.description,
+            "target_files": (step.inputs or {}).get("target_files", []),
+            "target_file": (step.inputs or {}).get("target_file"),
+        }}, ensure_ascii=False)
+        arguments = dict(question=question, draft=step.result or "", files=files,
+                         evidence=evidence, requirements=requirements,
+                         language=getattr(getattr(self._flow, "plan", None), "language", None) or "zh",
+                         answer_scientific_scope=self._answer_scientific_scope(step, message))
+        from app.domain.services.analysis_report_review import load_report_targets
+        targets = await load_report_targets(files=files, storage=getattr(self, "_file_storage", None),
+            user_id=getattr(self, "_user_id", ""), session_id=getattr(self, "_session_id", ""),
+            requirements=requirements)
+        if targets:
+            arguments["report_targets"] = targets
+        if callable(reviewer):
+            reviewed = await reviewer(**arguments)
+        else:
+            async def unavailable(_messages):
+                raise RuntimeError("answer_reviewer_unavailable")
+            reviewed = await review_answer(ask=unavailable, **arguments)
+        from app.domain.services.analysis_report_review import changed_report_indices
+        changed_reports = changed_report_indices(targets, files)
+        if changed_reports:
+            from dataclasses import replace
+            from copy import deepcopy
+            from app.domain.services.analysis_report_review import report_review_metadata
+            report = deepcopy(reviewed.metadata.get("report_review")) or report_review_metadata(
+                targets, None, citations=lambda *_: [], lookup={})
+            for record in report["reports"]:
+                if record["report_index"] in changed_reports:
+                    record.update(status="unavailable", reason="delivery_version_changed",
+                        unverified_ranges=[[0, record["size"]]] if record["size"] is not None else [])
+            report["status"] = "rejected" if any(item["status"] == "rejected" for item in report["reports"]) else "unavailable"
+            metadata = {**reviewed.metadata, "status": "unavailable", "report_review": report}
+            if any(targets[index].target_kind == "structured" for index in changed_reports):
+                from app.domain.services.analysis_scientific_review import scientific_review_metadata
+                scientific = scientific_review_metadata(targets, None, citations=lambda *_: [], lookup={},
+                                                         evidence_complete=False)
+                scientific.update(status="unavailable", reason="delivery_version_changed")
+                metadata["scientific_review"] = scientific
+            if reviewed.status != "unavailable":
+                metadata.update(reason="scientific_validation_unavailable" if any(
+                    target.target_kind == "structured" for target in targets) else "report_validation_unavailable",
+                                validation_state="unavailable",
+                                chat_review_status=reviewed.status)
+            notice = ("成果版本已变化，先前内容核验不适用于当前附件。"
+                      if arguments["language"].lower().startswith("zh") else
+                      "The artifact version changed; its earlier review does not verify the current attachment.")
+            reviewed = replace(reviewed, text=reviewed.text + "\n\n" + notice, status="unavailable", metadata=metadata)
+        step.result = reviewed.text
+        from app.domain.models.answer_review import AnswerReviewMarker
+        step.outputs["answer_review"] = AnswerReviewMarker.model_validate({"version": 1, "status": reviewed.status, **reviewed.metadata,
+            "dataset_ids": sorted({item.dataset_id for item in message.datasets}),
+            "input_file_ids": sorted(set(message.attachment_file_ids))}).model_dump(exclude_unset=True)
+        if reviewed.status == "unavailable" and outcome.status == "succeeded":
+            outcome.status = "partial" if files else "failed"
+            outcome.reason_code = (
+                reviewed.metadata["reason"] if reviewed.metadata.get("reason") in {
+                    "report_validation_rejected", "report_validation_unavailable",
+                    "scientific_validation_rejected", "scientific_validation_unavailable"}
+                else "answer_objectives_missing" if reviewed.metadata.get("reason") == "answer_coverage_incomplete"
+                else "answer_validation_rejected" if reviewed.metadata.get("validation_state") == "rejected"
+                else "answer_validation_unavailable"
+            )
+        elif reviewed.missing_requirement_indices and outcome.status == "succeeded":
+            # Indices bind only to the pre-execution contract, never to a
+            # filename or extra analytical method invented by the final draft.
+            outcome.missing = [requirements[index].model_copy(deep=True)
+                               for index in reviewed.missing_requirement_indices]
+            outcome.status = "partial" if files else "failed"
+            outcome.reason_code = "analytical_requirements_missing"
+        logger.info("analysis_answer_review status=%s reason=%s missing_objectives=%d citation_diagnostics=%s",
+                    reviewed.status, reviewed.metadata.get("reason", "none"),
+                    len(reviewed.missing_requirement_indices),
+                    json.dumps(reviewed.metadata.get("citation_diagnostics", {}), sort_keys=True))
+        return reviewed
+
     async def _finalize_analysis_step(self, event, message, files, *, source_seq=None):
         from app.domain.models.plan import ExecutionStatus
         from app.domain.models.event import StepStatus
         from app.domain.services.analysis_completion import (
             artifact_kind, assess_delivery, outcome_message, requirements_for_step, verified_deliveries,
         )
-        from app.domain.services.analysis_checkpoint import save_checkpoint
+        from app.domain.services.analysis_checkpoint import save_checkpoint, source_paths
         public_step = event.step
         current_plan = getattr(self._flow, "plan", None)
         matches = [item for item in getattr(current_plan, "steps", []) if item.id == public_step.id]
         step = matches[0] if len(matches) == 1 else public_step
+        # This is a host publication policy, not a scientific endorsement and
+        # never a model-authored assertion that an independent review passed.
+        from app.domain.models.result_assessment import ResultAssessmentMarker
+        step.outputs.pop("answer_review", None)
+        step.outputs.pop("result_set", None)  # Never accept an executor-authored collection.
+        step.outputs["result_assessment"] = ResultAssessmentMarker(
+            version=1, mode="user_evaluated", scientific_review="not_performed",
+            dataset_ids=sorted({item.dataset_id for item in message.datasets}),
+            input_file_ids=sorted(set(message.attachment_file_ids)),
+        ).model_dump()
         step.outputs["model_execution_success"] = bool(step.success)
         requirements = requirements_for_step(step, message)
         step.deliverables = requirements
+        scope = self._step_delivery_scope(step, requirements)
+        self._active_artifact_delivery_scope = scope
+        requested_code = list(getattr(self, "_requested_code_deliverables", []))
+        for item in [*message.deliverables, *requirements]:
+            if item.kind == "code" and item not in requested_code:
+                requested_code.append(item)
+        self._requested_code_deliverables = requested_code
+        files = [item for item in files if self._is_deliverable_artifact(item.file_path)
+                 and not self._is_data_center_dataset_path(item.file_path)
+                 and not self._is_private_artifact_path(item.file_path)]
         execution = step.outputs.get("execution_outcome", {})
         unconfirmed = bool(execution.get("has_unconfirmed_tool_execution") or execution.get("side_effect_state") == "unknown")
+        final_step = not getattr(current_plan, "steps", []) or current_plan.steps[-1].id == step.id
+        acquisition_calls = getattr(self, "_open_data_acquisition_calls", []) if final_step else []
+        background = final_step and message._completion_mode == "background_acquisition"
+        acquisition = None
+        if background or acquisition_calls:
+            from app.domain.services.open_data_completion import read_acquisition_evidence, acquisition_notice
+            acquisition = await read_acquisition_evidence(
+                acquisition_calls, owner=self._user_id, session=self._session_id, message=message)
+        # A pure acquisition's contract is a verified durable submission, not a
+        # fabricated sandbox file. Never waive any declared analysis artifact.
+        if background and not requirements:
+            from app.domain.models.analysis_outcome import AnalysisOutcome
+            confirmed = bool(acquisition.jobs and not acquisition.unconfirmed and step.success and not unconfirmed)
+            step.success = confirmed
+            step.status = ExecutionStatus.COMPLETED if confirmed else ExecutionStatus.FAILED
+            event.status = StepStatus.COMPLETED if confirmed else StepStatus.FAILED
+            step.outcome = AnalysisOutcome(status="succeeded" if confirmed else "partial" if acquisition.jobs else "failed",
+                reason_code="acquisition_submitted" if confirmed else "acquisition_not_confirmed")
+            step.error = None if confirmed else "acquisition_not_confirmed"
+            step.result = acquisition_notice(acquisition)
+            step.outputs["open_data_acquisition"] = {"jobs": acquisition.jobs, "submission_confirmed": confirmed}
+            self._open_data_terminal_notice = step.result
+            if public_step is not step:
+                for field in ("status", "success", "result", "error", "outcome", "outputs"):
+                    setattr(public_step, field, getattr(step, field))
+            return []
+        handoff_pending = bool(acquisition_calls and acquisition and (
+            acquisition.unconfirmed or acquisition.needs_handoff or not acquisition.jobs))
         candidates = set(step.attachments or []) | {item.file_path for item in files if item.file_path}
+        candidates.update(path for requirement in requirements for path in requirement.output_paths)
         candidates.update(getattr(self, "_pending_artifact_paths", set()))
         pinned = getattr(self, "_analysis_verified_files", {}).get(step.id, {})
         candidates.update(pinned)
-        if not requirements and not candidates and step.success and not unconfirmed:
-            return files
-        if requirements:
+        if requirements or scope is not None:
             candidates.update(path for path in await self._list_sandbox_artifacts()
                               if path not in getattr(self, "_artifact_baseline_paths", set()))
         if message._resume_checkpoint:
             candidates.update(message._resume_checkpoint.get("progress", {}).get("verified_files", []))
+        candidates = {path for path in candidates
+                      if path in pinned or self._within_delivery_scope(path, scope)}
+        files = [item for item in files if item.file_path in candidates]
         def expected_kind(path):
             # A structured JSON table is a table only when the requested
             # contract explicitly says so. Extension defaults serve other cases.
@@ -1878,7 +2501,8 @@ class AgentTaskRunner(TaskRunner):
             return next(iter(declared)) if len(declared) == 1 else artifact_kind(path)
 
         items = [{"path": path, "kind": expected_kind(path)} for path in sorted(candidates)
-                 if expected_kind(path) and path.startswith("/home/ubuntu/output/")
+                 if expected_kind(path) and self._is_deliverable_artifact(path) and path.startswith("/home/ubuntu/output/")
+                 and not self._is_data_center_dataset_path(path) and not self._is_private_artifact_path(path)
                  and str(PurePosixPath(path)) == path and ".." not in PurePosixPath(path).parts
                  and "\\" not in path and not any(ord(char) < 32 for char in path)]
         records, available = [], True
@@ -1888,7 +2512,7 @@ class AgentTaskRunner(TaskRunner):
             for offset in range(0, len(items), 32):
                 batch = items[offset:offset + 32]
                 try:
-                    result = await validate(batch) if callable(validate) else None
+                    result = await validate(batch, purpose="delivery") if callable(validate) else None
                     batch_ok = bool(result and result.success and isinstance(result.data, dict)
                                     and type(result.data.get("version")) is int
                                     and result.data.get("version") == 1)
@@ -1904,6 +2528,21 @@ class AgentTaskRunner(TaskRunner):
                     available = False
                     records.extend({**item, "expected_kind": item["kind"], "valid": False,
                                     "reason": "validation_unavailable"} for item in batch)
+        declared_paths = {path for requirement in requirements for path in requirement.output_paths}
+        directories = {item.get("path") for item in records if item.get("reason") == "not_regular_file"}
+        expanded_directories = {
+            path: sorted(item["path"] for item in records if item.get("valid") is True
+                         and item["path"].startswith(path.rstrip("/") + "/"))
+            for path in declared_paths if path in directories
+        }
+        # A declared directory is a scope, never itself an attachment. Only its
+        # independently checked regular files can count. An empty or unreadable
+        # promised path remains a genuine missing delivery.
+        # General file_find can enumerate working directories. They are not
+        # file candidates; an explicitly promised file at a directory path is
+        # still a real engineering failure, not a successful delivery.
+        records = [item for item in records if item.get("reason") != "not_regular_file"
+                   or (item.get("path") in declared_paths and not expanded_directories.get(item.get("path")))]
         valid = {item["path"]: item for item in records if item.get("valid") is True}
         def uploaded_matches(item):
             return (isinstance(item.file_id, str) and bool(item.file_id.strip()) and item.file_path in valid
@@ -1925,9 +2564,17 @@ class AgentTaskRunner(TaskRunner):
         outcome = assess_delivery(requirements, records, checked_files,
                                   execution_success=bool(step.success and not unconfirmed), stop_code=stop_code,
                                   validation_available=available)
-        repair_pending, protected_changed = await self._review_artifact_repair(
-            step, message, records, checked_files, requirements, outcome, execution,
-            validation_available=available, source_seq=source_seq)
+        # Completion records execution and delivery, not scientific endorsement.
+        if handoff_pending:
+            # Queued/unstaged external data cannot be repaired by rerunning a
+            # download or by fabricating an output. Keep validated prior files.
+            outcome.status = "partial" if checked_files else "failed"
+            outcome.reason_code = "data_acquisition_pending"
+            repair_pending, protected_changed = False, False
+        else:
+            repair_pending, protected_changed = await self._review_artifact_repair(
+                step, message, records, checked_files, requirements, outcome, execution,
+                validation_available=available, source_seq=source_seq)
         if protected_changed:
             # Previously uploaded bytes are immutable. Do not substitute a
             # changed working copy or claim the repair preserved its evidence.
@@ -1939,20 +2586,76 @@ class AgentTaskRunner(TaskRunner):
             # latest validation service or tool receipt is unavailable.
             preserved = getattr(self, "_analysis_verified_files", {}).get(step.id, {})
             checked_files = list(preserved.values()) + [item for item in checked_files if item.file_path not in preserved]
+            if outcome.status != "succeeded":
+                existing_ids = {item.file_id for item in checked_files}
+                checked_files.extend(item for key, item in getattr(self, "_analysis_rejected_versions", {}).items()
+                                     if key not in existing_ids)
+            if checked_files and outcome.status == "failed":
+                # A later validation outage must not erase durable, previously
+                # validated results from the user's completion status.
+                outcome.status = "partial"
+            if preserved and outcome.status != "succeeded":
+                # Required files already delivered as immutable uploads remain
+                # fulfilled even if the working copy cannot be checked now.
+                # This reconciles only missing file slots, never semantic review
+                # or the failure reason, and cannot turn an outage into success.
+                pinned_receipts = getattr(self, "_analysis_verified_receipts", {}).get(step.id, {})
+                retained_records = [pinned_receipts[path] for path in preserved if path in pinned_receipts]
+                retained_paths = {item["path"] for item in retained_records}
+                reconciled = assess_delivery(requirements,
+                    retained_records + [item for item in records if item.get("path") not in retained_paths],
+                    checked_files, execution_success=False, stop_code=outcome.reason_code,
+                    validation_available=available)
+                outcome.missing = reconciled.missing
+                outcome.issues = reconciled.issues
+        from app.domain.services.execution_report import checked_execution_records, execution_history_message
+        outcome.execution_records = checked_execution_records(execution)
         step.outcome = outcome
+        result_owner = getattr(self, "_user_id", None)
+        result_session = getattr(self, "_session_id", None)
+        if (not repair_pending and checked_files
+                and isinstance(result_owner, str) and result_owner.strip()
+                and isinstance(result_session, str) and result_session.strip()):
+            from app.domain.services.analysis_result_set import build_result_set
+            from app.domain.services.analysis_answer_review import AnswerEvidence
+            evidence = getattr(self, "_analysis_answer_evidence", None)
+            step.outputs["result_set"] = build_result_set(
+                owner_id=result_owner, session_id=result_session, step_id=step.id,
+                input_identity={"files": sorted(message.attachment_file_ids),
+                                "datasets": sorted(item.dataset_id for item in message.datasets),
+                                "versions": getattr(self, "_analysis_source_fingerprints", None)},
+                files=checked_files, records=records,
+                executions=evidence.executed_versions(step.id) if type(evidence) is AnswerEvidence else ())
+            if any(item["state"] == "retained_prior_version" for item in step.outputs["result_set"]["files"]):
+                step.result = (step.result or "") + "\n\n结果集合中保留了此前交付的文件版本，相关工作文件已有变化；请按集合中的版本引用。"
+        if not repair_pending:
+            # Future plans, summaries and checkpoints must not retain rejected
+            # model attachment claims after exact-byte delivery reconciliation.
+            step.attachments = [item.file_path for item in checked_files]
+            from app.domain.services.delivery_links import reconcile_delivery_links
+            step.result = reconcile_delivery_links(step.result or "", checked_files,
+                known_paths=getattr(self, "_analysis_historical_delivery_paths", ()))
         step.success = outcome.status == "succeeded"
         step.status = ExecutionStatus.COMPLETED if step.success else ExecutionStatus.FAILED
         event.status = StepStatus.COMPLETED if step.success else StepStatus.FAILED
         if not step.success:
-            had_unverified_draft = bool(step.result)
             if not repair_pending:
-                # Clear before saving a continuation: its plan/progress must
-                # not label an unverified draft as evidence for a later turn.
-                # Local repair already received the draft privately above.
-                step.result = None
+                # Publish useful explanations, but never let model prose hide
+                # an engineering failure. Checkpoints carry this same explicit
+                # status and the non-reviewed marker, not verified conclusions.
+                draft = step.result or ""
+                status_text = outcome_message(outcome, delivered_files=checked_files)
+                history = execution_history_message(outcome.execution_records)
+                if history:
+                    # Execution errors come from the host ledger. A model's
+                    # explanation must not relabel distinct observed failures.
+                    draft = history
+                step.result = status_text + ("\n\n" + draft if draft else "")
+                if protected_changed:
+                    step.result += "\n\n补齐过程中已有文件发生变化，已保留此前交付的版本。"
             # An uncertain side-effecting call must not be offered as an
             # automatically replayable script. Only explicit safe checkpoints.
-            safe = not execution.get("has_unconfirmed_tool_execution", False)
+            safe = not handoff_pending and not execution.get("has_unconfirmed_tool_execution", False)
             safe = safe and execution.get("side_effect_state") != "unknown"
             proof = execution.get("execution_evidence", {})
             if proof:
@@ -1966,14 +2669,9 @@ class AgentTaskRunner(TaskRunner):
             if safe and budget is not None:
                 try:
                     snapshot = await budget.snapshot()
-                    from datetime import UTC, datetime
-                    deadline = snapshot.deadline_at
-                    if deadline is not None:
-                        deadline = deadline.replace(tzinfo=UTC) if deadline.tzinfo is None else deadline
                     # Production requests are metered, not quota-limited. A
                     # missing ceiling must not disable a safe checkpoint.
-                    safe = (deadline is None or datetime.now(UTC) < deadline) and (
-                        outcome.reason_code == "delivery_failed" or all(
+                    safe = (outcome.reason_code == "delivery_failed" or all(
                             limit is None or used < limit for used, limit in (
                                 (snapshot.tool_batches_used, snapshot.hard_limit),
                                 (snapshot.model_calls, snapshot.model_call_limit),
@@ -1983,35 +2681,33 @@ class AgentTaskRunner(TaskRunner):
                     )
                 except Exception:
                     safe = False
-            if safe and not repair_pending and not protected_changed and message.datasets and source_seq is not None:
+            if (safe and not repair_pending and not protected_changed
+                    and source_paths(message) and source_seq is not None):
                 try:
                     token = await save_checkpoint(
                         self._session_repository, self._sandbox, self._session_id, self._user_id,
                         message, getattr(self._flow, "plan", None),
                         source_fingerprints=getattr(self, "_analysis_source_fingerprints", None),
                         records=records, delivered=checked_files, reason_code=outcome.reason_code,
-                        source_seq=source_seq)
+                        source_seq=source_seq,
+                        answer_evidence=getattr(self, "_analysis_answer_evidence", None))
                     if token:
                         outcome.can_resume, outcome.resume_from = True, token
                 except Exception as error:
                     logger.warning("Analysis checkpoint unavailable error_type=%s", type(error).__name__)
-            if not step.result:
+            if handoff_pending:
+                step.result = ("获取任务尚未提供本轮可分析的输入。请查看数据卡片，待实际文件获取完成后点击“加入分析输入”再继续。"
+                               "本轮尚未完成所请求的数据分析，请勿重复下载。")
+                had_unverified_draft = False
+            elif not step.result:
                 step.result = outcome_message(outcome, delivered_files=checked_files)
-            if had_unverified_draft and not repair_pending:
-                # A disclaimer cannot turn an unexecuted draft into evidence.
-                # Keep the original draft in the private execution memory and
-                # repair feedback, not in a final answer beside failed receipts.
-                # Already verified uploads and other successful steps survive.
-                step.result += (
-                    "\n\n本步骤的分析说明尚未通过完整核验，未作为已确认结论发布。"
-                )
             step.error = outcome.reason_code
         logger.info("analysis_outcome status=%s reason=%s missing=%d delivered=%d resumable=%s",
                     outcome.status, outcome.reason_code, len(outcome.missing), len(checked_files), outcome.can_resume)
         if public_step is not step:
             # Public StepEvents can be redacted copies. Reflect execution state
             # in both places without writing redacted source inputs into the plan.
-            for field in ("status", "success", "result", "error", "outcome", "deliverables", "outputs"):
+            for field in ("status", "success", "result", "error", "outcome", "deliverables", "outputs", "attachments"):
                 setattr(public_step, field, getattr(step, field))
         return checked_files
 
@@ -2136,7 +2832,7 @@ class AgentTaskRunner(TaskRunner):
             for call in next_calls:
                 try:
                     tool = executor.get_tool(call.get("name")) if executor else None
-                    if tool is None or executor._blocked_runtime_install_reason(call) or recovery.progress.before_call(call, record=False):
+                    if tool is None or recovery.progress.before_call(call, record=False):
                         bounded = False
                         break
                     validate_tool_arguments(tool, call)
@@ -2144,49 +2840,51 @@ class AgentTaskRunner(TaskRunner):
                     bounded = False
                     break
         if review_needed:
-            # Each extension rechecks sources and real output bytes, under one
-            # bounded deadline. Scripts are deliberately not delivery progress.
+            # Each extension rechecks sources and real output bytes. Scripts
+            # are deliberately not delivery progress. Verification is cancellable,
+            # but elapsed time cannot turn valid progress into a failed grant.
             try:
-                async with asyncio.timeout(10):
-                    if message.datasets:
-                        current_sources = await fingerprints(self._sandbox, source_paths(message))
-                        sources_stable = bool(current_sources and current_sources == self._analysis_source_fingerprints)
-                    if message.attachments or message.attachment_file_ids:
-                        # The current fingerprint protocol covers mounted
-                        # datasets/output, not arbitrary attachment paths.
-                        sources_stable = False
-                    candidates = [path for path in await self._list_sandbox_artifacts()
-                                  if path not in getattr(self, "_artifact_baseline_paths", set())
-                                  and artifact_kind(path) not in {None, "code"}][:32]
-                    valid = []
-                    if candidates:
-                        result = await self._sandbox.validate_artifacts([
-                            {"path": path, "kind": artifact_kind(path)} for path in candidates])
-                        if not result.success or not isinstance(result.data, dict) or result.data.get("version") != 1:
-                            raise ValueError("artifact_review_unavailable")
-                        records = result.data.get("files", [])
-                        if len(records) != len(candidates) or {item["path"] for item in records} != set(candidates):
-                            raise ValueError("artifact_review_incomplete")
-                        valid = [item for item in records if item.get("valid") is True
-                                 and type(item.get("size")) is int and item["size"] > 0
-                                 and isinstance(item.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])]
-                        for item in valid:
-                            if len(recovery.artifact_evidence) < 128:
-                                recovery.artifact_evidence.add(private_identity_hmac({"purpose": "analysis-verified-artifact/v1",
-                                    "path": item["path"], "sha256": item["sha256"], "kind": item["kind"]}))
-                    running_steps = [step for step in getattr(getattr(self._flow, "plan", None), "steps", [])
-                                     if getattr(step.status, "value", step.status) == "running"]
-                    requirements = (list(running_steps[0].deliverables) if len(running_steps) == 1
-                                    else list(message.deliverables))
-                    if requirements:
-                        from app.domain.services.analysis_completion import assess_delivery
-                        # Provisional records are used only for the required-
-                        # output comparison; they are never uploaded/persisted.
-                        inspected = [FileInfo(file_id=f"review-{index}", file_path=item["path"],
-                            filename=PurePosixPath(item["path"]).name, size=item["size"],
-                            metadata={"artifact_sha256": item["sha256"]}) for index, item in enumerate(valid)]
-                        required_work = bool(assess_delivery(requirements, valid, inspected,
-                            execution_success=True, stop_code="completed", validation_available=True).missing)
+                if source_paths(message):
+                    current_sources = await fingerprints(self._sandbox, source_paths(message),
+                        approved_upload_paths=message.analysis_inputs.upload_paths if message.analysis_inputs else [])
+                    sources_stable = bool(current_sources and current_sources == self._analysis_source_fingerprints)
+                if (message.attachments or message.attachment_file_ids) and not message.analysis_inputs:
+                    # The current fingerprint protocol covers mounted
+                    # datasets/output, not arbitrary attachment paths.
+                    sources_stable = False
+                candidates = [path for path in await self._list_sandbox_artifacts()
+                              if path not in getattr(self, "_artifact_baseline_paths", set())
+                              and self._within_delivery_scope(path, getattr(self, "_active_artifact_delivery_scope", None))
+                              and artifact_kind(path) not in {None, "code"}][:32]
+                valid = []
+                if candidates:
+                    result = await self._sandbox.validate_artifacts([
+                        {"path": path, "kind": artifact_kind(path)} for path in candidates], purpose="delivery")
+                    if not result.success or not isinstance(result.data, dict) or result.data.get("version") != 1:
+                        raise ValueError("artifact_review_unavailable")
+                    records = result.data.get("files", [])
+                    if len(records) != len(candidates) or {item["path"] for item in records} != set(candidates):
+                        raise ValueError("artifact_review_incomplete")
+                    valid = [item for item in records if item.get("valid") is True
+                             and type(item.get("size")) is int and item["size"] >= 0
+                             and isinstance(item.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])]
+                    for item in valid:
+                        if len(recovery.artifact_evidence) < 128:
+                            recovery.artifact_evidence.add(private_identity_hmac({"purpose": "analysis-verified-artifact/v1",
+                                "path": item["path"], "sha256": item["sha256"], "kind": item["kind"]}))
+                running_steps = [step for step in getattr(getattr(self._flow, "plan", None), "steps", [])
+                                 if getattr(step.status, "value", step.status) == "running"]
+                requirements = (list(running_steps[0].deliverables) if len(running_steps) == 1
+                                else list(message.deliverables))
+                if requirements:
+                    from app.domain.services.analysis_completion import assess_delivery
+                    # Provisional records are used only for the required-
+                    # output comparison; they are never uploaded/persisted.
+                    inspected = [FileInfo(file_id=f"review-{index}", file_path=item["path"],
+                        filename=PurePosixPath(item["path"]).name, size=item["size"],
+                        metadata={"artifact_sha256": item["sha256"]}) for index, item in enumerate(valid)]
+                    required_work = bool(assess_delivery(requirements, valid, inspected,
+                        execution_success=True, stop_code="completed", validation_available=True).missing)
             except Exception:
                 sources_stable = False
                 bounded = False
@@ -2206,6 +2904,7 @@ class AgentTaskRunner(TaskRunner):
         runtime_stack=None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Process a single message through the agent's flow and yield events"""
+        self._requested_code_deliverables = [item for item in message.deliverables if item.kind == "code"]
         if not message.message:
             if task_id:
                 await self._record_execution_snapshot(
@@ -2350,7 +3049,8 @@ class AgentTaskRunner(TaskRunner):
             )
 
         artifact_discovery_dirty = bool(getattr(self, "_generated_files", []))
-        self._analysis_source_fingerprints = await fingerprints(self._sandbox, source_paths(message)) if message.datasets else None
+        self._analysis_source_fingerprints = await fingerprints(self._sandbox, source_paths(message),
+            approved_upload_paths=message.analysis_inputs.upload_paths if message.analysis_inputs else []) if source_paths(message) else None
         try:
             await self._open_analysis_runtime(message, trigger_event_seq, runtime_stack)
         except Exception as error:
@@ -2358,18 +3058,84 @@ class AgentTaskRunner(TaskRunner):
             if not isinstance(error, BudgetUnavailableError):
                 raise
             logger.warning("Analysis runtime admission unavailable error_type=%s", type(error).__name__)
-            yield MessageEvent(message="本次执行暂未启动：无法确认任务运行记录。已有结果保持不变，请检查任务运行记录后再继续。")
+            yield terminal_analysis_message(
+                "本次分析尚未开始：无法确认任务运行记录（runtime_admission_unavailable）。请检查运行记录后再继续。",
+                reason_code="runtime_admission_unavailable", stage="input_preparation", analysis_started=False)
             yield DoneEvent()
             return
+        delivery = getattr(self, "_input_delivery", None)
+        identity = getattr(self, "_accepted_input_key", None)
+        if delivery is not None and identity is not None:
+            await delivery.mark_analysis_started(self._session_id, identity)
+        self._analysis_turn_started = True
         if checkpoint:
             self._generated_files = [FileInfo.model_validate(item) for item in checkpoint.get("delivered", [])]
         self._analysis_delivery_trackers = {}
+        # These survive executor context resets/compaction and are keyed by
+        # the original accepted input. Durable audit also prevents restart use.
+        self._analysis_scope_trackers = {}
+        self._analysis_scope_observations = {}
         self._analysis_verified_files = {}
+        self._open_data_acquisition_calls = []
+        self._open_data_terminal_notice = None
+        self._analysis_preserved_answer_evidence = {}
+        self._analysis_verified_receipts = {}
+        self._analysis_preserved_file_ids = set()
+        self._analysis_rejected_versions = {}
+        from app.domain.services.analysis_answer_review import AnswerEvidence
+        self._analysis_answer_evidence = AnswerEvidence()
+        self._analysis_answer_evidence.observe_context({
+            "datasets": [{"dataset_id": dataset.dataset_id, "name": dataset.name,
+                          "description": dataset.description,
+                          "sandbox_path": dataset.sandbox_path,
+                          "files": [{"path": str(PurePosixPath(dataset.sandbox_path) / item.path),
+                                     "size": item.size} for item in dataset.files[:64]]}
+                         for dataset in message.datasets[:4]],
+            "input_files": [{"path": path} for path in message.attachments[:64]],
+        })
+        if (checkpoint and self._is_delivery_only_continuation(checkpoint)
+                and "answer_evidence" in checkpoint):
+            # prepare_continuation has authenticated the complete private
+            # checkpoint and rechecked original source/output bytes. Restore
+            # the same execution's observations only for upload recovery;
+            # arbitrary history and new analyses cannot gain this authority.
+            self._analysis_answer_evidence = AnswerEvidence.from_checkpoint_snapshot(
+                checkpoint["answer_evidence"],
+                step_ids={step["id"] for step in checkpoint["plan"]["steps"]})
+        from app.domain.services.execution_history import reviewed_history_steps
+        history = getattr(message, "_session_events_snapshot", None)
+        from app.domain.services.execution_history import analysis_history_steps
+        historical_steps = analysis_history_steps(history,
+            dataset_ids={item.dataset_id for item in message.datasets},
+            input_file_ids=set(message.attachment_file_ids))
+        # Already delivered paths are usable references, not newly generated
+        # artifacts and never scientific evidence from the previous answer.
+        self._analysis_historical_delivery_paths = {
+            path for previous_step in historical_steps for path in previous_step.attachments
+            if isinstance(path, str) and path.startswith("/home/ubuntu/output/")
+            and str(PurePosixPath(path)) == path and ".." not in PurePosixPath(path).parts
+        }
+        for previous_step in reviewed_history_steps(
+            history, dataset_ids={item.dataset_id for item in message.datasets},
+            input_file_ids=set(message.attachment_file_ids),
+        ):
+            self._analysis_answer_evidence.observe_reviewed_result(previous_step)
         self._flow._artifact_repair_requests = {}
         last_analysis_outcome = None
         artifact_discovery_ran = False
         delivered_file_keys: set[str] = set()
         pending_delivery: MessageEvent | None = None
+        pending_delivery_segments: list[tuple[str, set[str]]] = []
+        pending_delivery_invalidated = False
+
+        def validated_delivery_prose(files: List[FileInfo]) -> str:
+            valid_keys = delivered_file_keys | {self._file_delivery_key(item) for item in files}
+            # A stage's prose can claim that its files are complete. If those
+            # exact bytes no longer validate, retain only independent stages;
+            # a failure prefix alone cannot make the old claim trustworthy.
+            return "\n\n".join(text for text, required in pending_delivery_segments
+                               if required <= valid_keys)
+
         skip_next_step_results: set[str] = set()
         withheld_step_outcomes = {}
         # Completion advice only needs the current turn.  Keeping this compact
@@ -2391,10 +3157,13 @@ class AgentTaskRunner(TaskRunner):
             post_events: List[BaseEvent] = []
             suppress_event = False
             if isinstance(event, ToolEvent):
+                self._observe_answer_tool_event(event)
                 # TODO: move to tool function
                 self._remember_private_tool_output(event)
                 await self._handle_tool_event(event)
                 if event.status == ToolStatus.CALLED:
+                    if event.tool_name == "data_discovery" and event.function_name == "data_acquire":
+                        self._open_data_acquisition_calls.append(event)
                     if event.function_name == "dataset_analysis_run":
                         # A successful compiled analysis has a validated result
                         # contract, but model-authored manifests can omit files
@@ -2410,11 +3179,28 @@ class AgentTaskRunner(TaskRunner):
                             else getattr(result, "success", False)
                         )
                         artifact_discovery_dirty = bool(success)
-                    else:
+                    elif event.tool_name == "skill" and event.function_name == "skill_create_from_session":
+                        # A creator stores a private package directly in object
+                        # storage; it does not produce analysis output files.
+                        # Do not rediscover/re-deliver the source analysis just
+                        # because its authoring attempt completed or failed.
+                        # Keep any earlier analysis mutation's dirty flag.
+                        pass
+                    elif not (event.tool_name == "data_discovery" and event.function_name in {
+                        "data_search", "data_search_status", "data_search_continue", "data_search_resolve", "data_acquire",
+                    }):
                         # Tools may create or replace files. Defer discovery until
                         # the step boundary instead of scanning after every event.
                         artifact_discovery_dirty = True
             elif isinstance(event, StepEvent):
+                from app.domain.services.analysis_completion import requirements_for_step
+                step_requirements = requirements_for_step(event.step, message)
+                self._active_artifact_delivery_scope = self._step_delivery_scope(event.step, step_requirements)
+                for item in step_requirements:
+                    if item.kind == "code" and item not in self._requested_code_deliverables:
+                        self._requested_code_deliverables.append(item)
+                if event.status == StepStatus.STARTED:
+                    self._analysis_answer_evidence.begin_step(event.step.id)
                 explicit_files = await self._sync_step_attachments_to_storage(event)
                 artifact_policy = str(
                     (event.step.inputs or {}).get("artifact_policy") or "optional"
@@ -2484,16 +3270,36 @@ class AgentTaskRunner(TaskRunner):
                                 **({"analysis_outcome": last_analysis_outcome.model_dump(exclude_none=True)} if last_analysis_outcome else {}),
                             },
                         )
+                        pending_delivery_segments.append((delivery_message, {
+                            self._file_delivery_key(item) for item in terminal_files
+                        }))
                         # Step evidence stays in StepEvent; deliver only at Done.
                         if pending_delivery:
                             delivery_event.attachments = self._unique_files(
                                 pending_delivery.attachments + new_files)
+                            if pending_delivery.message and pending_delivery.message != delivery_event.message:
+                                delivery_event.message = pending_delivery.message + "\n\n" + delivery_event.message
                         pending_delivery = delivery_event
                         if result_message:
                             # ExecutionAgent repeats step.result after StepEvent.
                             # Keep that prose internal until terminal delivery.
                             skip_next_step_results = {original_step_result, result_message} - {""}
             elif isinstance(event, MessageEvent):
+                if (event.metadata or {}).get("clarification"):
+                    saved = event.metadata.get("clarification_execution")
+                    if isinstance(saved, dict):
+                        from app.domain.services.analysis_checkpoint import configuration_digest
+                        session = await self._session_repository.find_by_id_and_user_id(
+                            self._session_id, self._user_id)
+                        if session is None:
+                            raise ValueError("待确认任务的配置不可用，系统没有继续执行。")
+                        saved["configuration_digest"] = configuration_digest(session)
+                    # A question is neither a final analysis nor an artifact
+                    # delivery. Keep its durable binding through Wait unchanged.
+                    event.attachments = []
+                    yield event
+                    turn_events.append(event)
+                    continue
                 if (event.metadata or {}).get("analysis_progress"):
                     # Progress is a transient running message, not a terminal
                     # summary and not a request to discover or attach files.
@@ -2505,17 +3311,28 @@ class AgentTaskRunner(TaskRunner):
                 is_summary = self._should_attach_generated_files_to_message()
                 summary_discovered_files: List[FileInfo] = []
                 normalized_message = (event.message or "").strip()
+                if is_summary and self._open_data_terminal_notice:
+                    # A summarizer cannot upgrade submitted work to completed
+                    # downloads/analysis or attach an invented receipt file.
+                    event.message = self._open_data_terminal_notice
+                    event.attachments = []
                 if is_summary and last_analysis_outcome and last_analysis_outcome.status != "succeeded":
                     event.metadata = {**(event.metadata or {}), "analysis_outcome": last_analysis_outcome.model_dump(exclude_none=True)}
                 if is_summary and withheld_step_outcomes:
-                    # A later summarizer has no new execution evidence and must
-                    # not resurrect a withheld draft, including when a later
-                    # step succeeded after an earlier one failed.
-                    event.message = (pending_delivery.message if pending_delivery and
-                                     (pending_delivery.metadata or {}).get("analysis_outcome", {}).get("status") in {"failed", "partial"}
-                                     else "部分步骤尚未完成核验，任务未完整完成。以下附件仅包含已通过检查的文件。")
+                    # A model-only summary cannot erase an engineering failure.
+                    # Keep the delivered explanations with their host statuses.
+                    checked_steps = getattr(getattr(self._flow, "plan", None), "steps", [])
+                    confirmed_text = "\n\n".join(item.result for item in checked_steps if item.outcome and item.result)
+                    if confirmed_text:
+                        event.message = confirmed_text
                     event.metadata = {**(event.metadata or {}), "analysis_outcome":
                                       next(iter(withheld_step_outcomes.values())).model_dump(exclude_none=True)}
+                elif is_summary and last_analysis_outcome is not None:
+                    # Reuse delivered step text without a second model review.
+                    checked_steps = getattr(getattr(self._flow, "plan", None), "steps", [])
+                    confirmed_text = "\n\n".join(item.result for item in checked_steps if item.outcome and item.result)
+                    if confirmed_text:
+                        event.message = confirmed_text
                 if (
                     skip_next_step_results
                     and not is_summary
@@ -2550,9 +3367,25 @@ class AgentTaskRunner(TaskRunner):
                     ]
                     event.attachments = await self._validate_staged_artifact_files(staged_files)
                     if is_summary:
+                        # Remember expectations before filtering. Otherwise a
+                        # summary can discard a changed file, leaving Done an
+                        # empty set that incorrectly looks fully validated.
+                        summary_files = self._unique_files(
+                            (pending_delivery.attachments if pending_delivery else []) + staged_files)
                         if pending_delivery:
                             event.attachments = await self._validate_staged_artifact_files(self._unique_files(
                                 pending_delivery.attachments + event.attachments))
+                        expected_keys = {self._file_delivery_key(item) for item in summary_files}
+                        validated_keys = {self._file_delivery_key(item) for item in event.attachments}
+                        if pending_delivery:
+                            pending_delivery_invalidated |= not expected_keys <= validated_keys
+                        # Keep independently verified stage prose available if
+                        # the all-stage summary later loses any file evidence.
+                        if not pending_delivery_segments:
+                            # A standalone response has no prior engineering
+                            # success claim to revoke; preserve its findings
+                            # while delivering only its checked attachments.
+                            pending_delivery_segments = [(event.message, validated_keys)]
                         event.metadata = {**(event.metadata or {}), "artifact_delivery": True}
                         pending_delivery = event
                         suppress_event = True
@@ -2582,6 +3415,7 @@ class AgentTaskRunner(TaskRunner):
                         if self._file_delivery_key(file_info) not in delivered_file_keys
                     ]
                     partial_files = await self._validate_staged_artifact_files(partial_files)
+                    partial_prose = validated_delivery_prose(partial_files)
                     if partial_files:
                         delivered_file_keys.update(
                             self._file_delivery_key(file_info)
@@ -2590,9 +3424,9 @@ class AgentTaskRunner(TaskRunner):
                         pre_events.append(
                             MessageEvent(
                                 role="assistant",
-                                message=(
-                                    f"任务未能完整完成。已保存的阶段性文件：{len(partial_files)} 个。"
-                                ),
+                                message=(f"任务未能完整完成。已保存的阶段性文件：{len(partial_files)} 个。"
+                                         + ("\n\n已完成阶段的说明：\n" + partial_prose
+                                            if partial_prose else "")),
                                 attachments=partial_files,
                                 metadata={
                                     "artifact_delivery": True,
@@ -2606,13 +3440,16 @@ class AgentTaskRunner(TaskRunner):
                     # No files survived the terminal check; do not restore the
                     # buffered pre-check attachments when retaining diagnostics.
                     pending_delivery.attachments = []
+                    partial_prose = validated_delivery_prose([])
                     pending_delivery.message = "任务未能完整完成。" + (
-                        pending_delivery.message if last_analysis_outcome and last_analysis_outcome.status != "succeeded" else "")
+                        "\n\n已完成阶段的说明：\n" + partial_prose if partial_prose else "")
                     pending_delivery.metadata = {"partial": True, **(
                         {"analysis_outcome": last_analysis_outcome.model_dump(exclude_none=True)}
                         if last_analysis_outcome and last_analysis_outcome.status != "succeeded" else {})}
                     pre_events.append(pending_delivery)
                 pending_delivery = None
+                pending_delivery_segments = []
+                pending_delivery_invalidated = False
             elif isinstance(event, WaitEvent):
                 if artifact_discovery_dirty or pending_delivery:
                     late_files = (await self._sync_discovered_artifacts_to_storage()
@@ -2627,6 +3464,7 @@ class AgentTaskRunner(TaskRunner):
                         if self._file_delivery_key(file_info) not in delivered_file_keys
                     ]
                     late_files = await self._validate_staged_artifact_files(late_files)
+                    partial_prose = validated_delivery_prose(late_files)
                     if late_files:
                         delivered_file_keys.update(
                             self._file_delivery_key(file_info) for file_info in late_files
@@ -2634,12 +3472,26 @@ class AgentTaskRunner(TaskRunner):
                         pre_events.append(
                             MessageEvent(
                                 role="assistant",
-                                message=f"已保存的阶段性文件：{len(late_files)} 个。",
+                                message=(f"任务正在等待继续。已保存的阶段性文件：{len(late_files)} 个。"
+                                         + ("\n\n已完成阶段的说明：\n" + partial_prose
+                                            if partial_prose else "")),
                                 attachments=late_files,
-                                metadata={"artifact_delivery": True},
+                                metadata={"artifact_delivery": True,
+                                          **({"partial": True} if pending_delivery_invalidated else {})},
                             )
                         )
+                if pending_delivery and not pre_events:
+                    pending_delivery.attachments = []
+                    partial_prose = validated_delivery_prose([])
+                    pending_delivery.message = "任务正在等待继续。" + (
+                        "\n\n已完成阶段的说明：\n" + partial_prose if partial_prose else "")
+                    pending_delivery.metadata = {"partial": True, **(
+                        {"analysis_outcome": last_analysis_outcome.model_dump(exclude_none=True)}
+                        if last_analysis_outcome and last_analysis_outcome.status != "succeeded" else {})}
+                    pre_events.append(pending_delivery)
                 pending_delivery = None
+                pending_delivery_segments = []
+                pending_delivery_invalidated = False
             elif isinstance(event, DoneEvent):
                 if artifact_discovery_dirty:
                     late_files = await self._sync_discovered_artifacts_to_storage()
@@ -2672,8 +3524,11 @@ class AgentTaskRunner(TaskRunner):
                     expected_files = len(pending_delivery.attachments)
                     pending_delivery.attachments = await self._validate_staged_artifact_files(pending_delivery.attachments)
                     metadata = pending_delivery.metadata or {}
-                    if len(pending_delivery.attachments) < expected_files:
+                    if pending_delivery_invalidated or len(pending_delivery.attachments) < expected_files:
                         pending_delivery.message = "部分结果文件未通过最终检查，任务未完整交付。以下仅提供检查通过的文件。"
+                        partial_prose = validated_delivery_prose(pending_delivery.attachments)
+                        if partial_prose:
+                            pending_delivery.message += "\n\n已完成阶段的说明：\n" + partial_prose
                         metadata["partial"] = True
                     plan = getattr(self._flow, "plan", None)
                     if any(not step.success for step in getattr(plan, "steps", [])) and not withheld_step_outcomes:
@@ -2685,14 +3540,21 @@ class AgentTaskRunner(TaskRunner):
                     pending_delivery.metadata = metadata
                     pre_events = [pending_delivery]
                     pending_delivery = None
-                completion_advice_service = getattr(
-                    self,
-                    "_completion_advice_service",
-                    None,
-                )
+                    pending_delivery_segments = []
+                    pending_delivery_invalidated = False
+            for pre_event in pre_events:
+                # Deliver verified results before spending time on optional
+                # recommendations; the terminal event then carries persisted
+                # advice for both live subscribers and reopened sessions.
+                yield pre_event
+                turn_events.append(pre_event)
+            if isinstance(event, DoneEvent):
+                completion_advice_service = getattr(self, "_completion_advice_service", None)
                 if completion_advice_service is not None:
                     try:
-                        advice = completion_advice_service.analyze_fast([*turn_events, *pre_events])
+                        advice = await completion_advice_service.analyze(
+                            turn_events, llm_overrides=getattr(self, "_llm_overrides", None),
+                        )
                         event.advice = completion_advice_service.to_payload(advice)
                     except Exception as exc:
                         logger.warning(
@@ -2700,9 +3562,6 @@ class AgentTaskRunner(TaskRunner):
                             opaque_log_identifier(self._session_id, namespace="session"),
                             type(exc).__name__,
                         )
-            for pre_event in pre_events:
-                yield pre_event
-                turn_events.append(pre_event)
             if not suppress_event:
                 yield event
                 turn_events.append(event)
@@ -2827,22 +3686,18 @@ class AgentTaskRunner(TaskRunner):
 
     async def destroy(self) -> None:
         """Destroy the task and release resources"""
+        if getattr(self, "_destroy_task", None) is None:
+            self._destroy_task = asyncio.create_task(self._destroy_resources())
+        await join_cleanup(self._destroy_task)
+
+    async def _destroy_resources(self) -> None:
         logger.info("Starting to destroy agent task")
-        
-        # Destroy sandbox environment
+        steps = []
         if self._sandbox:
-            logger.debug(
-                "Destroying sandbox environment agent=%s",
-                opaque_log_identifier(self._agent_id, namespace="agent"),
-            )
-            await self._sandbox.destroy()
-        
+            steps.append(self._sandbox.destroy)
         if self._mcp_tool:
-            logger.debug(
-                "Destroying MCP tool agent=%s",
-                opaque_log_identifier(self._agent_id, namespace="agent"),
-            )
-            await self._mcp_tool.cleanup()
+            steps.append(self._mcp_tool.cleanup)
+        await cleanup_steps(*steps)
         
         logger.debug(
             "Agent fully closed and resources cleared agent=%s",

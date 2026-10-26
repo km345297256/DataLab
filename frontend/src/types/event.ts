@@ -1,8 +1,10 @@
+import type { ProgramAttemptView } from './programAttempt';
 import type { ConnectorResultPanel } from '../components/ConnectorResults.vue';
 import type { FileInfo } from '../api/file';
 import type { ToolPresentation } from './toolPresentation';
 import type { AnalysisJobView } from './analysisJob';
 import type { ToolApprovalView } from './toolApproval';
+import type { SkillCreationView } from './skillCreation';
 
 export interface SpillArtifactRef {
   schema_version: 1;
@@ -52,8 +54,15 @@ export interface ToolEventData extends BaseEventData {
   spill?: SpillArtifactNotice | null;
   analysis_job?: AnalysisJobView | null;
   tool_approval?: ToolApprovalView | null;
+  program_attempt?: ProgramAttemptView | null;
+  execution_status?: 'succeeded' | 'failed' | 'not_started' | null;
+  write_action?: 'reuse' | 'execute_saved' | 'finalize_saved' | 'inspect_saved' | null;
   connector_status?: string | null;
   connector_results?: ConnectorResultPanel | null;
+  open_data_search_id?: string | null;
+  open_data_update_id?: string | null;
+  skill_creation?: SkillCreationView | null;
+  skill_creation_progress?: import('./skillCreation').SkillCreationProgress | null;
 }
 
 export interface StepEventData extends BaseEventData {
@@ -67,8 +76,13 @@ export interface MessageEventData extends BaseEventData {
     role: "user" | "assistant";
     attachments?: FileInfo[];
     metadata?: {
+      client_message_id?: string;
+      clarification_id?: string;
+      clarification?: import('./clarification').AnalysisClarification;
+      step_id?: string;
       analysis_outcome?: import('./analysisOutcome').AnalysisOutcome;
       analysis_progress?: { stage?: string } | null;
+      skill_creation_failure?: { stage: string; code: string; retryable: boolean };
       skills?: string[];
       mcp_servers?: string[];
       data_connectors?: string[];
@@ -96,6 +110,7 @@ export interface CompletionAdviceData {
   is_skill_candidate: boolean;
   skill_reason: string;
   shapefile_preview_available?: boolean;
+  shapefile_preview_file_ids?: string[];
   molecular_preview_available?: boolean;
 }
 

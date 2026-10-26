@@ -82,6 +82,58 @@ def test_netcdf4_raw_packing_kept_explicit():
     assert "no CF" in result["metadata"]["value_semantics"]
 
 
+def test_physical_cf_window_masks_before_scaling_without_expanding_reads():
+    def build(handle):
+        dataset = handle.create_dataset("temperature", data=np.array([0, 10, -9999, 20], dtype="i2"))
+        for key, value in {"scale_factor": 0.1, "add_offset": 273.15, "_FillValue": -9999,
+                           "units": np.bytes_("K"), "calendar": np.bytes_("360_day")}.items():
+            dataset.attrs[key] = value
+    data = fixture(build)
+    tree, _ = preview(data)
+    options = selected(tree, "temperature", [sl(0, 4)])
+    raw, raw_reads = preview(data, "series", options)
+    options["decode"] = "physical"
+    physical, physical_reads = preview(data, "series", options)
+    assert raw["array"]["values"] == [0, 10, -9999, 20]
+    assert physical["array"]["values"] == [273.15, 274.15, None, 275.15]
+    assert physical_reads == raw_reads
+    assert physical["metadata"]["nonfinite_values"] == 1
+    assert physical["metadata"]["units"] == "K" and physical["metadata"]["calendar"] == "360_day"
+    assert physical["axes"] == raw["axes"]
+    assert "physical values" in physical["metadata"]["value_semantics"]
+    # Host and sandbox validate the same mode and exact output contract.
+    import importlib.util
+    host_path = Path(__file__).resolve().parents[2] / "backend/app/application/services/array_window_visualization.py"
+    spec = importlib.util.spec_from_file_location("physical_array_contract", host_path)
+    host = importlib.util.module_from_spec(spec); spec.loader.exec_module(host)
+    assert host.validate_array_window_payload(physical, kind="series", options=options) is physical
+
+
+@pytest.mark.parametrize("attrs", [{"missing_value": np.array([-1, -2])}, {"scale_factor": "0.1"},
+    {"scale_factor": float("inf")}, {"add_offset": 2**63}, {"_Unsigned": "true"}, {"valid_range": [-10, 10]}])
+def test_physical_cf_rejects_unsupported_or_imprecise_decode_attributes(attrs):
+    def build(handle):
+        dataset = handle.create_dataset("signal", data=[1.0, 2.0])
+        for key, value in attrs.items():
+            dataset.attrs[key] = value
+    data = fixture(build); tree, _ = preview(data)
+    options = selected(tree, "signal", [sl(0, 2)])
+    preview(data, "series", options)  # Raw mode never promises those transforms.
+    options["decode"] = "physical"
+    with pytest.raises(ArrayWindowError):
+        preview(data, "series", options)
+
+
+def test_physical_cf_rejects_numeric_overflow_instead_of_inventing_missing_values():
+    def build(handle):
+        dataset = handle.create_dataset("signal", data=[1e308])
+        dataset.attrs["scale_factor"] = 10.0
+    data = fixture(build); tree, _ = preview(data)
+    options = selected(tree, "signal", [sl(0, 1)]); options["decode"] = "physical"
+    with pytest.raises(ArrayWindowError, match="溢出"):
+        preview(data, "series", options)
+
+
 def test_nonfinite_and_precision_are_explicit():
     data = fixture(lambda h: h.create_dataset("precise", data=[1.0000000000000002, float("nan"), float("inf"), -float("inf")]))
     tree, _ = preview(data)

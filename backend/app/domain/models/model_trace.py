@@ -55,6 +55,9 @@ class ModelTraceView(BaseModel):
     tool_tokens: int = Field(default=0, ge=0)
     input_limit: int = Field(default=0, ge=0)
     reserved_output_tokens: int = Field(default=0, ge=0)
+    # None delegates one response's output length to the provider. The sizing
+    # reservation above is accounting metadata, never a generation limit.
+    output_token_limit: int | None = Field(default=None, gt=0)
     task_tokens_charged: int = Field(default=0, ge=0)
     # None means unlimited; zero must never masquerade as an absent quota.
     task_token_limit: int | None = Field(default=None, ge=0)
@@ -63,7 +66,7 @@ class ModelTraceView(BaseModel):
     actual_output_tokens: int | None = Field(default=None, ge=0)
     actual_total_tokens: int | None = Field(default=None, ge=0)
     usage_source: Literal["provider", "reservation", "none"] = "none"
-    error_code: Literal["context_budget_exceeded", "task_token_budget_exceeded", "task_call_budget_exceeded", "analysis_budget_deadline_exceeded", "provider_error", "cancelled", "runtime_closed", "trace_store_unavailable"] | None = None
+    error_code: Literal["context_budget_exceeded", "task_token_budget_exceeded", "task_call_budget_exceeded", "analysis_budget_deadline_exceeded", "provider_error", "provider_timeout", "invalid_json", "cancelled", "runtime_closed", "trace_store_unavailable"] | None = None
     request_hmac_before: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     request_hmac_after: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     compactions: list[CompactionRecord] = Field(default_factory=list, max_length=256)
@@ -71,9 +74,36 @@ class ModelTraceView(BaseModel):
     timings: ModelRequestTimings = Field(default_factory=ModelRequestTimings)
 
 
+class ScheduledModelRetry(BaseModel):
+    """Private timing decision, with no raw headers, endpoints or error text."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    failed_attempt: int = Field(ge=1)
+    next_attempt: int = Field(ge=2)
+    maximum_attempts: int = Field(ge=2)
+    delay_seconds: float = Field(ge=0)
+    reason: Literal[
+        "retry_after_seconds", "retry_after_date", "exponential_jitter",
+        "invalid_retry_after_jitter", "expired_retry_after_jitter",
+    ]
+    scheduled_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class ModelTraceRecord(ModelTraceView):
     user_id: str
     session_id: str
+    # Private audit metadata only; adding this must not expand the public API.
+    scheduled_retry: ScheduledModelRetry | None = None
+    cache_read_tokens: int | None = Field(default=None, ge=0, strict=True)
+    cache_write_tokens: int | None = Field(default=None, ge=0, strict=True)
+    # Identity of the actual ordered tool schema array, not its raw contents.
+    # Optional for legacy records and memory-change events; zero is observed
+    # only when a physical request has no tools. No cache benefit is inferred.
+    tool_schema_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    tool_schema_count: int | None = Field(default=None, ge=0, strict=True)
 
     def public_view(self) -> ModelTraceView:
-        return ModelTraceView.model_validate(self.model_dump(exclude={"user_id", "session_id"}))
+        return ModelTraceView.model_validate(self.model_dump(exclude={
+            "user_id", "session_id", "scheduled_retry", "cache_read_tokens", "cache_write_tokens",
+            "tool_schema_sha256", "tool_schema_count",
+        }))

@@ -1,0 +1,12 @@
+{
+  "scenario": "Artificial complex acceptance; no user analysis data.",
+  "request_artifact": "complex-95oiot0n/040-synthetic_reference_review-request.json",
+  "request_sha256": "2a0164d1c4ef8c96dfb65f2e85f9d7aef18b9375475951ffcede9a459f2e31a1",
+  "response_artifact": "complex-95oiot0n/043-synthetic_reference_review-response.json",
+  "response_sha256": "a85ad6b5850d862a2d1ec8ca2232f333fa0faafbb5fc03f3750207b80423ce59",
+  "context_projection": [
+    "method_contract",
+    "sources"
+  ],
+  "response_preserved": "Original response envelope bytes; no content, source verdict, or requirement verdict changed."
+}

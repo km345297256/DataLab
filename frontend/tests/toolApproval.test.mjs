@@ -98,5 +98,5 @@ test('credential UI keeps secrets out of browser persistence and uses declared s
   assert.doesNotMatch(panel, /localStorage|sessionStorage|console\.(log|error|debug)/);
   assert.match(source('../src/api/credential.ts'), /'X-Credential-Action': 'create'/);
   assert.match(source('../src/api/credential.ts'), /'X-Credential-Action': 'revoke'/);
-  assert.match(source('../src/pages/PluginsPage.vue'), /ToolCredentialsPanel/);
+  assert.doesNotMatch(source('../src/pages/PluginsPage.vue'), /ToolCredentialsPanel/);
 });

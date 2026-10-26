@@ -13,7 +13,7 @@
       class="relative z-[1] flex flex-col justify-center items-center min-h-[100vh] pt-[20px] pb-[60px] -mt-[60px] max-sm:pt-[80px] max-sm:pb-[80px] max-sm:mt-0 max-sm:min-h-[calc(100vh-60px)] max-sm:justify-start">
       <div class="w-full max-w-[720px] pt-[24px] mb-[40px] max-sm:pt-[0px]">
         <div class="flex flex-col items-center gap-[20px] relative" style="z-index:1">
-          <ManusLogoTextIcon :width="360" :height="80" class="max-sm:!h-[64px] max-sm:!min-w-[280px]" />
+          <ManusLogoTextIcon :width="210" :height="44" />
           <h1 class="text-[20px] font-bold text-center text-[var(--text-primary)] max-sm:text-[18px]">
             {{ 
               isResettingPassword ? t('Reset Password') 
@@ -23,12 +23,13 @@
           </h1>
         </div>
       </div>
+      <p v-if="accountNotice" role="status" class="mb-5 max-w-[384px] rounded-lg bg-[#2b7659]/10 px-4 py-3 text-sm leading-6 text-[#2b7659] dark:text-[#a9cbbb]">{{ accountNotice }}</p>
       <LoginForm v-if="!isRegistering && !isResettingPassword" 
         @success="handleLoginSuccess" 
         @switch-to-register="switchToRegister" 
         @switch-to-reset="switchToReset" />
       <RegisterForm v-else-if="isRegistering && !isResettingPassword" 
-        @switch-to-login="switchToLogin" />
+        @switch-to-login="switchToLogin" @submitted="handleRegistrationSubmitted" />
       <ResetPasswordForm v-else-if="isResettingPassword" 
         @back-to-login="switchToLogin" />
     </div>
@@ -53,6 +54,8 @@ const { isAuthenticated } = useAuth()
 // Form state for header display
 const isRegistering = ref(false)
 const isResettingPassword = ref(false)
+const accountNotice = ref(router.currentRoute.value.query.password_changed === '1' ? '密码已修改，请使用新密码重新登录。' : '')
+const handleRegistrationSubmitted = (message: string) => { accountNotice.value = message; switchToLogin() }
 
 // Switch to register mode
 const switchToRegister = () => {
@@ -75,7 +78,8 @@ const switchToReset = () => {
 // Handle successful login/registration
 const handleLoginSuccess = () => {
     const redirect = router.currentRoute.value.query.redirect as string
-    router.push(redirect || '/')
+    const safeRedirect = redirect?.startsWith('/') && !redirect.startsWith('//') && !redirect.startsWith('/login') ? redirect : '/'
+    router.replace(safeRedirect)
 }
 
 // Listen for authentication state changes

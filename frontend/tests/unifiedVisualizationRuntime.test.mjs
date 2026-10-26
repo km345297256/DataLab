@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 import ts from 'typescript';
 import { readBoundedBinary } from '../src/visualizations/boundedBinary.ts';
+import { authenticatedApiFetch } from '../src/utils/authenticatedFetch.ts';
 
 const file = () => ({ file_id: 'safe-file', filename: 'result.csv', size: 10 ** 10, upload_date: '' });
 const plugin = (extra = {}) => ({ contract_version: 2, id: 'csv', version: '1.0.0', enabled: true, reader: 'csv', capabilities: { operations: ['page'], input_mode: 'page', shared: true }, limits: { max_input_bytes: 131072, max_output_bytes: 524288 }, ...extra });
@@ -12,7 +13,8 @@ const response = data => new Response(JSON.stringify({ code: 0, data }), { heade
 function sdk(stubs = {}) {
   const source = readFileSync(new URL('../src/visualizations/runtime.ts', import.meta.url), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const modules = { '../api/client': { BASE_URL: '/api/v1' }, '../api/file': { getFileDownloadUrl: async () => assert.fail('Owner preview may not create signed links') }, './boundedBinary': { readBoundedBinary }, ...stubs };
+  const modules = { '../api/client': { BASE_URL: '/api/v1' }, '../api/file': { getFileDownloadUrl: async () => assert.fail('Owner preview may not create signed links') }, './boundedBinary': { readBoundedBinary },
+    '../utils/authenticatedFetch': { authenticatedApiFetch: (_base, url, init) => fetch(url, init) }, ...stubs };
   const module = { exports: {} };
   new Function('require', 'module', 'exports', compiled)(id => { assert.ok(id in modules, id); return modules[id]; }, module, module.exports);
   return module.exports;
@@ -25,6 +27,39 @@ test('all owner previews share one SDK endpoint and preserve large-file bounded 
   assert.deepEqual(value.rows, [['one\ntwo']]); assert.equal(value.total_bytes, 10 ** 10);
   assert.equal(requests[0].url, '/api/v1/files/safe-file/visualization'); assert.equal(requests[0].operation, 'page'); assert.equal(requests[0].signal, signal);
   assert.deepEqual(requests[0].options, { offset: 0, header_pending: true });
+});
+
+test('the real owner preview request uses the authenticated transport rather than cookie-only fetch', async t => {
+  const previous = { window: globalThis.window, storage: globalThis.localStorage };
+  const access = `current.${Buffer.from(JSON.stringify({ exp: Date.now() / 1000 + 300 })).toString('base64url')}.signature`;
+  globalThis.window = { location: { href: 'http://localhost:10030/chat', pathname: '/chat' } };
+  globalThis.localStorage = { getItem: key => key === 'access_token' ? access : null };
+  t.after(() => { globalThis.window = previous.window; globalThis.localStorage = previous.storage; });
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, 'http://localhost:10030/api/v1/files/safe-file/visualization');
+    assert.equal(init.headers.get('Authorization'), `Bearer ${access}`);
+    return response(result());
+  });
+  const runtime = sdk({ '../utils/authenticatedFetch': { authenticatedApiFetch } });
+  assert.deepEqual((await runtime.getPluginPage(file(), plugin(), {}, new AbortController().signal)).rows, [['one\ntwo']]);
+});
+
+test('shared signed bytes never pass through the owner authenticated transport', async t => {
+  const previous = globalThis.window;
+  globalThis.window = { location: { pathname: '/share/existing-session' } };
+  t.after(() => { globalThis.window = previous; });
+  const binary = plugin({ capabilities: { operations: ['bytes'], input_mode: 'whole', shared: true } });
+  const signed = 'https://download.example.test/file?signature=opaque';
+  const runtime = sdk({
+    '../api/file': { getFileDownloadUrl: async () => signed },
+    '../api/visualization': { getVisualizationCatalog: async () => ({ plugins: [binary] }) },
+    '../utils/authenticatedFetch': { authenticatedApiFetch: () => assert.fail('Signed URLs must not carry owner credentials') },
+  });
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, signed); assert.equal(init.headers, undefined);
+    return new Response(new Uint8Array([1, 2]));
+  });
+  assert.deepEqual([...new Uint8Array(await runtime.loadPluginBytes({ ...file(), size: 2 }, binary, new AbortController().signal))], [1, 2]);
 });
 
 test('shared page and molecule prepare keep server authority without a blanket shared-page rejection', async t => {

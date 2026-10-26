@@ -1,5 +1,5 @@
 from app.domain.models.data_run import DataRunPage
-from fastapi import HTTPException, APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi import HTTPException, APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, Query, Path
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from typing import AsyncGenerator, List, Optional
@@ -10,7 +10,7 @@ import httpx
 import websockets
 import logging
 from urllib.parse import quote, urlencode
-from app.interfaces.dependencies import get_file_service, get_user_repository
+from app.interfaces.dependencies import get_file_service, get_user_repository, get_visualization_catalog
 
 from app.application.services.agent_service import AgentService
 from app.application.services.token_service import TokenService
@@ -25,13 +25,16 @@ from app.interfaces.schemas.session import (
     ShareSessionResponse, SharedSessionResponse, CreateSessionRequest,
     UpdateSessionTitleRequest, TaskFeedbackRequest, TaskFeedbackResponse,
     OpenJupyterRequest, OpenJupyterResponse,
+    InputReceiptResponse,
 )
 from app.application.services.jupyter_service import JupyterService
 from app.interfaces.schemas.file import FileInfoResponse, FileViewRequest, FileViewResponse
+from app.interfaces.schemas.task_data import TaskDataResponse
+from app.domain.models.data_candidate import OpaqueId
 from app.interfaces.schemas.resource import AccessTokenRequest, SignedUrlResponse
 from app.interfaces.schemas.event import EventMapper
 from app.domain.models.file import FileInfo
-from app.domain.models.event import MAX_EVENT_SEQUENCE, MessageEvent
+from app.domain.models.event import MAX_EVENT_SEQUENCE, MessageEvent, ToolEvent
 from app.domain.models.user import User
 from app.domain.repositories.user_repository import UserRepository
 from app.core.config import get_settings
@@ -40,12 +43,6 @@ from app.infrastructure.repositories.skill_repository import MongoSkillRepositor
 from app.infrastructure.repositories.mongo_mcp_repository import MongoMCPRepository
 from app.domain.models.mcp_config import can_access_mcp, is_mcp_owned_by
 from app.application.services.data_center_dataset_service import DataCenterDatasetService
-from app.application.services.data_product_service import DataProductService
-from app.interfaces.schemas.dataset import (
-    DataProductCreateRequest,
-    DataProductDraftResponse,
-    DataProductResponse,
-)
 from app.infrastructure.models.documents import TaskFeedbackDocument
 
 logger = logging.getLogger(__name__)
@@ -197,7 +194,7 @@ async def get_session(
         status=session.status,
         events=await EventMapper.events_to_sse_events(events),
         is_shared=session.is_shared,
-        is_owner=True,
+        is_owner=session.user_id == current_user.id,
         collaborators=[],
     ))
 
@@ -229,8 +226,19 @@ async def get_session_history(
         session_id=session.id, created_at=int(session.created_at.timestamp()),
         title=session.title, title_manually_set=session.title_manually_set, status=session.status,
         events=await EventMapper.events_to_sse_events(page.events), is_shared=session.is_shared,
-        is_owner=True, collaborators=[], has_more=page.has_more, next_before_seq=page.next_before_seq,
+        is_owner=session.user_id == current_user.id, collaborators=[], has_more=page.has_more, next_before_seq=page.next_before_seq,
     ))
+
+
+@router.get("/{session_id}/inputs/{client_message_id}", response_model=APIResponse[InputReceiptResponse])
+async def get_input_receipt(
+    session_id: str,
+    client_message_id: str = Path(min_length=1, max_length=128),
+    current_user: User = Depends(get_current_user),
+    agent_service: AgentService = Depends(get_agent_service),
+) -> APIResponse[InputReceiptResponse]:
+    receipt = await agent_service.get_input_receipt(session_id, current_user.id, client_message_id)
+    return APIResponse.success(InputReceiptResponse.model_validate(receipt))
 
 
 @router.delete("/{session_id}", response_model=APIResponse[None])
@@ -416,7 +424,11 @@ async def proxy_jupyter_websocket(
         await websocket.close(code=1008, reason="Jupyter access ticket is invalid or expired")
         return
 
-    origin, jupyter_token = await jupyter_service.proxy_target(session_id=session_id, user_id=user_id)
+    try:
+        origin, jupyter_token = await jupyter_service.proxy_target(session_id=session_id, user_id=user_id)
+    except NotFoundError:
+        await websocket.close(code=1008, reason="Jupyter session owner access required")
+        return
     query = urlencode(
         [(key, value) for key, value in websocket.query_params.multi_items() if key != "ticket"],
         doseq=True,
@@ -540,21 +552,47 @@ async def chat(
     agent_service: AgentService = Depends(get_agent_service),
     profile_service: AgentProfileService = Depends(get_agent_profile_service),
     user_repository: UserRepository = Depends(get_user_repository),
+    file_service=Depends(get_file_service),
+    visualization_catalog=Depends(get_visualization_catalog),
 ) -> EventSourceResponse:
+    message = request.message
+    if request.visualization_contexts:
+        from app.application.services.visualization_selection import validate_visualization_contexts, append_visualization_context
+        from app.application.services.file_preview import PreviewVersionChanged
+        from app.application.services.scientific_visualization import ScientificPreviewRejected, VisualizationWorkerError
+        from app.application.services.visualization_catalog import VisualizationDisabledError, VisualizationNotFoundError
+        from app.domain.external.plugin_runtime import PluginRuntimeError
+        from pydantic import ValidationError
+        try:
+            # Explicit input selection remains the only file grant. The view
+            # cannot introduce an unselected file or a different source version.
+            contexts = await validate_visualization_contexts(file_service, visualization_catalog,
+                get_settings().sandbox_image, current_user.id, request.visualization_contexts,
+                set(request.input_file_ids or []))
+            message = append_visualization_context(message, contexts)
+        except (PreviewVersionChanged, VisualizationDisabledError):
+            raise HTTPException(409, "文件或可视化插件已变化，请重新打开预览并选择范围。") from None
+        except (VisualizationNotFoundError, FileNotFoundError, PermissionError):
+            raise HTTPException(404, "选区对应的文件或插件已不可用。") from None
+        except (ScientificPreviewRejected, ValidationError, ValueError):
+            raise HTTPException(422, "可视化范围无效或超出当前窗口，请重新选择。") from None
+        except (PluginRuntimeError, VisualizationWorkerError, NotImplementedError):
+            raise HTTPException(503, "暂时无法校验可视化范围，请稍后重试。") from None
     dataset_service = DataCenterDatasetService()
     for dataset_id in dict.fromkeys(request.dataset_ids or []):
         await dataset_service.get_dataset(dataset_id, user_id=current_user.id)
 
-    llm_overrides = None if request.resume_from else await _agent_profile_overrides(
+    observing = request.observe_client_message_id is not None
+    llm_overrides = None if request.resume_from or observing else await _agent_profile_overrides(
         profile_service, request.agent_profile_id, current_user,
     )
     stored_user = await user_repository.get_user_by_id(current_user.id)
     user = stored_user or current_user
-    effective_skills = [] if request.resume_from else await _installed_skill_names(user, merge_skill_names(
+    effective_skills = [] if request.resume_from or observing else await _installed_skill_names(user, merge_skill_names(
         user.auto_enabled_skills or [],
         request.skills or [],
     ), required=request.skills or [])
-    effective_mcp_servers = [] if request.resume_from else await _installed_mcp_names(user, request.mcp_servers or [])
+    effective_mcp_servers = [] if request.resume_from or observing else await _installed_mcp_names(user, request.mcp_servers or [])
 
     from app.application.services.data_connector_service import get_data_connector_service
     from app.application.errors.exceptions import BadRequestError
@@ -566,7 +604,7 @@ async def chat(
         async for event in agent_service.chat(
             session_id=session_id,
             user_id=current_user.id,
-            message=request.message,
+            message=message,
             timestamp=datetime.fromtimestamp(request.timestamp) if request.timestamp else None,
             # ``event_id`` remains the Redis XREAD cursor.  Supplying it in the
             # JSON body preserves the original API; Last-Event-ID adds standard
@@ -574,6 +612,9 @@ async def chat(
             event_id=request.event_id or http_request.headers.get("last-event-id"),
             event_seq=request.event_seq,
             attachments=request.attachments,
+            input_file_ids=request.input_file_ids,
+            observe_client_message_id=request.observe_client_message_id,
+            clarification_id=request.clarification_id,
             skills=effective_skills,
             mcp_servers=effective_mcp_servers,
             data_connectors=list(dict.fromkeys(request.data_connectors)),
@@ -606,6 +647,56 @@ async def chat(
 
     return EventSourceResponse(event_generator())
 
+
+def get_task_data_service():
+    from app.application.services.task_data_service import TaskDataService
+    from app.infrastructure.external.file.factory import get_file_storage
+    from app.infrastructure.repositories.mongo_session_repository import MongoSessionRepository
+    from app.infrastructure.repositories.mongo_data_library_repository import MongoDataLibraryRepository
+    from app.infrastructure.repositories.mongo_data_candidate_repository import MongoDataCandidateRepository
+    return TaskDataService(MongoSessionRepository(), get_file_storage(),
+                           MongoDataLibraryRepository(), MongoDataCandidateRepository())
+
+
+@router.get("/{session_id}/task-data", response_model=APIResponse[TaskDataResponse])
+async def get_task_data(
+    session_id: str,
+    file_ids: list[OpaqueId] | None = Query(None, max_length=32),
+    current_user: User = Depends(get_current_user),
+    service=Depends(get_task_data_service),
+) -> APIResponse[TaskDataResponse]:
+    """Private owner-only data view, including optional unsent draft files."""
+    return APIResponse.success(await service.list(current_user.id, session_id, file_ids=file_ids))
+
+
+@router.get("/{session_id}/analysis-inputs", response_model=APIResponse[dict])
+async def get_analysis_inputs(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    agent_service: AgentService = Depends(get_agent_service),
+    file_service = Depends(get_file_service),
+) -> APIResponse[dict]:
+    """Session-scoped input provenance, distinct from all generated session files."""
+    from app.domain.services.analysis_input_selection import session_input_state
+    session = await agent_service.get_session(session_id, current_user.id)
+    if session is None:
+        raise NotFoundError("Session not found")
+    events = await agent_service.get_session_events(session_id, current_user.id)
+    files, selected = session_input_state(events)
+    public_files = []
+    for item in files:
+        # Event history proves input provenance, never present-day authority.
+        current = await file_service.get_file_info(item.file_id, current_user.id)
+        if current is None:
+            continue
+        url = await file_service.create_signed_url(item.file_id, current_user.id)
+        public_files.append(FileInfoResponse.public_from_file_info(current, file_url=url).model_dump(mode="json"))
+    available = {item["file_id"] for item in public_files}
+    return APIResponse.success({
+        "files": public_files,
+        "selected_file_ids": [item for item in selected if item in available],
+    })
+
 @router.post("/{session_id}/shell")
 async def view_shell(
     session_id: str,
@@ -624,7 +715,9 @@ async def view_shell(
     Returns:
         APIResponse with shell output
     """
-    result = await agent_service.shell_view(session_id, request.session_id, current_user.id)
+    pagination = ({"output_id": request.output_id, "cursor": request.cursor,
+                   "max_bytes": request.max_bytes} if request.output_id is not None else {})
+    result = await agent_service.shell_view(session_id, request.session_id, current_user.id, **pagination)
     return APIResponse.success(result)
 
 @router.post("/{session_id}/file")
@@ -653,7 +746,8 @@ async def vnc_websocket(
     websocket: WebSocket,
     session_id: str,
     signature: str = Depends(verify_signature_websocket),
-    agent_service: AgentService = Depends(get_agent_service)
+    agent_service: AgentService = Depends(get_agent_service),
+    user_repository=Depends(get_user_repository),
 ) -> None:
     """VNC WebSocket endpoint (binary mode)
     
@@ -666,6 +760,14 @@ async def vnc_websocket(
         signature: Verified signature from dependency injection
     """
     
+    # HMAC binds the owner to this exact session URL. Re-check current account
+    # status and ownership before granting an interactive (write-capable) view.
+    owner_id = websocket.query_params.get("owner", "")
+    owner = await user_repository.get_user_by_id(owner_id) if owner_id else None
+    session = await agent_service.get_session(session_id, owner_id) if owner else None
+    if not owner or not owner.is_active or not session or session.user_id != owner_id:
+        await websocket.close(code=1008, reason="Session owner access required")
+        return
     await websocket.accept(subprotocol="binary")
     logger.info(f"Accepted WebSocket connection for session {session_id}")
     
@@ -741,53 +843,6 @@ async def get_session_files(
     ])
 
 
-@router.get(
-    "/{session_id}/data-product-draft",
-    response_model=APIResponse[DataProductDraftResponse],
-)
-async def get_data_product_draft(
-    session_id: str,
-    current_user: User = Depends(get_current_user),
-    agent_service: AgentService = Depends(get_agent_service),
-) -> APIResponse[DataProductDraftResponse]:
-    session = await agent_service.get_session(session_id, current_user.id)
-    if not session:
-        raise NotFoundError("Session not found")
-    draft = await DataProductService().draft(session_id, current_user.id, session.files)
-    return APIResponse.success(DataProductDraftResponse.model_validate(draft))
-
-
-@router.post(
-    "/{session_id}/datasets/{dataset_id}/data-products",
-    response_model=APIResponse[DataProductResponse],
-)
-async def create_data_product(
-    session_id: str,
-    dataset_id: str,
-    request: DataProductCreateRequest,
-    current_user: User = Depends(get_current_user),
-    agent_service: AgentService = Depends(get_agent_service),
-) -> APIResponse[DataProductResponse]:
-    session = await agent_service.get_session(session_id, current_user.id)
-    if not session:
-        raise NotFoundError("Session not found")
-    if dataset_id not in session.dataset_ids:
-        raise BadRequestError("Dataset is not associated with this task")
-    await DataCenterDatasetService().get_dataset(dataset_id, user_id=current_user.id)
-    product = await DataProductService().create(
-        dataset_id=dataset_id,
-        session_id=session_id,
-        user_id=current_user.id,
-        name=request.name,
-        description=request.description,
-        generation_method=request.generation_method,
-        selected_file_ids=request.selected_file_ids,
-        primary_file_id=request.primary_file_id,
-        files=session.files,
-    )
-    return APIResponse.success(DataProductResponse.model_validate(product))
-
-
 @router.post("/{session_id}/vnc/signed-url", response_model=APIResponse[SignedUrlResponse])
 async def create_vnc_signed_url(
     session_id: str,
@@ -809,11 +864,11 @@ async def create_vnc_signed_url(
     
     # Check if session exists and belongs to user
     session = await agent_service.get_session(session_id, current_user.id)
-    if not session:
+    if not session or session.user_id != current_user.id:
         raise NotFoundError("Session not found")
     
     # Create signed URL for VNC WebSocket
-    ws_base_url = f"/api/v1/sessions/{session_id}/vnc"
+    ws_base_url = f"/api/v1/sessions/{session_id}/vnc?owner={quote(current_user.id, safe='')}"
     signed_url = token_service.create_signed_url(
         base_url=ws_base_url,
         expire_minutes=expire_minutes
@@ -969,6 +1024,12 @@ async def get_shared_session(
     events = await agent_service.get_session_events(session_id)
     shared_events = []
     for event in events:
+        if (isinstance(event, ToolEvent) and event.tool_name == "skill"
+                and event.function_name == "skill_create_from_session"):
+            # Sharing a conversation does not publish its owner's private draft
+            # or provide anonymous viewers with install/download capabilities.
+            event = event.model_copy(update={"function_result": None, "tool_content": None, "presentation": None,
+                                             "skill_creation_progress": None})
         if isinstance(event, MessageEvent) and event.metadata:
             event = event.model_copy(deep=True)
             event.metadata.pop("resume_from", None)

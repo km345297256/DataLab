@@ -1,9 +1,10 @@
 import type { AgentSSEEvent, MessageEventData, StepEventData, ToolEventData, ErrorEventData } from '../types/event';
 import type { Message, MessageContent, AttachmentsContent, StepContent, ToolContent } from '../types/message';
 import { acceptAgentEvent, createAgentEventCursor } from './agentEventCursor.ts';
-import { findAnalysisTool, mergeAnalysisToolEvent } from './analysisJob.ts';
-import { closeUnconfirmedSteps, failRunningSteps, findCurrentTurnRunningStep, findCurrentTurnStep, insertTaskExecutionSummary } from './chatTimeline.ts';
-import { isPlaceholderAssistantMessage } from './datasetResultPresentation.ts';
+import { mergeAnalysisToolEvent } from './analysisJob.ts';
+import { AnalysisTimelineIndex } from './analysisTimelineIndex.ts';
+import { closeUnconfirmedSteps, failRunningSteps, insertTaskExecutionSummary } from './chatTimeline.ts';
+import { isPlaceholderAssistantMessage } from './analysisPresentation.ts';
 import { isAnalysisProgressMessage } from './analysisProgress.ts';
 
 export function isLegacyPlanProgressMessage(content: string): boolean {
@@ -14,28 +15,33 @@ export function isLegacyPlanProgressMessage(content: string): boolean {
 export function projectHistoryMessages(events: AgentSSEEvent[], datasetMode = false): Message[] {
   const messages: Message[] = [];
   const cursor = createAgentEventCursor();
+  const index = new AnalysisTimelineIndex();
+  let waitingForUser = false;
   for (const event of events) {
     if (!acceptAgentEvent(cursor, event)) continue;
     if (event.event === 'message') {
       const data = event.data as MessageEventData;
       if (isAnalysisProgressMessage(data)) continue;
-      if (data.role === 'user') failRunningSteps(messages, false);
+      if (data.role === 'user') {
+        if (!waitingForUser && !data.metadata?.clarification_id) failRunningSteps(messages, false);
+        waitingForUser = false;
+      }
       if (data.role === 'assistant' && (isPlaceholderAssistantMessage(data.content)
         || (datasetMode && isLegacyPlanProgressMessage(data.content)))) continue;
       messages.push({ type: data.role, content: { ...data } as MessageContent });
       if (data.attachments?.length) messages.push({ type: 'attachments', content: { ...data } as AttachmentsContent });
     } else if (event.event === 'tool') {
       const tool = { ...event.data } as ToolEventData;
-      const current = findAnalysisTool(messages, tool.tool_call_id);
+      const current = index.tool(messages, tool.tool_call_id);
       if (current) Object.assign(current, mergeAnalysisToolEvent(current, tool));
       else {
-        const step = findCurrentTurnRunningStep(messages);
-        if (step) step.tools.push(tool);
+        const step = index.runningStep(messages);
+        if (step) { step.tools.push(tool); index.addTool(tool); }
         else messages.push({ type: 'tool', content: tool });
       }
     } else if (event.event === 'step') {
       const data = event.data as StepEventData;
-      const current = findCurrentTurnStep(messages, data.id);
+      const current = index.step(messages, data.id);
       if (current) {
         current.status = data.status;
         current.description = data.description;
@@ -44,12 +50,16 @@ export function projectHistoryMessages(events: AgentSSEEvent[], datasetMode = fa
         messages.push({ type: 'step', content: { ...data, started_at: data.timestamp, tools: [] } as StepContent });
       }
     } else if (event.event === 'error') {
+      waitingForUser = false;
       const data = event.data as ErrorEventData;
       failRunningSteps(messages);
       messages.push({ type: 'assistant', content: { content: data.error, timestamp: data.timestamp } as MessageContent });
     } else if (event.event === 'done') {
+      waitingForUser = false;
       closeUnconfirmedSteps(messages, event.data.timestamp);
       insertTaskExecutionSummary(messages, event.data.timestamp);
+    } else if (event.event === 'wait') {
+      waitingForUser = true;
     }
   }
   return messages;

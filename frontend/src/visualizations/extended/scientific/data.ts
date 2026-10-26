@@ -19,7 +19,13 @@ export function numericCell(value: unknown): number | null {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value !== 'string' || !value.trim()) return null;
-  const number = Number(value); return Number.isFinite(number) ? number : null;
+  const input = value.trim();
+  // Decimal numbers only: Number() also accepts hex/binary identifiers. Preserve
+  // integer identifiers outside the exact JS range as missing, never round them.
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(input)) return null;
+  const number = Number(input);
+  if (Number.isInteger(number) && !Number.isSafeInteger(number)) return null;
+  return Number.isFinite(number) ? number : null;
 }
 export function numericColumns(table: PreviewTable): number[] {
   return table.columns.map((_, index) => index).filter((index) => table.rows.some((row) => numericCell(row[index]) !== null));

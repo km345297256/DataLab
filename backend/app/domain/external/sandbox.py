@@ -5,7 +5,20 @@ from app.domain.external.browser import Browser
 class Sandbox(Protocol):
     """Sandbox service gateway interface"""
 
+    async def runtime_capabilities(self) -> ToolResult:
+        """Read installed interpreter/package facts without running analysis."""
+        ...
+
+    async def program_preflight(self, exec_dir: str, script_path: str) -> ToolResult:
+        """Privately observe stable launch prerequisites without executing."""
+        ...
+
     supports_execution_receipts: bool = False
+
+    async def exec_program(self, session_id: str, exec_dir: str, script_path: str,
+                           args: list[str]) -> ToolResult:
+        """Launch an immutable Python source snapshot directly, without a shell."""
+        ...
 
     async def exec_command_tracked(self, session_id: str, exec_dir: str, command: str,
                                    operation_id: str) -> ToolResult:
@@ -38,12 +51,17 @@ class Sandbox(Protocol):
         """
         ...
     
-    async def view_shell(self, session_id: str, console: bool = False) -> ToolResult:
+    async def view_shell(self, session_id: str, console: bool = False, *,
+                         output_id: str | None = None, cursor: int | None = None,
+                         max_bytes: int = 8192) -> ToolResult:
         """View shell status
         
         Args:
             session_id: Session ID
             console: Whether to return console records
+            output_id: Exact output generation from the preview, required with cursor
+            cursor: Optional absolute UTF-8 byte cursor; reads never consume another observer's position
+            max_bytes: Bounded page size when cursor is supplied
 
         Returns:
             Shell status information
@@ -134,7 +152,8 @@ class Sandbox(Protocol):
         file: str, 
         start_line: int = None, 
         end_line: int = None, 
-        sudo: bool = False
+        sudo: bool = False,
+        include_version: bool = False,
     ) -> ToolResult:
         """Read file content
         
@@ -149,7 +168,12 @@ class Sandbox(Protocol):
         """
         ...
 
-    async def file_download(self, path: str) -> BinaryIO:
+    async def file_apply_patch(self, file: str, base_sha256: str,
+                               replacements: list[dict], syntax_check: str = "none") -> ToolResult:
+        """Atomically apply exact replacements to one observed file version."""
+        ...
+
+    async def file_download(self, path: str, *, max_bytes: int | None = None) -> BinaryIO:
         """Download a Sandbox file as a binary stream."""
         ...
     
@@ -244,12 +268,14 @@ class Sandbox(Protocol):
         """Optional v1 output-content manifest; older sandboxes may lack it."""
         ...
 
-    async def validate_artifacts(self, items: list[dict[str, str]]) -> ToolResult:
-        """Read-only output-content receipts; unavailable is never validation success."""
+    async def validate_artifacts(self, items: list[dict[str, str]], *, purpose: str = "delivery") -> ToolResult:
+        """Byte-delivery receipts by default; content inspection must be explicit."""
         ...
 
-    async def analysis_fingerprints(self, paths: list[str]) -> ToolResult:
-        """Bounded source/output hashes; incomplete receipts forbid automatic resume."""
+    async def analysis_fingerprints(
+        self, paths: list[str], *, approved_upload_paths: list[str] | None = None,
+    ) -> ToolResult:
+        """Bounded hashes; uploads require the controller's exact authorized paths."""
         ...
 
     async def file_upload(
@@ -272,7 +298,9 @@ class Sandbox(Protocol):
     
     async def file_download(
         self,
-        path: str
+        path: str,
+        *,
+        max_bytes: int | None = None,
     ) -> BinaryIO:
         """Download file from sandbox
         

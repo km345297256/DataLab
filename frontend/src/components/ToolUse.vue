@@ -1,10 +1,14 @@
 <template>
-  <ConnectorResults v-if="tool.connector_results" :result="tool.connector_results" :tool-call-id="tool.tool_call_id" :session-id="sessionId" :is-share="isShare" />
+  <template v-if="tool.skill_creation">
+    <SkillCreationCard v-if="!suppressSkillCreation" :initial="tool.skill_creation" :is-share="isShare" />
+  </template>
+  <OpenDataResults v-else-if="tool.open_data_search_id" :search-id="tool.open_data_search_id" :session-id="sessionId" :is-share="isShare" />
+  <ConnectorResults v-else-if="tool.connector_results" :result="tool.connector_results" :tool-call-id="tool.tool_call_id" :session-id="sessionId" :is-share="isShare" />
   <p v-else-if="tool.connector_status" role="status" class="my-2 rounded-lg border border-[var(--border-main)] px-3 py-2 text-sm text-[var(--text-secondary)]">{{ tool.connector_status }}</p>
-  <p v-if="!tool.connector_results && tool.name === 'message' && tool.args?.text" class="text-[var(--text-secondary)] text-[14px] overflow-hidden text-ellipsis whitespace-pre-line">
+  <p v-if="!tool.skill_creation && !tool.open_data_search_id && !tool.connector_results && tool.name === 'message' && tool.args?.text" class="text-[var(--text-secondary)] text-[14px] overflow-hidden text-ellipsis whitespace-pre-line">
     {{ tool.args.text }}
   </p>
-  <div v-else-if="!tool.connector_results && toolInfo" class="flex items-start group gap-2">
+  <div v-else-if="!tool.skill_creation && !tool.open_data_search_id && !tool.connector_results && toolInfo" class="flex items-start group gap-2">
     <div class="flex-1 min-w-0">
       <div @click="handleClick"
         class="rounded-[15px] items-center gap-2 px-[10px] py-[4px] border border-[var(--border-light)] bg-[var(--fill-tsp-gray-main)] inline-flex max-w-full clickable hover:bg-[var(--fill-tsp-gray-dark)] dark:hover:bg-white/[0.02]">
@@ -15,9 +19,9 @@
           <div
             class="inline-flex items-center h-full rounded-full text-[14px] text-[var(--text-secondary)] max-w-[100%]">
             <div class="max-w-[100%] text-ellipsis overflow-hidden whitespace-nowrap text-[13px]"
-              :title="toolInfo.functionArg ? `${toolInfo.function} ${toolInfo.functionArg}` : toolInfo.function">
+              :title="[label || toolInfo.function, toolInfo.functionArg, summary].filter(Boolean).join(' · ')">
               <div class="flex items-center">
-                {{ toolInfo.function }}<span v-if="toolInfo.functionArgPreview"
+                {{ tool.function === 'skill_create_from_session' && tool.status === 'called' ? '创建技能' : (label || toolInfo.function) }}<span v-if="toolInfo.functionArgPreview"
                   class="flex-1 min-w-0 rounded-[6px] px-1 ml-1 relative top-[0px] text-[12px] font-mono max-w-full text-ellipsis overflow-hidden whitespace-nowrap text-[var(--text-tertiary)]"><code>{{ toolInfo.functionArgPreview }}</code></span>
                 <button
                   v-if="toolInfo.functionArgExpandable"
@@ -34,6 +38,16 @@
                 <span v-if="summary" class="ml-2 rounded-full bg-[var(--fill-tsp-white-light)] px-2 py-[1px] text-[11px] text-[var(--text-tertiary)]">
                   {{ summary }}
                 </span>
+                <span v-if="!isShare && skillCreationProgressText(tool.skill_creation_progress)" class="ml-2 text-[11px] text-[var(--text-tertiary)]" role="status">
+                  {{ skillCreationProgressText(tool.skill_creation_progress) }}
+                </span>
+                <span v-if="collapsedCount === 1 && tool.execution_status === 'failed'" class="ml-2 text-[11px]"
+                  :class="recoveredByCallId ? 'text-[var(--text-tertiary)]' : 'text-amber-700'"
+                  :title="recoveredByCallId ? '这次执行失败后，同一步骤中的同一程序已成功执行。点击仍可查看这次失败的记录；不代表整个分析任务已完成。' : undefined"
+                >{{ tool.function === 'skill_create_from_session' ? '创建未完成' : (recoveredByCallId ? '执行失败，后续已恢复' : '执行失败') }}</span>
+                <span v-else-if="collapsedCount === 1 && tool.execution_status === 'not_started'" class="ml-2 text-[11px] text-[var(--text-tertiary)]"
+                  title="本次调用未启动执行，需要先完成准备或纠正调用；不代表脚本运行后出错。"
+                >{{ tool.write_action === 'reuse' ? '内容未变，沿用版本' : '未执行' }}</span>
                 <span v-if="collapsedCount > 1" class="ml-1 rounded-full border border-[var(--border-main)] px-1.5 py-[1px] text-[11px] text-[var(--text-tertiary)]">
                   x{{ collapsedCount }}
                 </span>
@@ -58,17 +72,24 @@
 
 <script setup lang="ts">
 import ConnectorResults from './ConnectorResults.vue';
+import OpenDataResults from './OpenDataResults.vue';
+import SkillCreationCard from './SkillCreationCard.vue';
+import { eventBus } from '../utils/eventBus';
 import { ref, toRef, watch } from "vue";
 import { ChevronDown } from 'lucide-vue-next';
 import { ToolContent } from "../types/message";
 import { useToolInfo } from "../composables/useTool";
 import { useRelativeTime } from "../composables/useTime";
+import { skillCreationProgressText } from '../utils/skillCreation';
 
 const props = withDefaults(defineProps<{
   tool: ToolContent;
   sessionId?: string;
   isShare?: boolean;
+  suppressSkillCreation?: boolean;
   summary?: string;
+  label?: string;
+  recoveredByCallId?: string;
   collapsedCount?: number;
 }>(), {
   collapsedCount: 1,
@@ -81,6 +102,12 @@ const emit = defineEmits<{
 const { relativeTime } = useRelativeTime();
 const { toolInfo } = useToolInfo(toRef(props, 'tool'));
 const detailsExpanded = ref(false);
+
+watch(() => [props.tool.open_data_update_id, props.tool.status, props.sessionId] as const, ([searchId, status, sessionId]) => {
+  if (searchId && sessionId && status === 'called' && !props.isShare) {
+    eventBus.emit('open-data-updated', { sessionId, searchId });
+  }
+}, { immediate: true, flush: 'post' });
 
 watch(() => props.tool.tool_call_id, () => {
   detailsExpanded.value = false;

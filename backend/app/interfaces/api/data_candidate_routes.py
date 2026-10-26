@@ -24,7 +24,10 @@ router = APIRouter(prefix="/sessions/{session_id}/data-candidates", tags=["data-
 
 
 async def owned_session(session_id: str, user=Depends(get_current_user), agent=Depends(get_agent_service)):
-    if not await agent.get_session(session_id, user.id):
+    session = await agent.get_session(session_id, user.id)
+    # General session reads also admit explicit collaborators. Import and
+    # acquisition operations bind persistent data to the session's owner.
+    if session is None or session.user_id != user.id:
         raise NotFoundError("会话不存在")
     return user.id, session_id
 

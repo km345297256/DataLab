@@ -1,14 +1,48 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from app.core.cancellable_checks import run_cancellable_check
 from app.schemas.shell import (
     ShellExecRequest, ShellViewRequest, ShellWaitRequest,
     ShellWriteToProcessRequest, ShellKillProcessRequest,
     ShellOperationStatusRequest,
+    ProgramExecRequest,
+    ProgramPreflightRequest,
 )
 from app.schemas.response import Response
 from app.services.shell import shell_service
+from app.services.program import probe_program_prerequisites
 from app.core.exceptions import BadRequestException
 
 router = APIRouter()
+
+
+@router.get("/runtime-capabilities", response_model=Response)
+async def runtime_capabilities(http_request: Request):
+    """Read installed capabilities before any analysis script is written."""
+    from app.services.program_dependencies import runtime_capabilities as inspect_runtime
+    result = await run_cancellable_check(http_request, inspect_runtime)
+    return Response(success=True, data=result)
+
+
+@router.post("/program-preflight", response_model=Response)
+async def program_preflight(request: ProgramPreflightRequest, http_request: Request):
+    """Observe startup prerequisites without creating a process or receipt."""
+    result = await run_cancellable_check(http_request, probe_program_prerequisites,
+                                         request.exec_dir, request.script_path)
+    return Response(success=True, data=result)
+
+
+@router.post("/program", response_model=Response)
+async def exec_program(request: ProgramExecRequest):
+    result = await shell_service.exec_program(
+        request.id, request.exec_dir, request.script_path, request.args,
+        operation_id=request.operation_id,
+    )
+    succeeded = result.status != "completed" or result.returncode == 0
+    return Response(success=succeeded,
+                    message=("Program is running" if result.status == "running" else
+                             "Program completed successfully" if succeeded else
+                             f"Program failed with return code: {result.returncode}"),
+                    data=result.model_dump())
 
 @router.post("/exec", response_model=Response)
 async def exec_command(request: ShellExecRequest):
@@ -65,6 +99,8 @@ async def view_shell(request: ShellViewRequest):
         raise BadRequestException("Session ID not provided")
         
     tracked = {"operation_id": request.operation_id} if request.operation_id is not None else {}
+    if request.cursor is not None:
+        tracked.update(output_id=request.output_id, cursor=request.cursor, max_bytes=request.max_bytes)
     result = await shell_service.view_shell(session_id=request.id, console=request.console, **tracked)
     
     # Construct response

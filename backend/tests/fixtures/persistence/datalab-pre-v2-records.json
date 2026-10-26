@@ -1,0 +1,2612 @@
+{
+  "source": "DataLab workspace before v2 migration, 2026-10-21; synthetic data only",
+  "records": {
+    "RunEvent": {
+      "type": "run",
+      "id": "legacy-run-event",
+      "seq": 2,
+      "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "version": 1,
+      "timestamp": "2026-10-20T00:00:00",
+      "phase": "started",
+      "source_event_seq": 1,
+      "skills": [],
+      "legacy_skill_count": 0,
+      "environment_fingerprint": null,
+      "catalog_revision": null
+    },
+    "AgentEvent": {
+      "type": "plan",
+      "id": "legacy-plan-event",
+      "seq": 3,
+      "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "version": 1,
+      "timestamp": "2026-10-20T00:00:01",
+      "plan": {
+        "id": "legacy-datalab-plan",
+        "title": "Dataset analysis",
+        "goal": "",
+        "language": "en",
+        "steps": [
+          {
+            "id": "saved-data",
+            "description": "Save acquired data",
+            "agent": "execution",
+            "inputs": {},
+            "outputs": {},
+            "status": "failed",
+            "result": null,
+            "error": null,
+            "success": false,
+            "attachments": [],
+            "deliverables": [
+              {
+                "kind": "data",
+                "min_count": 1,
+                "formats": [
+                  "fastq"
+                ],
+                "label": "数据文件"
+              }
+            ],
+            "outcome": {
+              "scope": "step",
+              "status": "partial",
+              "reason_code": "delivery_incomplete",
+              "missing": [
+                {
+                  "kind": "data",
+                  "min_count": 1,
+                  "formats": [
+                    "fastq"
+                  ],
+                  "label": "数据文件"
+                }
+              ],
+              "issues": [],
+              "can_resume": false,
+              "resume_from": null
+            }
+          }
+        ],
+        "message": null,
+        "status": "failed",
+        "result": null,
+        "error": null
+      },
+      "status": "completed",
+      "step": null
+    },
+    "Plan": {
+      "id": "legacy-datalab-plan",
+      "title": "Dataset analysis",
+      "goal": "",
+      "language": "en",
+      "steps": [
+        {
+          "id": "saved-data",
+          "description": "Save acquired data",
+          "agent": "execution",
+          "inputs": {},
+          "outputs": {},
+          "status": "failed",
+          "result": null,
+          "error": null,
+          "success": false,
+          "attachments": [],
+          "deliverables": [
+            {
+              "kind": "data",
+              "min_count": 1,
+              "formats": [
+                "fastq"
+              ],
+              "label": "数据文件"
+            }
+          ],
+          "outcome": {
+            "scope": "step",
+            "status": "partial",
+            "reason_code": "delivery_incomplete",
+            "missing": [
+              {
+                "kind": "data",
+                "min_count": 1,
+                "formats": [
+                  "fastq"
+                ],
+                "label": "数据文件"
+              }
+            ],
+            "issues": [],
+            "can_resume": false,
+            "resume_from": null
+          }
+        }
+      ],
+      "message": null,
+      "status": "failed",
+      "result": null,
+      "error": null
+    },
+    "Step": {
+      "id": "saved-data",
+      "description": "Save acquired data",
+      "agent": "execution",
+      "inputs": {},
+      "outputs": {},
+      "status": "failed",
+      "result": null,
+      "error": null,
+      "success": false,
+      "attachments": [],
+      "deliverables": [
+        {
+          "kind": "data",
+          "min_count": 1,
+          "formats": [
+            "fastq"
+          ],
+          "label": "数据文件"
+        }
+      ],
+      "outcome": {
+        "scope": "step",
+        "status": "partial",
+        "reason_code": "delivery_incomplete",
+        "missing": [
+          {
+            "kind": "data",
+            "min_count": 1,
+            "formats": [
+              "fastq"
+            ],
+            "label": "数据文件"
+          }
+        ],
+        "issues": [],
+        "can_resume": false,
+        "resume_from": null
+      }
+    }
+  },
+  "read_schemas": {
+    "AgentEvent": {
+      "$defs": {
+        "AnalysisJobErrorCode": {
+          "description": "Public, bounded failure categories; exception text is never persisted.",
+          "enum": [
+            "cancelled",
+            "tool_timeout",
+            "tool_failed",
+            "worker_interrupted"
+          ],
+          "title": "AnalysisJobErrorCode",
+          "type": "string"
+        },
+        "AnalysisJobStatus": {
+          "enum": [
+            "queued",
+            "running",
+            "cancelling",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "interrupted"
+          ],
+          "title": "AnalysisJobStatus",
+          "type": "string"
+        },
+        "AnalysisJobView": {
+          "description": "Browser-safe state for one durable tool execution.",
+          "properties": {
+            "schema_version": {
+              "const": 1,
+              "default": 1,
+              "title": "Schema Version",
+              "type": "integer"
+            },
+            "job_id": {
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Job Id",
+              "type": "string"
+            },
+            "revision": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            },
+            "status": {
+              "$ref": "#/$defs/AnalysisJobStatus",
+              "default": "queued"
+            },
+            "tool_name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Started At"
+            },
+            "finished_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Finished At"
+            },
+            "cancel_requested_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cancel Requested At"
+            },
+            "cancellable": {
+              "default": true,
+              "title": "Cancellable",
+              "type": "boolean"
+            },
+            "timeout_seconds": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 86400,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Timeout Seconds"
+            },
+            "execution_snapshot_id": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Execution Snapshot Id"
+            },
+            "catalog_revision": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Catalog Revision"
+            },
+            "result_spill": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SpillArtifactRef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "error_code": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AnalysisJobErrorCode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "tool_name"
+          ],
+          "title": "AnalysisJobView",
+          "type": "object"
+        },
+        "AnalysisOutcome": {
+          "additionalProperties": false,
+          "properties": {
+            "scope": {
+              "const": "step",
+              "default": "step",
+              "title": "Scope",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "partial",
+                "failed"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "reason_code": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "missing": {
+              "items": {
+                "$ref": "#/$defs/DeliverableRequirement"
+              },
+              "maxItems": 16,
+              "title": "Missing",
+              "type": "array"
+            },
+            "issues": {
+              "items": {
+                "$ref": "#/$defs/ArtifactIssue"
+              },
+              "maxItems": 64,
+              "title": "Issues",
+              "type": "array"
+            },
+            "can_resume": {
+              "default": false,
+              "title": "Can Resume",
+              "type": "boolean"
+            },
+            "resume_from": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Resume From"
+            }
+          },
+          "required": [
+            "status",
+            "reason_code"
+          ],
+          "title": "AnalysisOutcome",
+          "type": "object"
+        },
+        "ArtifactIssue": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_name": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Artifact Name",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "image",
+                "table",
+                "report",
+                "code",
+                "data",
+                "any"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "reason_code": {
+              "enum": [
+                "missing_artifact",
+                "invalid_content",
+                "unavailable_or_unsafe_path",
+                "unsupported_kind",
+                "unsupported_format",
+                "kind_mismatch",
+                "format_mismatch",
+                "not_regular_file",
+                "file_size_limit",
+                "batch_size_limit",
+                "empty_file",
+                "changed_during_read",
+                "empty_or_binary_text",
+                "image_size_limit",
+                "table_size_limit",
+                "inconsistent_table_width",
+                "empty_table",
+                "archive_size_limit",
+                "encrypted_workbook",
+                "unsafe_workbook_xml",
+                "worksheet_count_limit",
+                "invalid_json_constant",
+                "duplicate_json_key",
+                "invalid_json_table",
+                "invalid_notebook",
+                "validation_deadline",
+                "validator_unavailable",
+                "validation_unavailable",
+                "validation_receipt_invalid",
+                "delivery_failed",
+                "invalid_csv_syntax",
+                "invalid_text_encoding",
+                "invalid_json_syntax",
+                "invalid_code_syntax"
+              ],
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "blocking": {
+              "title": "Blocking",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "artifact_name",
+            "kind",
+            "reason_code",
+            "blocking"
+          ],
+          "title": "ArtifactIssue",
+          "type": "object"
+        },
+        "BrowserToolContent": {
+          "description": "Browser tool content",
+          "properties": {
+            "screenshot": {
+              "title": "Screenshot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "screenshot"
+          ],
+          "title": "BrowserToolContent",
+          "type": "object"
+        },
+        "DeliverableRequirement": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "image",
+                "table",
+                "report",
+                "code",
+                "data",
+                "any"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "min_count": {
+              "default": 1,
+              "maximum": 16,
+              "minimum": 1,
+              "title": "Min Count",
+              "type": "integer"
+            },
+            "formats": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8,
+              "title": "Formats",
+              "type": "array"
+            },
+            "label": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "DeliverableRequirement",
+          "type": "object"
+        },
+        "DoneEvent": {
+          "description": "Done event",
+          "properties": {
+            "type": {
+              "const": "done",
+              "default": "done",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "advice": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Advice"
+            }
+          },
+          "title": "DoneEvent",
+          "type": "object"
+        },
+        "ErrorEvent": {
+          "description": "Error event",
+          "properties": {
+            "type": {
+              "const": "error",
+              "default": "error",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "error": {
+              "title": "Error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "error"
+          ],
+          "title": "ErrorEvent",
+          "type": "object"
+        },
+        "ExecutionStatus": {
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed"
+          ],
+          "title": "ExecutionStatus",
+          "type": "string"
+        },
+        "FileInfo": {
+          "properties": {
+            "file_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "File Id"
+            },
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Filename"
+            },
+            "file_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "File Path"
+            },
+            "content_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Content Type"
+            },
+            "size": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size"
+            },
+            "upload_date": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Upload Date"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Metadata"
+            },
+            "user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "User Id"
+            },
+            "file_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "File Url"
+            }
+          },
+          "title": "FileInfo",
+          "type": "object"
+        },
+        "FileToolContent": {
+          "description": "File tool content",
+          "properties": {
+            "content": {
+              "title": "Content",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "title": "FileToolContent",
+          "type": "object"
+        },
+        "McpToolContent": {
+          "description": "MCP tool content",
+          "properties": {
+            "result": {
+              "title": "Result"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "title": "McpToolContent",
+          "type": "object"
+        },
+        "MessageEvent": {
+          "description": "Message event",
+          "properties": {
+            "type": {
+              "const": "message",
+              "default": "message",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "role": {
+              "default": "assistant",
+              "enum": [
+                "user",
+                "assistant"
+              ],
+              "title": "Role",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "attachments": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/FileInfo"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Attachments"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Metadata"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "title": "MessageEvent",
+          "type": "object"
+        },
+        "Plan": {
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "title": {
+              "default": "",
+              "title": "Title",
+              "type": "string"
+            },
+            "goal": {
+              "default": "",
+              "title": "Goal",
+              "type": "string"
+            },
+            "language": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "en",
+              "title": "Language"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Message"
+            },
+            "status": {
+              "$ref": "#/$defs/ExecutionStatus",
+              "default": "pending"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Result"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error"
+            }
+          },
+          "title": "Plan",
+          "type": "object"
+        },
+        "PlanEvent": {
+          "description": "Plan related events",
+          "properties": {
+            "type": {
+              "const": "plan",
+              "default": "plan",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "plan": {
+              "$ref": "#/$defs/Plan"
+            },
+            "status": {
+              "$ref": "#/$defs/PlanStatus"
+            },
+            "step": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Step"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "plan",
+            "status"
+          ],
+          "title": "PlanEvent",
+          "type": "object"
+        },
+        "PlanStatus": {
+          "description": "Plan status enum",
+          "enum": [
+            "created",
+            "updated",
+            "completed"
+          ],
+          "title": "PlanStatus",
+          "type": "string"
+        },
+        "RunEvent": {
+          "description": "Durable registration/environment receipt, never a model-authored answer.",
+          "properties": {
+            "type": {
+              "const": "run",
+              "default": "run",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "pattern": "^[a-f0-9]{32}$",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "phase": {
+              "enum": [
+                "started",
+                "environment"
+              ],
+              "title": "Phase",
+              "type": "string"
+            },
+            "source_event_seq": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Source Event Seq",
+              "type": "integer"
+            },
+            "skills": {
+              "items": {
+                "$ref": "#/$defs/RunSkillRelease"
+              },
+              "maxItems": 100,
+              "title": "Skills",
+              "type": "array"
+            },
+            "legacy_skill_count": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Legacy Skill Count",
+              "type": "integer"
+            },
+            "environment_fingerprint": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Environment Fingerprint"
+            },
+            "catalog_revision": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Catalog Revision"
+            }
+          },
+          "required": [
+            "run_id",
+            "phase",
+            "source_event_seq"
+          ],
+          "title": "RunEvent",
+          "type": "object"
+        },
+        "RunSkillRelease": {
+          "additionalProperties": false,
+          "properties": {
+            "package_id": {
+              "pattern": "^[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$",
+              "title": "Package Id",
+              "type": "string"
+            },
+            "version": {
+              "title": "Version",
+              "type": "string"
+            },
+            "sha256": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Sha256",
+              "type": "string"
+            }
+          },
+          "required": [
+            "package_id",
+            "version",
+            "sha256"
+          ],
+          "title": "RunSkillRelease",
+          "type": "object"
+        },
+        "SearchResultItem": {
+          "description": "Single search result item",
+          "properties": {
+            "title": {
+              "description": "Title of the search result",
+              "title": "Title",
+              "type": "string"
+            },
+            "link": {
+              "description": "URL link of the search result",
+              "title": "Link",
+              "type": "string"
+            },
+            "snippet": {
+              "default": "",
+              "description": "Snippet or description of the search result",
+              "title": "Snippet",
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "link"
+          ],
+          "title": "SearchResultItem",
+          "type": "object"
+        },
+        "SearchToolContent": {
+          "description": "Search tool content",
+          "properties": {
+            "results": {
+              "items": {
+                "$ref": "#/$defs/SearchResultItem"
+              },
+              "title": "Results",
+              "type": "array"
+            }
+          },
+          "required": [
+            "results"
+          ],
+          "title": "SearchToolContent",
+          "type": "object"
+        },
+        "ShellToolContent": {
+          "description": "Shell tool content",
+          "properties": {
+            "console": {
+              "title": "Console"
+            }
+          },
+          "required": [
+            "console"
+          ],
+          "title": "ShellToolContent",
+          "type": "object"
+        },
+        "SkillToolContent": {
+          "description": "Skill tool content",
+          "properties": {
+            "result": {
+              "title": "Result"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "title": "SkillToolContent",
+          "type": "object"
+        },
+        "SpillArtifactRef": {
+          "description": "Model-safe reference to a private, durable spill artifact.",
+          "properties": {
+            "schema_version": {
+              "const": 1,
+              "default": 1,
+              "title": "Schema Version",
+              "type": "integer"
+            },
+            "locator": {
+              "pattern": "^spill://artifact/[0-9a-f]{32}$",
+              "title": "Locator",
+              "type": "string"
+            },
+            "byte_count": {
+              "minimum": 0,
+              "title": "Byte Count",
+              "type": "integer"
+            },
+            "sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Sha256",
+              "type": "string"
+            },
+            "media_type": {
+              "maxLength": 128,
+              "title": "Media Type",
+              "type": "string"
+            },
+            "retrieval_hint": {
+              "maxLength": 512,
+              "title": "Retrieval Hint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "locator",
+            "byte_count",
+            "sha256",
+            "media_type",
+            "retrieval_hint"
+          ],
+          "title": "SpillArtifactRef",
+          "type": "object"
+        },
+        "Step": {
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "description": {
+              "default": "",
+              "title": "Description",
+              "type": "string"
+            },
+            "agent": {
+              "default": "execution",
+              "title": "Agent",
+              "type": "string"
+            },
+            "inputs": {
+              "additionalProperties": true,
+              "title": "Inputs",
+              "type": "object"
+            },
+            "outputs": {
+              "additionalProperties": true,
+              "title": "Outputs",
+              "type": "object"
+            },
+            "status": {
+              "$ref": "#/$defs/ExecutionStatus",
+              "default": "pending"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Result"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error"
+            },
+            "success": {
+              "default": false,
+              "title": "Success",
+              "type": "boolean"
+            },
+            "attachments": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Attachments",
+              "type": "array"
+            },
+            "deliverables": {
+              "items": {
+                "$ref": "#/$defs/DeliverableRequirement"
+              },
+              "maxItems": 16,
+              "title": "Deliverables",
+              "type": "array"
+            },
+            "outcome": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AnalysisOutcome"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "title": "Step",
+          "type": "object"
+        },
+        "StepEvent": {
+          "description": "Step related events",
+          "properties": {
+            "type": {
+              "const": "step",
+              "default": "step",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "step": {
+              "$ref": "#/$defs/Step"
+            },
+            "status": {
+              "$ref": "#/$defs/StepStatus"
+            }
+          },
+          "required": [
+            "step",
+            "status"
+          ],
+          "title": "StepEvent",
+          "type": "object"
+        },
+        "StepStatus": {
+          "description": "Step status enum",
+          "enum": [
+            "started",
+            "failed",
+            "completed"
+          ],
+          "title": "StepStatus",
+          "type": "string"
+        },
+        "TitleEvent": {
+          "description": "Title event",
+          "properties": {
+            "type": {
+              "const": "title",
+              "default": "title",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "title": "TitleEvent",
+          "type": "object"
+        },
+        "ToolApprovalEffect": {
+          "enum": [
+            "sandbox_read",
+            "sandbox_write",
+            "network",
+            "credential_use",
+            "external_side_effect"
+          ],
+          "title": "ToolApprovalEffect",
+          "type": "string"
+        },
+        "ToolApprovalStatus": {
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "consumed",
+            "expired",
+            "cancelled"
+          ],
+          "title": "ToolApprovalStatus",
+          "type": "string"
+        },
+        "ToolApprovalView": {
+          "additionalProperties": false,
+          "description": "Browser-safe decision state for one exact tool invocation.",
+          "properties": {
+            "schema_version": {
+              "const": 1,
+              "default": 1,
+              "title": "Schema Version",
+              "type": "integer"
+            },
+            "approval_id": {
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Approval Id",
+              "type": "string"
+            },
+            "revision": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            },
+            "status": {
+              "$ref": "#/$defs/ToolApprovalStatus",
+              "default": "pending"
+            },
+            "tool_name": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$",
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "effects": {
+              "items": {
+                "$ref": "#/$defs/ToolApprovalEffect"
+              },
+              "maxItems": 5,
+              "title": "Effects",
+              "type": "array"
+            },
+            "permissions": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Permissions",
+              "type": "array"
+            },
+            "arguments_preview": {
+              "additionalProperties": true,
+              "title": "Arguments Preview",
+              "type": "object"
+            },
+            "credential_refs": {
+              "items": {
+                "pattern": "^cred_[0-9a-f]{32}$",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Credential Refs",
+              "type": "array"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "title": "Expires At",
+              "type": "string"
+            },
+            "decided_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Decided At"
+            },
+            "execution_snapshot_id": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Execution Snapshot Id"
+            },
+            "catalog_revision": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Catalog Revision"
+            }
+          },
+          "required": [
+            "tool_name",
+            "expires_at"
+          ],
+          "title": "ToolApprovalView",
+          "type": "object"
+        },
+        "ToolEvent": {
+          "description": "Tool related events",
+          "properties": {
+            "type": {
+              "const": "tool",
+              "default": "tool",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            },
+            "tool_call_id": {
+              "title": "Tool Call Id",
+              "type": "string"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "tool_content": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BrowserToolContent"
+                },
+                {
+                  "$ref": "#/$defs/SearchToolContent"
+                },
+                {
+                  "$ref": "#/$defs/ShellToolContent"
+                },
+                {
+                  "$ref": "#/$defs/FileToolContent"
+                },
+                {
+                  "$ref": "#/$defs/McpToolContent"
+                },
+                {
+                  "$ref": "#/$defs/SkillToolContent"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Tool Content"
+            },
+            "function_name": {
+              "title": "Function Name",
+              "type": "string"
+            },
+            "function_args": {
+              "additionalProperties": true,
+              "title": "Function Args",
+              "type": "object"
+            },
+            "status": {
+              "$ref": "#/$defs/ToolStatus"
+            },
+            "function_result": {
+              "anyOf": [
+                {},
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Function Result"
+            },
+            "presentation": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Presentation"
+            },
+            "analysis_job": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AnalysisJobView"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "tool_approval": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ToolApprovalView"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "tool_call_id",
+            "tool_name",
+            "function_name",
+            "function_args",
+            "status"
+          ],
+          "title": "ToolEvent",
+          "type": "object"
+        },
+        "ToolStatus": {
+          "description": "Tool status enum",
+          "enum": [
+            "calling",
+            "called"
+          ],
+          "title": "ToolStatus",
+          "type": "string"
+        },
+        "WaitEvent": {
+          "description": "Wait event",
+          "properties": {
+            "type": {
+              "const": "wait",
+              "default": "wait",
+              "title": "Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "seq": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Seq"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "version": {
+              "const": 1,
+              "default": 1,
+              "title": "Version",
+              "type": "integer"
+            },
+            "timestamp": {
+              "format": "date-time",
+              "title": "Timestamp",
+              "type": "string"
+            }
+          },
+          "title": "WaitEvent",
+          "type": "object"
+        }
+      },
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunEvent"
+        },
+        {
+          "$ref": "#/$defs/ErrorEvent"
+        },
+        {
+          "$ref": "#/$defs/PlanEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolEvent"
+        },
+        {
+          "$ref": "#/$defs/StepEvent"
+        },
+        {
+          "$ref": "#/$defs/MessageEvent"
+        },
+        {
+          "$ref": "#/$defs/DoneEvent"
+        },
+        {
+          "$ref": "#/$defs/TitleEvent"
+        },
+        {
+          "$ref": "#/$defs/WaitEvent"
+        }
+      ]
+    },
+    "Plan": {
+      "$defs": {
+        "AnalysisOutcome": {
+          "additionalProperties": false,
+          "properties": {
+            "scope": {
+              "const": "step",
+              "default": "step",
+              "title": "Scope",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "partial",
+                "failed"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "reason_code": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "missing": {
+              "items": {
+                "$ref": "#/$defs/DeliverableRequirement"
+              },
+              "maxItems": 16,
+              "title": "Missing",
+              "type": "array"
+            },
+            "issues": {
+              "items": {
+                "$ref": "#/$defs/ArtifactIssue"
+              },
+              "maxItems": 64,
+              "title": "Issues",
+              "type": "array"
+            },
+            "can_resume": {
+              "default": false,
+              "title": "Can Resume",
+              "type": "boolean"
+            },
+            "resume_from": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Resume From"
+            }
+          },
+          "required": [
+            "status",
+            "reason_code"
+          ],
+          "title": "AnalysisOutcome",
+          "type": "object"
+        },
+        "ArtifactIssue": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_name": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Artifact Name",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "image",
+                "table",
+                "report",
+                "code",
+                "data",
+                "any"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "reason_code": {
+              "enum": [
+                "missing_artifact",
+                "invalid_content",
+                "unavailable_or_unsafe_path",
+                "unsupported_kind",
+                "unsupported_format",
+                "kind_mismatch",
+                "format_mismatch",
+                "not_regular_file",
+                "file_size_limit",
+                "batch_size_limit",
+                "empty_file",
+                "changed_during_read",
+                "empty_or_binary_text",
+                "image_size_limit",
+                "table_size_limit",
+                "inconsistent_table_width",
+                "empty_table",
+                "archive_size_limit",
+                "encrypted_workbook",
+                "unsafe_workbook_xml",
+                "worksheet_count_limit",
+                "invalid_json_constant",
+                "duplicate_json_key",
+                "invalid_json_table",
+                "invalid_notebook",
+                "validation_deadline",
+                "validator_unavailable",
+                "validation_unavailable",
+                "validation_receipt_invalid",
+                "delivery_failed",
+                "invalid_csv_syntax",
+                "invalid_text_encoding",
+                "invalid_json_syntax",
+                "invalid_code_syntax"
+              ],
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "blocking": {
+              "title": "Blocking",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "artifact_name",
+            "kind",
+            "reason_code",
+            "blocking"
+          ],
+          "title": "ArtifactIssue",
+          "type": "object"
+        },
+        "DeliverableRequirement": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "image",
+                "table",
+                "report",
+                "code",
+                "data",
+                "any"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "min_count": {
+              "default": 1,
+              "maximum": 16,
+              "minimum": 1,
+              "title": "Min Count",
+              "type": "integer"
+            },
+            "formats": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8,
+              "title": "Formats",
+              "type": "array"
+            },
+            "label": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "DeliverableRequirement",
+          "type": "object"
+        },
+        "ExecutionStatus": {
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed"
+          ],
+          "title": "ExecutionStatus",
+          "type": "string"
+        },
+        "Step": {
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "description": {
+              "default": "",
+              "title": "Description",
+              "type": "string"
+            },
+            "agent": {
+              "default": "execution",
+              "title": "Agent",
+              "type": "string"
+            },
+            "inputs": {
+              "additionalProperties": true,
+              "title": "Inputs",
+              "type": "object"
+            },
+            "outputs": {
+              "additionalProperties": true,
+              "title": "Outputs",
+              "type": "object"
+            },
+            "status": {
+              "$ref": "#/$defs/ExecutionStatus",
+              "default": "pending"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Result"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error"
+            },
+            "success": {
+              "default": false,
+              "title": "Success",
+              "type": "boolean"
+            },
+            "attachments": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Attachments",
+              "type": "array"
+            },
+            "deliverables": {
+              "items": {
+                "$ref": "#/$defs/DeliverableRequirement"
+              },
+              "maxItems": 16,
+              "title": "Deliverables",
+              "type": "array"
+            },
+            "outcome": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AnalysisOutcome"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "title": "Step",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "goal": {
+          "default": "",
+          "title": "Goal",
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "en",
+          "title": "Language"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "status": {
+          "$ref": "#/$defs/ExecutionStatus",
+          "default": "pending"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "title": "Plan",
+      "type": "object"
+    },
+    "Step": {
+      "$defs": {
+        "AnalysisOutcome": {
+          "additionalProperties": false,
+          "properties": {
+            "scope": {
+              "const": "step",
+              "default": "step",
+              "title": "Scope",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "partial",
+                "failed"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "reason_code": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "missing": {
+              "items": {
+                "$ref": "#/$defs/DeliverableRequirement"
+              },
+              "maxItems": 16,
+              "title": "Missing",
+              "type": "array"
+            },
+            "issues": {
+              "items": {
+                "$ref": "#/$defs/ArtifactIssue"
+              },
+              "maxItems": 64,
+              "title": "Issues",
+              "type": "array"
+            },
+            "can_resume": {
+              "default": false,
+              "title": "Can Resume",
+              "type": "boolean"
+            },
+            "resume_from": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Resume From"
+            }
+          },
+          "required": [
+            "status",
+            "reason_code"
+          ],
+          "title": "AnalysisOutcome",
+          "type": "object"
+        },
+        "ArtifactIssue": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_name": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Artifact Name",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "image",
+                "table",
+                "report",
+                "code",
+                "data",
+                "any"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "reason_code": {
+              "enum": [
+                "missing_artifact",
+                "invalid_content",
+                "unavailable_or_unsafe_path",
+                "unsupported_kind",
+                "unsupported_format",
+                "kind_mismatch",
+                "format_mismatch",
+                "not_regular_file",
+                "file_size_limit",
+                "batch_size_limit",
+                "empty_file",
+                "changed_during_read",
+                "empty_or_binary_text",
+                "image_size_limit",
+                "table_size_limit",
+                "inconsistent_table_width",
+                "empty_table",
+                "archive_size_limit",
+                "encrypted_workbook",
+                "unsafe_workbook_xml",
+                "worksheet_count_limit",
+                "invalid_json_constant",
+                "duplicate_json_key",
+                "invalid_json_table",
+                "invalid_notebook",
+                "validation_deadline",
+                "validator_unavailable",
+                "validation_unavailable",
+                "validation_receipt_invalid",
+                "delivery_failed",
+                "invalid_csv_syntax",
+                "invalid_text_encoding",
+                "invalid_json_syntax",
+                "invalid_code_syntax"
+              ],
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "blocking": {
+              "title": "Blocking",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "artifact_name",
+            "kind",
+            "reason_code",
+            "blocking"
+          ],
+          "title": "ArtifactIssue",
+          "type": "object"
+        },
+        "DeliverableRequirement": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "image",
+                "table",
+                "report",
+                "code",
+                "data",
+                "any"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "min_count": {
+              "default": 1,
+              "maximum": 16,
+              "minimum": 1,
+              "title": "Min Count",
+              "type": "integer"
+            },
+            "formats": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8,
+              "title": "Formats",
+              "type": "array"
+            },
+            "label": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Label",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "DeliverableRequirement",
+          "type": "object"
+        },
+        "ExecutionStatus": {
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed"
+          ],
+          "title": "ExecutionStatus",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "agent": {
+          "default": "execution",
+          "title": "Agent",
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": true,
+          "title": "Inputs",
+          "type": "object"
+        },
+        "outputs": {
+          "additionalProperties": true,
+          "title": "Outputs",
+          "type": "object"
+        },
+        "status": {
+          "$ref": "#/$defs/ExecutionStatus",
+          "default": "pending"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "success": {
+          "default": false,
+          "title": "Success",
+          "type": "boolean"
+        },
+        "attachments": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "deliverables": {
+          "items": {
+            "$ref": "#/$defs/DeliverableRequirement"
+          },
+          "maxItems": 16,
+          "title": "Deliverables",
+          "type": "array"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnalysisOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "Step",
+      "type": "object"
+    }
+  }
+}

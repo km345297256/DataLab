@@ -12,6 +12,9 @@ from app.domain.services.input_delivery import InputDeliveryService, InputLeaseL
 from app.domain.services.agent_domain_service import AgentDomainService
 from app.infrastructure.repositories.mongo_session_repository import MongoSessionRepository
 from app.infrastructure.models.documents import SessionDocument, SessionEventDocument
+from app.infrastructure.external.task import redis_task
+from app.domain.services.agent_task_runner import AgentTaskRunner
+from app.domain.services.tools.mcp import MCPToolkit
 
 
 class MemoryInputs:
@@ -79,6 +82,10 @@ class MemoryInputs:
                 return event.type
         return None
 
+    async def committed_outcome(self, record):
+        return next((event for event in self.events if isinstance(event, MessageEvent)
+            and event.bind_producer_event_id() == terminal_event_id(record.key, "analysis_outcome")), None)
+
     async def authorized(self, record):
         return self.allow and record.admission.session_generation == self.input_generation
 
@@ -121,6 +128,104 @@ class FakeTask:
     def cancel(self):
         self.cancelled = True
         self.done = True
+
+
+@pytest.fixture
+def owned_task_registry(monkeypatch):
+    cls = redis_task.RedisStreamTask
+    monkeypatch.setattr(cls, "_task_registry", {})
+    monkeypatch.setattr(cls, "_destroy_task", None)
+    monkeypatch.setattr(cls, "_shutting_down", False)
+    monkeypatch.setattr(redis_task, "RedisStreamQueue", lambda _: object())
+    return cls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["stop", "lost-owner"])
+@pytest.mark.parametrize("natural_completion", [False, True], ids=["active", "finalizing"])
+async def test_delivery_cancellation_respects_task_owner_without_letting_live_work_continue(
+    owned_task_registry, trigger, natural_completion,
+):
+    repository = MemoryInputs()
+    service = InputDeliveryService(repository, repository)
+    record = await service.claim(await pending(repository))
+    running, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    state = SimpleNamespace(cancelled=False, closed=False, owner=None)
+
+    async def cleanup_manager():
+        state.owner = asyncio.current_task()
+        cleaning.set()
+        await release.wait()
+        state.closed = True
+
+    toolkit = MCPToolkit()
+    toolkit.manager = SimpleNamespace(cleanup=cleanup_manager)
+    runner = object.__new__(AgentTaskRunner)
+    runner._agent_id = "synthetic"
+    runner._browser = runner._sandbox = runner._flow = None
+    runner._mcp_tool = toolkit
+
+    async def run(task):
+        await service.start("session", record.event, task)
+        running.set()
+        if not natural_completion:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                state.cancelled = True
+                raise
+
+    runner.run = run
+    task = owned_task_registry(runner)
+    await service.bind(record, task)
+    await task.run()
+    await running.wait()
+    if natural_completion:
+        await cleaning.wait()
+    try:
+        assert service._local[("session", record.key)].worker_owned_by_task
+        if trigger == "stop":
+            await service.cancel_session("session")
+        else:
+            current = await repository.get("session", record.key)
+            await repository.transition(current, {"runtime_id": "replacement-runtime"})
+            await service.maintain(AsyncMock())
+        await cleaning.wait()
+        for _ in range(2):
+            await asyncio.sleep(0)
+        assert state.cancelled is (not natural_completion)
+        assert not task._closed.is_set()
+        assert toolkit.manager is not None
+        assert state.owner is task._execution_task
+    finally:
+        release.set()
+        await task.wait_closed()
+        await owned_task_registry.destroy()
+    assert state.closed and toolkit.manager is None
+    assert not service._local
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", [False, True])
+async def test_unstarted_bootstrap_worker_still_receives_direct_cancellation(bound):
+    repository = MemoryInputs()
+    service = InputDeliveryService(repository, repository)
+    ready = asyncio.Event()
+    task = FakeTask()
+
+    async def bootstrap():
+        record = await service.claim(await pending(repository))
+        if bound:
+            await service.bind(record, task)
+        ready.set()
+        await asyncio.Event().wait()
+
+    worker = asyncio.create_task(bootstrap())
+    await ready.wait()
+    await service.cancel_session("session")
+    with pytest.raises(asyncio.CancelledError):
+        await worker
+    assert task.cancelled is bound
 
 
 async def pending(repository):
@@ -224,10 +329,19 @@ async def test_two_runtimes_have_one_claim_winner_and_stale_worker_cannot_start(
     repository = MemoryInputs()
     record = await pending(repository)
     a, b = InputDeliveryService(repository, repository), InputDeliveryService(repository, repository)
-    first, second = await asyncio.gather(a.claim(record), b.claim(record))
+
+    async def claim_and_bind(service):
+        claimed = await service.claim(record)
+        if claimed is not None:
+            # Match production: the claimant stays alive through dispatch.
+            # A finished bootstrap coroutine must not acquire a task later.
+            await service.bind(claimed, FakeTask())
+        return claimed
+
+    first, second = await asyncio.gather(claim_and_bind(a), claim_and_bind(b))
     assert (first is None) != (second is None)
     winner, loser = (a, b) if first else (b, a)
-    await winner.bind(first or second, FakeTask())
+    assert (await repository.get("session", record.key)).admission.runtime_id == winner.runtime_id
     with pytest.raises(InputLeaseLost):
         await loser.start("session", record.event, FakeTask())
 
@@ -250,7 +364,8 @@ async def test_cancelled_pending_input_is_not_recovered_as_new_work():
     await service.cancel_session("session")
     await service.maintain(lambda _: pytest.fail("cancelled input must not dispatch"))
     assert (await repository.get("session", record.key)).admission.state == "cancelled"
-    assert len(repository.events) == 2
+    assert [event.type for event in repository.events] == ["message", "message", "error"]
+    assert repository.events[1].metadata["analysis_outcome"]["reason_code"] == "request_cancelled"
 
 
 def test_private_admission_and_request_snapshot_do_not_enter_event_or_message_schema():
@@ -413,7 +528,8 @@ async def test_stop_generation_fences_input_accepted_after_remote_stop_and_allow
 
 
 @pytest.mark.asyncio
-async def test_durable_dispatch_restores_legacy_datasets_from_one_strict_history_snapshot():
+@pytest.mark.parametrize("incremental", [False, True])
+async def test_durable_dispatch_restores_legacy_datasets_from_one_strict_history_snapshot(incremental):
     from app.application.services.dataset_request_resolver import FrontControllerResolution, RequestDecision, ExecutionDecision
     from app.domain.models.safety import SafetyReview
     from unittest.mock import AsyncMock
@@ -427,6 +543,12 @@ async def test_durable_dispatch_restores_legacy_datasets_from_one_strict_history
                                                                       metadata={"dataset_ids": []}))
     repository.events.append(MessageEvent(seq=record.event.seq + 1, role="user", message="future",
                                          metadata={"dataset_ids": ["future"]}))
+    if incremental:
+        from app.domain.services.execution_history import ExecutionHistory
+        view = ExecutionHistory()
+        for item in repository.events[:2]:
+            view.fold(item)
+        repository.get_execution_history = AsyncMock(return_value=view)
     service = AgentDomainService(agent_repository=object(), session_repository=repository, sandbox_cls=object,
         task_cls=SimpleNamespace(get=lambda _: None), file_storage=object(), mcp_repository=object(),
         sandbox_runtime=object(), input_repository=repository)
@@ -441,10 +563,17 @@ async def test_durable_dispatch_restores_legacy_datasets_from_one_strict_history
     claimed = await service._input_delivery.claim(record)
     assert await service._dispatch_claimed_input(claimed) is task
     service._dataset_service.get_dataset.assert_awaited_once_with("retained", user_id="user")
-    assert repository.history_reads == 1
+    assert repository.history_reads == (0 if incremental else 1)
     assert service._dataset_request_resolver.resolve.await_args.kwargs["events"] == repository.events[:2]
     assert service._create_task.await_args.args[1] == ["retained"]
-    assert service._create_task.await_args.kwargs["session_events_snapshot"] == repository.events[:3]
+    snapshot = service._create_task.await_args.kwargs["session_events_snapshot"]
+    if incremental:
+        repository.get_execution_history.assert_awaited_once_with("session", before_seq=record.event.seq)
+        assert snapshot.seq == record.event.seq
+        assert snapshot.conversation == repository.events[:3]
+        assert view.seq == 2  # task-local inclusion never mutates the cached view
+    else:
+        assert snapshot == repository.events[:3]
     # The derived sandbox binding must not alter the already accepted payload.
     assert (await repository.get("session", record.key)).event.metadata == {"dataset_ids": []}
     assert MessageEvent.model_validate_json(task.enqueue_input.await_args.args[0]).metadata == {"dataset_ids": []}

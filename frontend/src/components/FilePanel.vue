@@ -2,6 +2,10 @@
   <div
     ref="filePanelRef"
     v-show="visible"
+    :role="isShow ? (compactViewport ? 'dialog' : 'complementary') : undefined"
+    :aria-modal="isShow && compactViewport ? true : undefined"
+    :aria-label="isShow ? '文件预览' : undefined"
+    @keydown="handlePreviewKeydown"
     :class="{
       'h-full w-full top-0 ltr:right-0 rtl:left-0 z-50 fixed': isShow,
       'sm:sticky sm:top-0 sm:h-[100vh]': isShow && !props.resizable,
@@ -11,7 +15,7 @@
     :style="{
       width: isShow ? `${panelWidth}px` : '0px',
       opacity: isShow ? '1' : '0',
-      transition: isResizing ? 'none' : 'width 0.2s ease-in-out, opacity 0.2s ease-in-out',
+      transition: isResizing || !isShow ? 'none' : 'width 0.2s ease-in-out, opacity 0.2s ease-in-out',
     }"
   >
     <div
@@ -49,6 +53,12 @@
             </div>
           </div>
           <div class="flex items-center justify-between gap-2 w-full py-3 md:w-auto md:py-0 select-none">
+            <button v-if="taskData.active.value" type="button"
+              class="shrink-0 rounded-md px-2 py-1 text-xs text-[var(--text-brand)] hover:bg-[var(--fill-tsp-gray-main)]"
+              @click="taskData.open()">返回任务数据</button>
+            <button v-else-if="acquisitionSession && acquisitionJobs.length" type="button"
+              class="shrink-0 rounded-md px-2 py-1 text-xs text-[var(--text-brand)] hover:bg-[var(--fill-tsp-gray-main)]"
+              @click="openAcquisitions()">返回数据获取</button>
             <div v-if="relatedFiles.length > 1" class="flex items-center gap-1 text-[11px] text-[var(--text-tertiary)]">
               <button
                 type="button"
@@ -85,7 +95,8 @@
                 class="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--fill-tsp-gray-main)]"
                 aria-label="关闭文件预览"
                 title="关闭文件预览"
-                @click="hideFilePanel"
+                ref="previewCloseButton"
+                @click="closePreview"
               >
                 <X class="size-5 text-[var(--icon-secondary)]" />
               </button>
@@ -93,21 +104,27 @@
           </div>
         </div>
         <VisualizationHost :key="fileInfo.file_id" :file="fileInfo" />
+        <div v-if="taskData.items.value.some(item => item.file.file_id === fileInfo?.file_id)" class="shrink-0 border-t border-[var(--border-main)] bg-white px-4 py-2">
+          <TaskDataFileActions :file-id="fileInfo.file_id" />
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, nextTick, ref, onMounted, onUnmounted, watch } from 'vue'
 import { ChevronLeft, ChevronRight, Download, X } from 'lucide-vue-next'
 import { useFilePanel } from '../composables/useFilePanel'
 import { getFileDownloadUrl } from '../api/file'
 import { getFileType } from '../utils/fileType'
 import { useResizeObserver } from '../composables/useResizeObserver'
 import { eventBus } from '../utils/eventBus'
-import { EVENT_SHOW_TOOL_PANEL } from '../constants/event'
+import { EVENT_SHOW_TOOL_PANEL, EVENT_SHOW_ACQUISITION_PANEL } from '../constants/event'
+import { useDataAcquisition } from '../composables/useDataAcquisition'
 import VisualizationHost from '../visualizations/VisualizationHost.vue'
+import TaskDataFileActions from './TaskDataFileActions.vue'
+import { useTaskData } from '../composables/useTaskData'
 
 const props = withDefaults(defineProps<{
   resizable?: boolean
@@ -121,6 +138,9 @@ const props = withDefaults(defineProps<{
   minContentWidth: 420,
 })
 
+const { sessionId: acquisitionSession, jobs: acquisitionJobs, open: openAcquisitions } = useDataAcquisition()
+const taskData = useTaskData()
+
 const {
   isShow,
   fileInfo,
@@ -131,6 +151,8 @@ const {
 } = useFilePanel()
 
 const filePanelRef = ref<HTMLElement>()
+const previewCloseButton = ref<HTMLButtonElement>()
+let previewReturnFocus: HTMLElement | null = null
 const { size: parentSize } = useResizeObserver(filePanelRef, {
   target: 'parent',
   property: 'width'
@@ -146,6 +168,30 @@ let previousBodyCursor = ''
 let previousBodyUserSelect = ''
 
 const compactViewport = computed(() => props.resizable && parentSize.value < 1024)
+watch([isShow, compactViewport], async ([shown, compact], [wasShown]) => {
+  if (!shown || !compact) return
+  if (!wasShown) previewReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  await nextTick()
+  if (isShow.value && compactViewport.value) previewCloseButton.value?.focus({ preventScroll: true })
+})
+function closePreview() {
+  hideFilePanel()
+  void nextTick(() => {
+    const target = previewReturnFocus?.isConnected && previewReturnFocus !== document.body && previewReturnFocus !== document.documentElement && previewReturnFocus.getClientRects().length
+      ? previewReturnFocus : document.querySelector<HTMLElement>('.acquisition-entry, textarea.chat-message-input')
+    target?.focus({ preventScroll: true })
+  })
+}
+function handlePreviewKeydown(event: KeyboardEvent) {
+  if (!isShow.value) return
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePreview(); return }
+  if (!compactViewport.value || event.key !== 'Tab') return
+  const focusable = [...(filePanelRef.value?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), iframe, summary, [tabindex="0"]') || [])]
+    .filter(element => element.getClientRects().length > 0)
+  const first = focusable[0], last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+}
 const maximumPanelWidth = computed(() => {
   if (!props.resizable) return Math.max(0, parentSize.value / 2)
   if (compactViewport.value) return Math.max(0, parentSize.value)
@@ -255,11 +301,13 @@ const handleToolPanelShown = () => {
 
 onMounted(() => {
   eventBus.on(EVENT_SHOW_TOOL_PANEL, handleToolPanelShown)
+  eventBus.on(EVENT_SHOW_ACQUISITION_PANEL, handleToolPanelShown)
 })
 
 onUnmounted(() => {
   stopResize()
   eventBus.off(EVENT_SHOW_TOOL_PANEL, handleToolPanelShown)
+  eventBus.off(EVENT_SHOW_ACQUISITION_PANEL, handleToolPanelShown)
 })
 
 defineExpose({

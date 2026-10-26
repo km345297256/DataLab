@@ -73,16 +73,6 @@ class SSOAuthorizationMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith("/api/v1") or request.method == "OPTIONS":
             return await call_next(request)
 
-        # The data-center submission contract carries its SSO token in the
-        # validated JSON body. Its route performs the SSO lookup after FastAPI
-        # parses that body; requiring an Authorization header here would reject
-        # a valid submission before the route can inspect the token.
-        if (
-            request.method == "POST"
-            and request.url.path == "/api/v1/datasets/submissions"
-        ):
-            return await call_next(request)
-
         # Browser image elements cannot attach Authorization headers. Artifact
         # previews use short-lived HMAC URLs, so allow only an exact file GET
         # after verifying its signature and expiry.

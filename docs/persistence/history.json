@@ -1,0 +1,213 @@
+{
+  "format_version": 1,
+  "snapshots": [
+    {
+      "file": "2026-09-24-baseline.json",
+      "reason": "Initial frozen inventory of the current working-tree persistence contracts; not a data migration."
+    },
+    {
+      "file": "2026-09-24-program-attempt.json",
+      "changes": {
+        "AgentEvent": {
+          "reason": "Add optional program_attempt display metadata for confirmed first-party executions; never reconstruct recovery from filenames or tool prose.",
+          "compatibility": "Additive nullable field with a null default. Existing version-1 events remain readable and never acquire execution/recovery authority. Canonical pre-upgrade recordings omit the absent null field so their original digests and bytes remain unchanged. New non-null projections are retained and digest-protected; writer version remains 1.",
+          "test": "backend/tests/test_event_recording_replay.py"
+        },
+        "ExecutionHistory": {
+          "reason": "The cache's embedded ToolEvent schema inherits the optional program_attempt field.",
+          "compatibility": "Existing version-2 cache records, including embedded pre-upgrade tool events, deserialize with program_attempt=None and retain their original result data. No cache migration or inferred success is needed; version-1 caches remain rejected, and the cache writer stays version 2.",
+          "test": "backend/tests/test_persistence_contracts.py"
+        }
+      }
+    },
+    {
+      "file": "2026-09-29-independent-subprotocols.json",
+      "changes": {
+        "MCPImageRef": {
+          "reason": "Inventory private typed image references hidden inside generic ToolMessage additional_kwargs.",
+          "compatibility": "Registration of the existing version-1 envelope, with the unchanged dataseek_mcp_image_refs_v1 key derived from its real version constant. No image bytes, access grants or data migration are added. Frozen legacy references pass the actual memory reader.",
+          "test": "backend/tests/test_persistence_subprotocols.py"
+        },
+        "SpillArtifactRef": {
+          "reason": "Track spill references independently and record both typed owners.",
+          "compatibility": "Existing schema_version=1 is unchanged. Old opaque locators, checksums and retrieval metadata roundtrip unchanged; ownership and expiry validation remain outside this structural gate.",
+          "test": "backend/tests/test_persistence_subprotocols.py"
+        },
+        "SpillArtifactNotice": {
+          "reason": "Track the persisted spill notice hidden inside generic ToolResult.data.spill.",
+          "compatibility": "Registration only, no wire changes. Existing schema_version=1 and unavailable notices remain readable without fabricating a stored reference.",
+          "test": "backend/tests/test_persistence_subprotocols.py"
+        },
+        "SpillArtifactRecord": {
+          "reason": "Inventory private durable artifact ownership/storage records, independently of public references.",
+          "compatibility": "The existing record is unversioned and is explicitly recorded as writer_version=0, not assigned a fictitious migration version. Missing legacy storage principals remain absent and use the existing compatibility path.",
+          "test": "backend/tests/test_persistence_subprotocols.py"
+        },
+        "AnswerReviewMarker": {
+          "reason": "Bind the durable Step.outputs.answer_review envelope to a production writer/reader model and an independent schema root.",
+          "compatibility": "Version remains 1. Existing version/status/scope bindings and unknown diagnostic dictionaries roundtrip without added defaults. Strict version validation preserves the previous rejection of bool/string versions. Missing legacy optional scope remains missing; semantic history/evidence authorization remains independently fail-closed.",
+          "test": "backend/tests/test_persistence_subprotocols.py"
+        },
+        "ModelTraceRecord": {
+          "reason": "Inventory the private model trace separately from public views, including optional cache observations and tool-schema identity.",
+          "compatibility": "Existing schema_version=1 retained. New fields default to None, never imply a cache hit, and are excluded from the public trace view. Pre-upgrade traces retain their original usage and identity; no raw schemas or provider metadata are persisted.",
+          "test": "backend/tests/test_model_cache_observability.py"
+        },
+        "TokenUsageRecord": {
+          "reason": "Inventory durable token-usage records and optional explicit cache counters.",
+          "compatibility": "The existing record remains unversioned (writer_version=0). Nullable strict nonnegative cache observations are additive and old missing values stay unknown. Existing prompt/completion/total values and accounting are unchanged; cache observations are not added to totals.",
+          "test": "backend/tests/test_model_cache_observability.py"
+        }
+      }
+    },
+    {
+      "file": "2026-09-30-user-evaluated-results.json",
+      "changes": {
+        "ExecutionHistory": {
+          "reason": "Separate scoped delivered-result conversation context from independently reviewed scientific evidence.",
+          "compatibility": "Rebuildable cache writer advances from version 2 to 3. Older projections are discarded and rebuilt from the same immutable session events when read. No historical task result is changed or rerun, and no user-evaluated prose is promoted into reviewed evidence.",
+          "test": "backend/tests/test_user_evaluated_history.py"
+        },
+        "ResultAssessmentMarker": {
+          "reason": "Record host-controlled user-evaluated publication policy independently of scientific review status.",
+          "compatibility": "New strict version-1 marker owned by Step.outputs.result_assessment. All scope fields are required; it records scientific_review=not_performed and cannot grant execution, delivery, or scientific approval. Old events remain unchanged and need no migration.",
+          "test": "backend/tests/test_result_assessment_marker.py"
+        }
+      }
+    },
+    {
+      "file": "2026-09-30-program-preparation.json",
+      "changes": {
+        "AgentEvent": {
+          "reason": "Add host-owned dispatch_status display metadata to distinguish calls that never started from failed program executions.",
+          "compatibility": "Additive nullable field defaults to null and is omitted from canonical legacy recordings when absent. Only the dispatcher or an exact private confirmed not_started receipt can populate it; public tool data cannot grant replay authority. Historical events are not rewritten or rerun.",
+          "test": "backend/tests/test_program_dispatch_presentation.py"
+        },
+        "ExecutionHistory": {
+          "reason": "The cache embeds the ToolEvent schema with optional not-started display metadata.",
+          "compatibility": "Additive nullable field; existing version-3 caches remain readable without inferring execution success or recovery. Writer version remains 3, with no task migration or scientific evidence endorsement.",
+          "test": "backend/tests/test_program_dispatch_presentation.py"
+        }
+      }
+    },
+    {
+      "file": "2026-10-21-datalab-analysis.json",
+      "changes": {
+        "AgentEvent": {
+          "reason": "Register existing DataLab run identity, stage-scoped outcomes and data deliverables alongside the migrated v2 analysis contracts.",
+          "compatibility": "Preserve the pre-migration DataLab records and DataRun semantics. Empty new private delivery fields are omitted when writing legacy records. A populated output_paths/objective contract is intentionally not readable by the pre-migration strict DataLab requirement model; do not roll back a database containing those new contracts to that reader. No historical execution is replayed.",
+          "readers": {
+            "new_reads_old": "Frozen records produced by the pre-migration DataLab source retain run_id, stage scope, data kind and partial status after read/write. Missing execution or assessment evidence remains missing. ExecutionHistory versions 1/2 are rebuilt from immutable events; DataLab had no v3 cache before this migration.",
+            "old_reads_new": "The frozen pre-migration DataLab schemas accept rewritten old records with empty new fields omitted, and reject populated new private delivery fields. Upstream DataSeek v2 schemas reject DataLab-specific run events/data kinds and are not a DataLab downgrade target. Cache rollback must discard the new derived projection, not rerun a task."
+          },
+          "test": "backend/tests/test_datalab_persistence_compatibility.py"
+        },
+        "ExecutionHistory": {
+          "reason": "Register existing DataLab run identity, stage-scoped outcomes and data deliverables alongside the migrated v2 analysis contracts.",
+          "compatibility": "Preserve the pre-migration DataLab records and DataRun semantics. Empty new private delivery fields are omitted when writing legacy records. A populated output_paths/objective contract is intentionally not readable by the pre-migration strict DataLab requirement model; do not roll back a database containing those new contracts to that reader. No historical execution is replayed.",
+          "readers": {
+            "new_reads_old": "Frozen records produced by the pre-migration DataLab source retain run_id, stage scope, data kind and partial status after read/write. Missing execution or assessment evidence remains missing. ExecutionHistory versions 1/2 are rebuilt from immutable events; DataLab had no v3 cache before this migration.",
+            "old_reads_new": "The frozen pre-migration DataLab schemas accept rewritten old records with empty new fields omitted, and reject populated new private delivery fields. Upstream DataSeek v2 schemas reject DataLab-specific run events/data kinds and are not a DataLab downgrade target. Cache rollback must discard the new derived projection, not rerun a task."
+          },
+          "test": "backend/tests/test_datalab_persistence_compatibility.py"
+        },
+        "Plan": {
+          "reason": "Register existing DataLab run identity, stage-scoped outcomes and data deliverables alongside the migrated v2 analysis contracts.",
+          "compatibility": "Preserve the pre-migration DataLab records and DataRun semantics. Empty new private delivery fields are omitted when writing legacy records. A populated output_paths/objective contract is intentionally not readable by the pre-migration strict DataLab requirement model; do not roll back a database containing those new contracts to that reader. No historical execution is replayed.",
+          "readers": {
+            "new_reads_old": "Frozen records produced by the pre-migration DataLab source retain run_id, stage scope, data kind and partial status after read/write. Missing execution or assessment evidence remains missing. ExecutionHistory versions 1/2 are rebuilt from immutable events; DataLab had no v3 cache before this migration.",
+            "old_reads_new": "The frozen pre-migration DataLab schemas accept rewritten old records with empty new fields omitted, and reject populated new private delivery fields. Upstream DataSeek v2 schemas reject DataLab-specific run events/data kinds and are not a DataLab downgrade target. Cache rollback must discard the new derived projection, not rerun a task."
+          },
+          "test": "backend/tests/test_datalab_persistence_compatibility.py"
+        },
+        "Step": {
+          "reason": "Register existing DataLab run identity, stage-scoped outcomes and data deliverables alongside the migrated v2 analysis contracts.",
+          "compatibility": "Preserve the pre-migration DataLab records and DataRun semantics. Empty new private delivery fields are omitted when writing legacy records. A populated output_paths/objective contract is intentionally not readable by the pre-migration strict DataLab requirement model; do not roll back a database containing those new contracts to that reader. No historical execution is replayed.",
+          "readers": {
+            "new_reads_old": "Frozen records produced by the pre-migration DataLab source retain run_id, stage scope, data kind and partial status after read/write. Missing execution or assessment evidence remains missing. ExecutionHistory versions 1/2 are rebuilt from immutable events; DataLab had no v3 cache before this migration.",
+            "old_reads_new": "The frozen pre-migration DataLab schemas accept rewritten old records with empty new fields omitted, and reject populated new private delivery fields. Upstream DataSeek v2 schemas reject DataLab-specific run events/data kinds and are not a DataLab downgrade target. Cache rollback must discard the new derived projection, not rerun a task."
+          },
+          "test": "backend/tests/test_datalab_persistence_compatibility.py"
+        }
+      }
+    },
+    {
+      "file": "2026-10-22-analysis-recovery.json",
+      "changes": {
+        "AgentEvent": {
+          "reason": "Register optional bounded execution records on step outcomes embedded in plan and step events.",
+          "compatibility": "Additive list defaults to empty and is omitted by exclude_if when empty; event writer version remains 1. Existing records do not acquire inferred program attempts, success, or recovery authority. Nonempty records use strict state, failure-category and exception-type enums and roundtrip without loss. This is not a downgrade guarantee.",
+          "readers": {
+            "new_reads_old": "Frozen pre-upgrade events retain their outcome and run identity. Absent execution_records read as an empty list and remain absent on write; the old frozen read schema accepts the rewritten legacy event. Tests also preserve unchanged step status and can_resume rather than deriving them from execution records.",
+            "old_reads_new": "The 2026-10-21 strict AnalysisOutcome reader rejects a nonempty execution_records property inside new events. Tests require its additionalProperties rejection. A deployment rollback to that reader cannot safely consume those records; do not discard the field, truncate history, or replay execution as a compatibility workaround."
+          },
+          "test": "backend/tests/test_execution_report_compatibility.py"
+        },
+        "ExecutionHistory": {
+          "reason": "The rebuildable execution projection embeds Plan/Step outcomes with optional execution records.",
+          "compatibility": "Additive embedded list with an empty default; cache writer version remains 3. Existing version-3 projections retain their contents without fabricated execution records or reviewed evidence. Versions 1/2 remain invalid and require the existing rebuild path. Populated new outcomes are not accepted by the previous strict reader.",
+          "readers": {
+            "new_reads_old": "A version-3 projection containing the frozen legacy plan reads and writes with execution_records omitted, and retains empty reviewed/contextual evidence indexes. Its rewritten record validates under the 2026-10-21 cache schema. Versions 1/2 are still rejected instead of being relabeled as current.",
+            "old_reads_new": "The 2026-10-21 cache reader rejects nonempty execution_records in embedded outcomes. Tests verify that explicit rejection. Discarding this derived cache alone does not make a rollback safe because the immutable source events can also contain this field; no task rerun or silent evidence stripping is authorized."
+          },
+          "test": "backend/tests/test_execution_report_compatibility.py"
+        },
+        "Plan": {
+          "reason": "Register optional execution records on outcomes of steps persisted inside plans.",
+          "compatibility": "Additive empty-default outcome list; Plan keeps its owning event writer version 1. Empty lists are omitted so historical plans do not gain invented execution history. New bounded enum records survive read/write without changing stage outcome or continuation eligibility.",
+          "readers": {
+            "new_reads_old": "The frozen legacy plan retains partial outcome, stage scope, missing deliverables and can_resume=False; execution_records is empty in memory and absent after serialization. The 2026-10-21 read schema accepts that rewritten plan.",
+            "old_reads_new": "The 2026-10-21 strict nested AnalysisOutcome reader rejects nonempty execution_records in new plans, as asserted by the compatibility tests. Do not claim a lossless rollback or remove program facts to satisfy the old reader."
+          },
+          "test": "backend/tests/test_execution_report_compatibility.py"
+        },
+        "Step": {
+          "reason": "Register AnalysisOutcome.execution_records as bounded enum-only program facts associated with the step.",
+          "compatibility": "The new optional list defaults to empty, is omitted when empty, and leaves the owning event writer version at 1. It records observed program outcomes without certifying analysis success, scientific evidence, or permission to resume. Nonempty records are intentionally outside the previous strict reader contract.",
+          "readers": {
+            "new_reads_old": "The frozen legacy step reads without fabricated program attempts and writes with execution_records omitted. Existing partial status, missing data deliverables, stage scope and continuation flags are preserved; the old frozen schema accepts the result.",
+            "old_reads_new": "The 2026-10-21 strict AnalysisOutcome schema rejects nonempty execution_records as an additional property. Tests prove this refusal and current-reader roundtrip preservation, rather than claiming that an older reader can ignore or retain unknown execution facts."
+          },
+          "test": "backend/tests/test_execution_report_compatibility.py"
+        }
+      }
+    },
+    {
+      "file": "2026-10-23-native-model-output.json",
+      "changes": {
+        "ModelTraceRecord": {
+          "reason": "Distinguish output accounting reservation from an actual verified provider output limit after removing application task and step generation caps.",
+          "compatibility": "Additive nullable field with None default; writer version remains 1. Existing usage and reservation values are preserved, and absence never implies a known physical provider limit. This adds metadata, not a data migration or task replay.",
+          "readers": {
+            "new_reads_old": "Legacy traces pass the frozen read schema and load with output_token_limit=None while retaining reserved_output_tokens and actual_total_tokens. No old accounting reservation becomes a new provider limit.",
+            "old_reads_new": "The previous strict read schema explicitly rejects traces containing output_token_limit, as tested. Do not downgrade to that reader against new traces or strip audit metadata to claim lossless compatibility."
+          },
+          "test": "backend/tests/test_model_runtime.py"
+        }
+      }
+    },
+    {
+      "file": "2026-10-25-skill-creation-progress.json",
+      "changes": {
+        "AgentEvent": {
+          "reason": "Persist safe skill-authoring stage progress on the original tool-call identity for live and restored conversation views.",
+          "compatibility": "Additive nullable field with None default, omitted when absent. Writer versions remain unchanged. Only host-owned stage, status, attempt and diagnostic enums are retained; no candidate content, execution success, draft installation or scientific approval is inferred.",
+          "readers": {
+            "new_reads_old": "Frozen pre-upgrade tool events and version-3 caches retain original results and status; progress remains absent on write. Versions 1/2 of the cache remain subject to the existing rebuild policy.",
+            "old_reads_new": "The frozen old ToolEvent JSON schema accepts the additional property but defines no progress field or typed-retention guarantee. Schema acceptance is not a lossless rollback guarantee; do not rewrite new records through an older reader or rerun analysis to reconstruct progress."
+          },
+          "test": "backend/tests/test_skill_creation_progress_compatibility.py"
+        },
+        "ExecutionHistory": {
+          "reason": "The version-3 derived history cache embeds ToolEvent and retains optional host skill-authoring progress without granting scientific evidence authority.",
+          "compatibility": "Additive nullable field with None default, omitted when absent. Writer versions remain unchanged. Only host-owned stage, status, attempt and diagnostic enums are retained; no candidate content, execution success, draft installation or scientific approval is inferred.",
+          "readers": {
+            "new_reads_old": "Frozen pre-upgrade tool events and version-3 caches retain original results and status; progress remains absent on write. Versions 1/2 of the cache remain subject to the existing rebuild policy.",
+            "old_reads_new": "The frozen old ToolEvent JSON schema accepts the additional property but defines no progress field or typed-retention guarantee. Schema acceptance is not a lossless rollback guarantee; do not rewrite new records through an older reader or rerun analysis to reconstruct progress."
+          },
+          "test": "backend/tests/test_skill_creation_progress_compatibility.py"
+        }
+      }
+    }
+  ]
+}

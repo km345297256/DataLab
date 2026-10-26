@@ -6,11 +6,14 @@ from . import (
     model_trace_routes,
     onlyoffice_routes,
     admin_routes,
+    auth_routes,
     agent_profile_routes,
     config_routes,
-    dataset_routes,
     data_candidate_routes,
     data_connector_routes,
+    data_library_routes,
+    open_data_routes,
+    object_mount_routes,
     file_routes,
     mcp_routes,
     plugin_runtime_routes,
@@ -32,6 +35,7 @@ def create_api_router() -> APIRouter:
 
     # Include all sub-routers
     api_router.include_router(session_routes.router)
+    api_router.include_router(auth_routes.router)
     api_router.include_router(file_routes.router)
     api_router.include_router(config_routes.router)
     api_router.include_router(skill_routes.router)
@@ -42,9 +46,11 @@ def create_api_router() -> APIRouter:
     api_router.include_router(renderer_routes.router)
     api_router.include_router(visualization_routes.router)
     api_router.include_router(admin_routes.router)
-    api_router.include_router(dataset_routes.router)
     api_router.include_router(data_candidate_routes.router)
     api_router.include_router(data_connector_routes.router)
+    api_router.include_router(data_library_routes.router)
+    api_router.include_router(open_data_routes.router)
+    api_router.include_router(object_mount_routes.router)
 
     return api_router
 

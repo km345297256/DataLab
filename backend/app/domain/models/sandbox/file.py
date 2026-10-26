@@ -1,7 +1,7 @@
 """
 File operation related models
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 
 
@@ -9,6 +9,19 @@ class FileReadResult(BaseModel):
     """File read result"""
     content: str = Field(..., description="File content")
     file: str = Field(..., description="Path of the read file")
+    file_sha256: Optional[str] = None
+    sha256_scope: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    content_scope: Optional[str] = None
+    complete_content: Optional[bool] = None
+    version_available: bool = False
+
+
+class FilePatchReplacement(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    old_str: str = Field(min_length=1, max_length=8 * 1024 * 1024)
+    new_str: str = Field(max_length=8 * 1024 * 1024)
+    expected_count: int = Field(ge=1, le=100000)
 
 
 class FileWriteResult(BaseModel):

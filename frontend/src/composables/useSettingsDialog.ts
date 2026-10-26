@@ -1,9 +1,15 @@
 import { ref } from 'vue'
+import { eventBus } from '../utils/eventBus'
 
 // Global state for settings dialog
 const isSettingsDialogOpen = ref(false)
 const defaultTab = ref<string>('settings')
 const settingsDialogVersion = ref(0)
+eventBus.on('auth:cleared', () => {
+  isSettingsDialogOpen.value = false
+  defaultTab.value = 'settings'
+  settingsDialogVersion.value += 1
+})
 
 export function useSettingsDialog() {
   const openSettingsDialog = (tabId?: string) => {

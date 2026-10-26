@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import SkillMetadata from './SkillMetadata.vue';
 import { filterSkillCatalog, skillCategories } from '@/utils/skillCatalog';
 import { Upload } from 'lucide-vue-next';
@@ -110,6 +110,7 @@ const autoEnabledSkillNames = ref(new Set<string>());
 const loading = ref(false);
 const uploading = ref(false);
 const fileInput = ref<HTMLInputElement>();
+let catalogRevision = 0;
 
 const open = computed({
   get: () => props.open,
@@ -122,18 +123,36 @@ const visibleSkills = computed(() => filterSkillCatalog(skills.value.filter(
 ), { query: query.value, category: category.value, source: 'all', domain: '', installed: false }));
 
 const loadSkills = async () => {
+  const revision = ++catalogRevision;
   loading.value = true;
   try {
     const [availableSkills, preferences] = await Promise.all([listSkills(), getSkillPreferences()]);
+    if (revision !== catalogRevision) return;
     skills.value = availableSkills;
     autoEnabledSkillNames.value = new Set(preferences.map((name) => name.trim().toLowerCase()));
   } catch (error) {
+    if (revision !== catalogRevision) return;
     console.error('Failed to load skills:', error);
     showErrorToast(t('Failed to load skills'));
   } finally {
-    loading.value = false;
+    if (revision === catalogRevision) loading.value = false;
   }
 };
+
+const handleSkillCatalogUpdated = (payload: unknown) => {
+  if (payload && typeof payload === 'object' && 'deletedSkillName' in payload && typeof payload.deletedSkillName === 'string') {
+    const name = payload.deletedSkillName;
+    skills.value = skills.value.filter(skill => skill.name !== name);
+    autoEnabledSkillNames.value.delete(name.trim().toLowerCase());
+    emit('update:selectedSkills', selectedSkills.value.filter(item => item !== name));
+  }
+  catalogRevision += 1;
+  loading.value = false;
+  if (open.value) void loadSkills();
+};
+
+onMounted(() => eventBus.on(EVENT_SKILL_CATALOG_UPDATED, handleSkillCatalogUpdated));
+onUnmounted(() => { catalogRevision += 1; eventBus.off(EVENT_SKILL_CATALOG_UPDATED, handleSkillCatalogUpdated); });
 
 const toggleSkill = (name: string) => {
   const next = new Set(selectedSkills.value);

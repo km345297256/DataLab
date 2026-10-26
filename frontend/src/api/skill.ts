@@ -1,4 +1,5 @@
 import { apiClient, ApiResponse } from './client';
+import type { SkillCreationView } from '../types/skillCreation';
 
 export interface SkillInfo {
   id: string;
@@ -54,7 +55,7 @@ export interface SkillUploadResponse {
 }
 
 export interface CreateSkillFromSessionResponse {
-  skill: SkillInfo;
+  draft: SkillCreationView;
 }
 
 export async function listSkills(): Promise<SkillInfo[]> {
@@ -75,6 +76,10 @@ export async function installSkill(id: string): Promise<SkillInfo> {
 export async function uninstallSkill(id: string): Promise<SkillInfo> {
   const response = await apiClient.delete<ApiResponse<SkillInfo>>(`/skills/${encodeURIComponent(id)}/install`);
   return response.data.data;
+}
+
+export async function deletePersonalSkill(id: string): Promise<void> {
+  await apiClient.delete<ApiResponse<Record<string, never>>>(`/skills/${encodeURIComponent(id)}`);
 }
 
 export async function getSkillPreferences(): Promise<string[]> {
@@ -125,7 +130,7 @@ export async function uploadSkill(file: File): Promise<SkillInfo[]> {
 
 export async function createSkillFromSession(params: {
   session_id: string;
-}): Promise<SkillInfo> {
+}): Promise<SkillCreationView> {
   const response = await apiClient.post<ApiResponse<CreateSkillFromSessionResponse>>('/skills/from-session', params);
-  return response.data.data.skill;
+  return response.data.data.draft;
 }

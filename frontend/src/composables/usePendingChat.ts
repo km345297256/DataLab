@@ -10,6 +10,7 @@ export interface PendingChat {
     skills: string[];
     mcpServers: string[];
     dataConnectors?: string[];
+    dataDiscovery?: boolean;
     agentProfileId?: string | null;
 }
 
@@ -32,5 +33,12 @@ export const consumePendingChat = (sessionId: string): PendingChat | null => {
         sessionStorage.removeItem(storageKey);
         sessionStorage.removeItem(LEGACY_STORAGE_KEY);
         return null;
+    }
+};
+
+/** Remove drafts when the browser changes identity. */
+export const clearPendingChats = () => {
+    for (const key of Object.keys(sessionStorage)) {
+        if (key === LEGACY_STORAGE_KEY || key.startsWith(STORAGE_KEY_PREFIX)) sessionStorage.removeItem(key);
     }
 };

@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
 from datetime import datetime, UTC, timedelta
 from typing import Any, BinaryIO, Dict, Optional, Tuple
@@ -10,7 +11,16 @@ from typing import Any, BinaryIO, Dict, Optional, Tuple
 from app.core.config import get_settings
 from app.domain.external.file import FileStorage
 from app.domain.models.file import FileInfo
+from app.domain.models.object_file import (
+    ObjectFileMountError,
+    ObjectFileReference,
+    UNSUPPORTED_OBJECT_MOUNT,
+)
 from app.infrastructure.models.documents import FileUploadSessionDocument, StoredFileDocument
+from app.infrastructure.external.file.minio_streaming import (
+    STREAMING_UPLOAD_THRESHOLD,
+    upload_seekable_object,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +83,20 @@ def _read_minio_range(
     *,
     offset: int,
     length: int,
+    version_id: str | None = None,
+    etag: str | None = None,
 ) -> bytes:
+    pinned = {}
+    if version_id:
+        pinned["version_id"] = version_id
+    if etag:
+        pinned["request_headers"] = {"If-Match": '"' + etag.strip('"') + '"'}
     response = client.get_object(
         bucket,
         object_key,
         offset=offset,
         length=length,
+        **pinned,
     )
     try:
         chunks: list[bytes] = []
@@ -115,6 +133,25 @@ async def _complete_despite_cancellation(awaitable: Any) -> tuple[Any, asyncio.C
         except Exception as error:
             if cancellation is not None:
                 raise cancellation from error
+            raise
+
+
+async def _upload_large_with_cancellation(client: Any, **kwargs: Any) -> tuple[Any, asyncio.CancelledError | None]:
+    """Ask the streaming worker to abort, then join before the file can close."""
+    stop = threading.Event()
+    task = asyncio.create_task(asyncio.to_thread(upload_seekable_object, client, stop=stop, **kwargs))
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            return await asyncio.shield(task), cancellation
+        except asyncio.CancelledError as error:
+            stop.set()
+            if task.done() and task.cancelled():
+                raise cancellation or error
+            cancellation = error
+        except Exception:
+            if cancellation is not None:
+                raise cancellation from None
             raise
 
 
@@ -200,11 +237,15 @@ class MinIOFileStorage(FileStorage):
         }
         if length < 0:
             put_kwargs["part_size"] = 10 * 1024 * 1024
+            put_kwargs["num_parallel_uploads"] = 1
 
         try:
-            _, cancelled = await _complete_despite_cancellation(
-                asyncio.to_thread(self._client.put_object, **put_kwargs)
-            )
+            if length >= STREAMING_UPLOAD_THRESHOLD:
+                _, cancelled = await _upload_large_with_cancellation(self._client, **put_kwargs)
+            else:
+                _, cancelled = await _complete_despite_cancellation(
+                    asyncio.to_thread(self._client.put_object, **put_kwargs)
+                )
             if cancelled is not None:
                 raise cancelled
             stat, cancelled = await _complete_despite_cancellation(
@@ -467,6 +508,62 @@ class MinIOFileStorage(FileStorage):
         if user_id is not None and doc.user_id != user_id:
             return None
         return self._file_info_from_doc(doc)
+
+    async def get_object_reference(self, file_id: str, user_id: str) -> ObjectFileReference:
+        """Resolve only an owned, intact object; never fetch its contents."""
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ObjectFileMountError("请先登录，再选择需要分析的文件。")
+        doc = await StoredFileDocument.find_one(StoredFileDocument.file_id == file_id)
+        if doc is None or doc.user_id != user_id:
+            raise ObjectFileMountError("文件不存在或无权访问，请重新选择分析文件。")
+        if doc.provider != "minio":
+            raise ObjectFileMountError(UNSUPPORTED_OBJECT_MOUNT)
+        reference = ObjectFileReference(
+            file_id=doc.file_id,
+            bucket=doc.bucket or self.bucket_name,
+            object_key=doc.object_key,
+            size=doc.size,
+        )
+        try:
+            current = await asyncio.to_thread(
+                self._client.stat_object, reference.bucket, reference.object_key,
+            )
+        except Exception:
+            # SDK exceptions can include object keys or endpoint details.
+            raise ObjectFileMountError("对象存储中的文件暂不可用，请稍后重试或联系管理员检查。") from None
+        if current.size != reference.size:
+            raise ObjectFileMountError("文件大小与存储记录不一致，暂不能只读挂载；请联系管理员检查。")
+        return ObjectFileReference(
+            file_id=reference.file_id,
+            bucket=reference.bucket,
+            object_key=reference.object_key,
+            size=reference.size,
+            etag=getattr(current, "etag", None),
+            version_id=getattr(current, "version_id", None),
+        )
+
+    async def read_object_range(
+        self, reference: ObjectFileReference, user_id: str, *, offset: int, length: int,
+    ) -> bytes:
+        if (isinstance(offset, bool) or not isinstance(offset, int) or offset < 0
+                or isinstance(length, bool) or not isinstance(length, int)
+                or not 0 <= length <= 4 * 1024 * 1024 or offset + length > reference.size):
+            raise ObjectFileMountError("文件读取范围无效。")
+        current = await self.get_object_reference(reference.file_id, user_id)
+        if current != reference:
+            raise ObjectFileMountError("文件已发生变化，请重新选择分析文件。")
+        if not length:
+            return b""
+        try:
+            data = await asyncio.to_thread(
+                _read_minio_range, self._client, reference.bucket, reference.object_key,
+                offset=offset, length=length, version_id=reference.version_id, etag=reference.etag,
+            )
+        except Exception:
+            raise ObjectFileMountError("对象存储中的文件暂不可读，请稍后重试。") from None
+        if len(data) != length:
+            raise ObjectFileMountError("文件读取不完整，请稍后重试。")
+        return data
 
     async def create_presigned_url(self, file_id: str, user_id: Optional[str] = None, expire_seconds: Optional[int] = None) -> str:
         doc = await StoredFileDocument.find_one(StoredFileDocument.file_id == file_id)

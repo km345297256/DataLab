@@ -1,16 +1,26 @@
+import logging
+from uuid import uuid4
+
 from typing import List
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
 
+from app.application.services.skill_draft_service import SkillDraftService, get_skill_draft_service
+from app.application.services.skill_deletion_service import SkillDeletionService, get_skill_deletion_service
+from app.domain.services.skills.catalog_lock import serialized_skill_catalog
 from app.core.config import get_settings
 from app.domain.models.audit import AuditRiskLevel
 from app.domain.models.skill import Skill, SkillScope
+from app.domain.models.skill_draft import SkillCreationView
 from app.domain.models.user import User
 from app.domain.services.audit_service import AuditService, get_audit_service
 from app.domain.services.permission_service import PermissionService, get_permission_service
 from app.domain.services.skills import SkillRegistry
-from app.domain.services.skills.session_skill_creator import create_skill_from_session as create_session_skill
+from app.domain.services.skills.skill_creation.service import create_skill_from_session as create_session_skill
+from app.domain.services.skills.skill_creation_error import SkillCreationError
+from app.domain.services.skills.skill_creation.progress import SkillCreationProgressRecorder, record_creation_audit
 from app.infrastructure.repositories.mongo_session_repository import MongoSessionRepository
 from app.infrastructure.repositories.skill_repository import MongoSkillRepository
 from app.interfaces.dependencies import get_current_user, get_user_repository
@@ -30,6 +40,8 @@ from app.interfaces.schemas.skill import (
     UpdateSkillScopeRequest,
     UpdateSkillPreferencesRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -140,6 +152,7 @@ def _safe_skill_file(root: Path, relative_path: str) -> Path:
 
 
 @router.get("", response_model=APIResponse[SkillListResponse])
+@serialized_skill_catalog
 async def list_skills(
     current_user: User = Depends(get_current_user),
     user_repository: UserRepository = Depends(get_user_repository),
@@ -153,6 +166,7 @@ async def list_skills(
 
 
 @router.get("/catalog", response_model=APIResponse[SkillListResponse])
+@serialized_skill_catalog
 async def list_skill_catalog(
     current_user: User = Depends(get_current_user),
     user_repository: UserRepository = Depends(get_user_repository),
@@ -167,6 +181,7 @@ async def list_skill_catalog(
 
 
 @router.post("/{skill_id}/install", response_model=APIResponse[SkillResponse])
+@serialized_skill_catalog
 async def install_skill(
     skill_id: str,
     current_user: User = Depends(get_current_user),
@@ -185,6 +200,7 @@ async def install_skill(
 
 
 @router.delete("/{skill_id}/install", response_model=APIResponse[SkillResponse])
+@serialized_skill_catalog
 async def uninstall_skill(
     skill_id: str,
     current_user: User = Depends(get_current_user),
@@ -209,6 +225,7 @@ async def uninstall_skill(
 
 
 @router.get("/preferences", response_model=APIResponse[SkillPreferencesResponse])
+@serialized_skill_catalog
 async def get_skill_preferences(
     current_user: User = Depends(get_current_user),
     user_repository: UserRepository = Depends(get_user_repository),
@@ -233,6 +250,7 @@ async def get_skill_preferences(
 
 
 @router.put("/preferences", response_model=APIResponse[SkillPreferencesResponse])
+@serialized_skill_catalog
 async def update_skill_preferences(
     request: UpdateSkillPreferencesRequest,
     current_user: User = Depends(get_current_user),
@@ -266,6 +284,71 @@ async def update_skill_preferences(
     )
 
 
+@router.get("/drafts/{draft_id}", response_model=APIResponse[SkillCreationView])
+async def get_skill_draft(
+    draft_id: str, current_user: User = Depends(get_current_user),
+    service: SkillDraftService = Depends(get_skill_draft_service),
+) -> APIResponse[SkillCreationView]:
+    return APIResponse.success((await service.get(current_user.id, draft_id)).public_view())
+
+
+@router.post("/drafts/{draft_id}/install", response_model=APIResponse[SkillCreationView])
+async def install_skill_draft(
+    draft_id: str, current_user: User = Depends(get_current_user),
+    service: SkillDraftService = Depends(get_skill_draft_service),
+) -> APIResponse[SkillCreationView]:
+    draft = await service.install(current_user.id, draft_id, _registry(current_user.id))
+    return APIResponse.success(draft.public_view())
+
+
+@router.get("/drafts/{draft_id}/resource", response_model=APIResponse[SkillFileContent])
+async def preview_skill_draft_resource(
+    draft_id: str, path: str, response: Response,
+    current_user: User = Depends(get_current_user),
+    service: SkillDraftService = Depends(get_skill_draft_service),
+) -> APIResponse[SkillFileContent]:
+    content = await service.read_resource(current_user.id, draft_id, path)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return APIResponse.success(SkillFileContent(path=path, content=content))
+
+
+@router.get("/drafts/{draft_id}/download")
+async def download_skill_draft(
+    draft_id: str, current_user: User = Depends(get_current_user),
+    service: SkillDraftService = Depends(get_skill_draft_service),
+) -> Response:
+    payload, draft = await service.download(current_user.id, draft_id)
+    # Names are synthesized slug identifiers; no storage key or ownership
+    # metadata is included in the original portable ZIP.
+    return Response(payload, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{draft.name}.zip"',
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+    })
+
+
+@router.delete("/{skill_id}", response_model=APIResponse[dict])
+async def delete_personal_skill(
+    skill_id: str,
+    current_user: User = Depends(get_current_user),
+    service: SkillDeletionService = Depends(get_skill_deletion_service),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> APIResponse[dict]:
+    skill = await service.delete(current_user.id, skill_id, _registry(current_user.id))
+    try:
+        await audit_service.record(
+            actor_user_id=current_user.id, action="skill.delete", resource_type="skill",
+            resource_id=skill.id, workspace_id=skill.workspace_id,
+            risk_level=AuditRiskLevel.MEDIUM,
+            metadata={"name": skill.name, "scope": skill.scope},
+        )
+    except Exception:
+        # Deletion already committed. A failing audit sink must not tell the
+        # client that the skill still exists or encourage a destructive retry.
+        logger.exception("Audit recording failed after owned skill deletion: %s", skill.id)
+    return APIResponse.success({})
+
+
 @router.get("/{name}", response_model=APIResponse[SkillDetailResponse])
 async def get_skill_detail(
     name: str,
@@ -289,6 +372,7 @@ async def get_skill_detail(
 
 
 @router.put("/{name}/files", response_model=APIResponse[SkillDetailResponse])
+@serialized_skill_catalog
 async def update_skill_file(
     name: str,
     request: UpdateSkillFileRequest,
@@ -335,6 +419,7 @@ async def update_skill_file(
 
 
 @router.patch("/{skill_id}/scope", response_model=APIResponse[SkillResponse])
+@serialized_skill_catalog
 async def update_skill_scope(
     skill_id: str,
     request: UpdateSkillScopeRequest,
@@ -443,28 +528,37 @@ async def create_skill_from_session(
 ) -> APIResponse[CreateSkillResponse]:
     session_repository = MongoSessionRepository()
     registry = _registry(current_user.id)
-    await permission_service.default_workspace_id(current_user)
+    workspace_id = await permission_service.default_workspace_id(current_user)
+    creation_call_id = "skill-creator-" + uuid4().hex
+    async def progress_sink(progress):
+        # REST authoring has no chat turn; audit it without inserting progress
+        # into the source analysis history or changing its evidence identity.
+        await record_creation_audit(audit_service, owner_id=current_user.id,
+            session_id=request.session_id, call_id=creation_call_id, progress=progress)
+    recorder = SkillCreationProgressRecorder(progress_sink)
     try:
-        skill = await create_session_skill(
+        draft = await recorder.run(lambda on_progress: create_session_skill(
             session_id=request.session_id,
             user_id=current_user.id,
             session_repository=session_repository,
             registry=registry,
-        )
-    except ValueError as exc:
-        if str(exc) == "Session not found":
-            raise HTTPException(status_code=404, detail="Session not found") from exc
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not skill:
+            on_progress=on_progress,
+        ))
+    except SkillCreationError as exc:
+        # Preserve the API's string error contract; diagnostics come from the
+        # fixed catalogue, never a model/provider exception or source content.
+        status = 404 if exc.code in {"session_unavailable", "identity_mismatch"} else 400
+        raise HTTPException(status_code=status, detail=exc.public_message) from exc
+    if not draft:
         raise HTTPException(status_code=404, detail="Session not found")
     await audit_service.record(
         actor_user_id=current_user.id,
         action="skill.create_from_session",
-        resource_type="skill",
-        resource_id=skill.id,
-        workspace_id=skill.workspace_id,
+        resource_type="skill_draft",
+        resource_id=draft.id,
+        workspace_id=workspace_id,
         session_id=request.session_id,
         risk_level=AuditRiskLevel.MEDIUM,
-        metadata={"name": skill.name, "scope": skill.scope},
+        metadata={"name": draft.name, "installed": False},
     )
-    return APIResponse.success(CreateSkillResponse(skill=_skill_response(skill, current_user)))
+    return APIResponse.success(CreateSkillResponse(draft=draft.public_view()))

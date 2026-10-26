@@ -3,7 +3,7 @@
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div>
         <h2 class="section-title">任务管理</h2>
-        <p class="section-description">查看所有用户的数据分析任务及完整回放。</p>
+        <p class="section-description">查看任务运行状态。只有获得内容访问权限的任务可查看分析回放。</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <input v-model="query" class="filter-field" placeholder="搜索任务、用户、标题" @keydown.enter="search" />
@@ -25,14 +25,14 @@
         <thead><tr><th>任务</th><th>任务 ID</th><th>用户</th><th>状态</th><th>Sandbox</th><th>最近消息</th><th>更新时间</th><th class="text-right">操作</th></tr></thead>
         <tbody>
           <tr v-for="task in tasks" :key="task.session_id">
-            <td><div class="font-medium text-[var(--text-primary)]">{{ task.title || '未命名任务' }}</div></td>
+            <td><div class="font-medium text-[var(--text-primary)]">{{ task.can_replay ? task.title || '未命名任务' : '私人分析内容' }}</div></td>
             <td><div>{{ task.session_id }}</div><div class="text-[11px] text-[var(--text-tertiary)]">{{ task.task_id || '-' }}</div></td>
             <td><div>{{ task.user_fullname || '未知用户' }}</div><div class="text-[11px] text-[var(--text-tertiary)]">{{ task.user_id }}</div></td>
             <td><span class="status-chip">{{ task.status }}</span></td>
             <td>{{ task.sandbox_id || '-' }}</td>
             <td class="max-w-[300px] truncate">{{ task.latest_message || '-' }}</td>
             <td>{{ formatTime(task.updated_at) }}</td>
-            <td class="text-right"><button class="secondary-action compact" @click="openReplay(task.session_id)">查看</button></td>
+            <td class="text-right"><button v-if="task.can_replay" class="secondary-action compact" @click="openReplay(task)">查看</button><span v-else class="text-[var(--text-tertiary)]">未获内容授权</span></td>
           </tr>
           <tr v-if="!tasks.length"><td colspan="8" class="empty-state">暂无任务</td></tr>
         </tbody>
@@ -79,7 +79,9 @@ async function load() {
 }
 function search() { page.value = 1; void load(); }
 function changePage(value: number) { page.value = value; void load(); }
-function openReplay(sessionId: string) { void router.push(`/chat/admin/tasks/${encodeURIComponent(sessionId)}/replay`); }
+function openReplay(task: AdminTaskInfo) {
+  if (task.can_replay) void router.push(`/chat/admin/tasks/${encodeURIComponent(task.session_id)}/replay`);
+}
 function formatTime(value: string) { return value ? new Date(value).toLocaleString('zh-CN') : '-'; }
 
 onMounted(load);

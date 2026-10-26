@@ -1,125 +1,125 @@
-import { computed, ref } from 'vue'
-import type {
-  User,
-  LoginRequest,
-  RegisterRequest,
-  LoginResponse,
-  RegisterResponse
-} from '../api/auth'
+import { computed, ref, watch } from 'vue'
+import * as authApi from '../api/auth'
+import type { User, LoginRequest, RegisterRequest } from '../api/auth'
+import { BASE_URL } from '../api/client'
+import { refreshAccessToken } from '../utils/authTokens'
+import { clearPendingChats } from './usePendingChat'
+import { clearPendingLibraryFiles } from './useDataSelection'
+import { analysisDraftStore } from '../utils/analysisDrafts'
+import { eventBus } from '../utils/eventBus'
 
-const SYSTEM_USER: User = {
-  id: 'anonymous',
-  fullname: 'DataLab',
-  email: 'system@localhost',
-  role: 'admin',
-  is_active: true,
-  registration_status: 'approved',
-  created_at: '1970-01-01T00:00:00.000Z',
-  updated_at: '1970-01-01T00:00:00.000Z',
-}
-
-// Remove credentials left by older authenticated deployments. The API client
-// also strips these headers, so they can never be sent to platform endpoints.
-if (typeof window !== 'undefined') {
-  window.localStorage.removeItem('access_token')
-  window.localStorage.removeItem('refresh_token')
-}
-
-// Keep the former composable contract for pages that display actor/role data.
-// Authentication itself is permanently satisfied by the single system actor.
-const currentUser = ref<User>(SYSTEM_USER)
-const isAuthenticated = ref(true)
+const currentUser = ref<User | null>(null)
+watch(() => currentUser.value?.id ?? null, owner => analysisDraftStore.setOwner(owner), { flush: 'sync' })
 const isLoading = ref(false)
 const authError = ref<string | null>(null)
+let initialized = false
+let initializing: Promise<void> | null = null
+let identityRevision = 0
+
+function clearIdentityState() {
+  identityRevision += 1
+  authApi.clearAuthToken()
+  currentUser.value = null
+  initialized = false
+  authError.value = null
+  clearPendingChats()
+  clearPendingLibraryFiles()
+  analysisDraftStore.clear()
+  eventBus.emit('auth:cleared')
+}
+
+function clearAuth() {
+  authApi.clearStoredTokens()
+  clearIdentityState()
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('datalab:auth-expired', clearAuth)
+  window.addEventListener('storage', (event) => {
+    if (event.key === 'refresh_token' && event.oldValue !== event.newValue) {
+      // Other tabs must discard all cached content before displaying a new identity.
+      clearIdentityState()
+      window.location.reload()
+    }
+  })
+}
 
 export function useAuth() {
-  const initAuth = async () => {
-    currentUser.value = SYSTEM_USER
-    isAuthenticated.value = true
-    authError.value = null
-  }
-
   const loadCurrentUser = async () => {
-    await initAuth()
+    const revision = identityRevision
+    const token = authApi.getStoredRefreshToken() || authApi.getStoredToken()
+    const user = await authApi.getCurrentUser()
+    if (revision === identityRevision && token === (authApi.getStoredRefreshToken() || authApi.getStoredToken())) currentUser.value = user
   }
-
-  // Legacy actions are local no-ops. Login UI is no longer routable, but these
-  // signatures keep dormant components type-safe until they are removed.
-  const login = async (_credentials: LoginRequest): Promise<LoginResponse> => {
-    await initAuth()
-    return {
-      user: SYSTEM_USER,
-      access_token: '',
-      refresh_token: '',
-      token_type: 'none',
+  const initAuth = async () => {
+    if (initialized) return
+    if (initializing) return initializing
+    const revision = identityRevision
+    const operation = (async () => {
+      try {
+        if (authApi.getStoredToken() || authApi.getStoredRefreshToken()) {
+          // Restore fresh credentials before asking the server for this identity.
+          const { ensureAccessToken } = await import('../utils/authTokens')
+          if (await ensureAccessToken(BASE_URL)) await loadCurrentUser()
+        }
+      } catch {
+        if (revision === identityRevision) clearAuth()
+      } finally {
+        if (revision === identityRevision) initialized = true
+      }
+    })()
+    initializing = operation
+    try { await operation }
+    finally { if (initializing === operation) initializing = null }
+  }
+  const login = async (credentials: LoginRequest) => {
+    const revision = ++identityRevision
+    isLoading.value = true
+    authError.value = null
+    try {
+      const result = await authApi.login(credentials)
+      if (revision !== identityRevision) throw new Error('账号已切换，请重新登录。')
+      clearAuth()
+      authApi.storeToken(result.access_token)
+      authApi.storeRefreshToken(result.refresh_token)
+      currentUser.value = result.user
+      initialized = true
+      return result
+    } catch (error) {
+      if (revision === identityRevision) authError.value = error instanceof Error ? error.message : '登录失败'
+      throw error
+    } finally { isLoading.value = false }
+  }
+  const register = async (data: RegisterRequest) => {
+    isLoading.value = true
+    authError.value = null
+    try { return await authApi.register(data) }
+    catch (error) {
+      authError.value = error instanceof Error ? error.message : '注册失败'
+      throw error
+    } finally { isLoading.value = false }
+  }
+  const logout = async (_silent = false) => {
+    const revision = ++identityRevision
+    try { await authApi.logout() }
+    finally {
+      if (revision === identityRevision) {
+        clearAuth()
+        // Destroy mounted chat/preview state as well as the shared composables.
+        window.location.assign('/login')
+      }
     }
   }
-
-  const register = async (_data: RegisterRequest): Promise<RegisterResponse> => {
-    return {
-      user: SYSTEM_USER,
-      verification_required: false,
-      message: 'Authentication is disabled',
-    }
-  }
-
-  const logout = async (_silent: boolean = false) => {
-    await initAuth()
-  }
-
-  const clearAuth = () => {
-    currentUser.value = SYSTEM_USER
-    isAuthenticated.value = true
-    isLoading.value = false
-    authError.value = null
-  }
-
-  const refreshAuthToken = async (): Promise<boolean> => {
-    return true
-  }
-
-  /**
-   * Check if user has specific role
-   */
-  const hasRole = (role: string): boolean => {
-    return currentUser.value?.role === role
-  }
-
-  /**
-   * Check if user is admin
-   */
-  const isAdmin = computed(() => hasRole('admin'))
-
-  /**
-   * Check if user account is active
-   */
-  const isActive = computed(() => currentUser.value?.is_active === true)
-
-  /**
-   * Clear authentication error
-   */
-  const clearError = () => {
-    authError.value = null
-  }
-
+  const hasRole = (role: string) => currentUser.value?.role === role
   return {
-    // State
     currentUser: computed(() => currentUser.value),
-    isAuthenticated: computed(() => isAuthenticated.value),
+    isAuthenticated: computed(() => currentUser.value !== null),
     isLoading: computed(() => isLoading.value),
     authError: computed(() => authError.value),
-    isAdmin,
-    isActive,
-    
-    // Actions
-    login,
-    register,
-    logout,
-    initAuth,
-    loadCurrentUser,
-    refreshAuthToken,
-    hasRole,
-    clearError,
-    clearAuth
+    isAdmin: computed(() => hasRole('admin')),
+    isActive: computed(() => currentUser.value?.is_active === true),
+    login, register, logout, initAuth, loadCurrentUser,
+    refreshAuthToken: async () => Boolean(await refreshAccessToken(BASE_URL)),
+    hasRole, clearError: () => { authError.value = null }, clearAuth,
   }
-} 
+}

@@ -210,21 +210,15 @@ def _front_controller_identity(
         metadata.get("prompt_version") or FRONT_CONTROLLER_PROMPT_VERSION
     )
     overrides = llm_overrides if isinstance(llm_overrides, dict) else {}
-    configured_max_tokens = overrides.get("max_tokens")
-    effective_max_tokens = (
-        min(configured_max_tokens, 1000)
-        if isinstance(configured_max_tokens, int) and not isinstance(configured_max_tokens, bool)
-        else 1000
-    )
+    # Legacy profile token budgets do not alter the execution policy.
+    effective_max_tokens = None
     prompt_digest = _text_sha256(DECISION_PROMPT)
     configuration = {
         "provider": provider,
         "model": model,
         "temperature": 0,
         "max_tokens": effective_max_tokens,
-        "timeout_seconds": _safe_number(
-            get_settings().dataset_request_resolver_timeout_seconds
-        ),
+        "timeout_seconds": None,
         "prompt_version": prompt_version,
         "prompt_digest": prompt_digest,
     }

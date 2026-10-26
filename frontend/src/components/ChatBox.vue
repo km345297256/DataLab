@@ -1,10 +1,23 @@
 <template>
-    <div ref="composerRef" class="pb-3 relative bg-[var(--background-gray-main)]">
+    <div ref="composerRef" class="chat-composer pb-3 relative">
         <div
-            class="relative flex flex-col bg-[var(--fill-input-chat)] shadow-[0px_12px_32px_0px_rgba(0,0,0,0.02)] transition-all border border-black/8 dark:border-[var(--border-main)]"
+            class="chat-composer-surface relative flex flex-col bg-[var(--fill-input-chat)] border border-[var(--border-btn-main)] transition-colors"
             :class="compactComposer
                 ? 'min-h-[56px] max-h-[70vh] gap-1 rounded-[18px] py-2'
-                : 'max-h-[70vh] gap-3 rounded-[22px] py-3'">
+                : 'max-h-[70vh] gap-2.5 rounded-[16px] py-3'">
+            <button v-if="collapseContext && hasContext" type="button" class="chat-context-toggle" :aria-expanded="contextVisible" @click="contextExpanded = !contextExpanded">
+                <Paperclip :size="13" /><span class="truncate">{{ contextSummary }}</span><ChevronDown :size="13" :class="{ 'rotate-180': contextVisible }" />
+            </button>
+            <div v-show="(!collapseContext && (showLibraryActions || hasContext)) || contextVisible" class="chat-context" :class="{ 'chat-context--collapsible': collapseContext }">
+            <div v-if="showLibraryActions" class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[11px] text-[var(--text-tertiary)]">
+                <span>{{ isRunning ? '下一轮数据草稿' : '本轮使用的数据' }} · {{ readyFiles.length }} 个文件</span>
+                <button v-if="readyFiles.length" type="button" class="hover:underline disabled:opacity-50" :disabled="disabled" @click="saveLibraryOpen = true">保存到我的数据</button>
+            </div>
+            <p v-if="showLibraryActions && attachments.length > 32" role="alert" class="px-4 text-xs text-red-600">每轮最多使用 32 个文件，请移除部分文件后发送。</p>
+            <div v-if="dataDiscovery" class="flex items-center gap-2 px-4 text-xs text-[#2b7659]">
+                <Search :size="13" /><span class="min-w-0 flex-1 truncate">{{ discoveryTarget ? `细化查找：${discoveryTarget}` : '查找开放数据' }} · {{ selectedConnectors.length ? `按所选 ${selectedConnectors.length} 个来源查找` : '系统自动选择相关来源' }}</span>
+                <button type="button" :disabled="disabled" aria-label="退出查找模式" @click="emit('update:dataDiscovery', false)"><X :size="13" /></button>
+            </div>
             <ChatBoxFiles v-if="showFileActions || attachments.length" ref="chatBoxFileListRef" :attachments="attachments" />
             <div v-if="showConnectorActions && selectedConnectors.length" class="flex flex-wrap gap-1.5 px-4">
                 <div v-for="id in selectedConnectors" :key="id" class="inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--border-main)] px-2 py-1.5 text-xs">
@@ -29,12 +42,14 @@
                     </button>
                 </div>
             </div>
+            </div>
+            <div class="chat-box-entry" :class="{ 'chat-box-entry--compact': compactComposer }">
             <div
-                class="overflow-y-auto"
-                :class="compactComposer ? 'min-h-10 pl-[52px] pr-[52px]' : 'pl-4 pr-2'">
+                class="chat-box-editor min-w-0 overflow-y-auto"
+                :class="compactComposer ? 'min-h-10' : 'pl-4 pr-2'">
                 <textarea
                     ref="textareaRef"
-                    class="flex w-full flex-1 rounded-md border-0 border-input bg-transparent p-0 pt-[1px] text-[15px] shadow-none placeholder:text-[var(--text-disable)] focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="chat-message-input flex w-full flex-1 rounded-md border-0 border-input bg-transparent p-0 pt-[1px] text-sm leading-6 shadow-none placeholder:text-[var(--text-disable)] focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50"
                     :class="compactComposer
                         ? '!h-10 !min-h-10 !max-h-10 !resize-none !overflow-y-auto !py-[9px] leading-5'
                         : 'min-h-[46px] max-h-[55vh] resize-y overflow-y-auto'"
@@ -43,12 +58,8 @@
                     @input="handleInput"
                     @keydown="handleKeydown" :placeholder="placeholder || t('Give DataLab a task to work on...')"></textarea>
             </div>
-            <footer
-                class="flex w-full flex-row justify-between px-2 sm:px-3"
-                :class="compactComposer ? 'pointer-events-none absolute inset-x-0 bottom-2 sm:bottom-3' : ''">
-                <div
-                    class="flex items-center gap-1 pr-1 sm:gap-2 sm:pr-2"
-                    :class="compactComposer ? 'pointer-events-auto' : ''">
+            <footer class="chat-box-footer flex w-full flex-row justify-between px-2 sm:px-3">
+                <div class="chat-box-actions-start flex items-center gap-1 sm:gap-2">
                     <div ref="actionMenuRef" class="relative">
                         <button
                             type="button"
@@ -73,14 +84,9 @@
                                 :class="skillMenuPlacement === 'down' ? 'top-full mt-2' : 'bottom-full mb-2'"
                                 role="menu"
                             >
-                                <button v-if="showConnectorActions" type="button" class="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] hover:bg-[var(--fill-tsp-white-light)]" role="menuitem" :disabled="disabled || isRunning" @click="openConnectorPicker"><PlugZap :size="15" />数据连接器</button>
                                 <button v-if="showFileActions" type="button" class="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[var(--text-primary)] hover:bg-[var(--fill-tsp-white-light)]" role="menuitem" @click="handleUploadFileAction">
                                     <Paperclip :size="15" class="shrink-0" />
                                     <span class="truncate">{{ t('Upload file') }}</span>
-                                </button>
-                                <button v-if="showFileActions" type="button" class="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[var(--text-primary)] hover:bg-[var(--fill-tsp-white-light)]" role="menuitem" @click="handleUploadLargeFileAction">
-                                    <UploadCloud :size="15" class="shrink-0" />
-                                    <span class="truncate">{{ t('Large file upload') }}</span>
                                 </button>
                                 <button
                                     type="button"
@@ -105,7 +111,7 @@
                                 role="menu"
                                 :aria-label="t('Available skills')"
                             >
-                                <div class="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--border-main)] px-2.5">
+                                <div class="control-shell flex h-10 shrink-0 items-center gap-2 border-b border-[var(--border-main)] px-2.5">
                                     <Search :size="14" class="shrink-0 text-[var(--icon-tertiary)]" />
                                     <input
                                         ref="actionSkillSearchInputRef"
@@ -157,8 +163,9 @@
                     </div>
                     <button v-if="showConnectorActions" type="button" @click="openConnectorPicker"
                         class="inline-flex h-8 items-center gap-1.5 rounded-full border border-[var(--border-main)] px-3 text-xs text-[var(--text-secondary)] hover:bg-[var(--fill-tsp-gray-main)]"
-                        :disabled="disabled || isRunning" :aria-expanded="connectorPickerOpen" aria-haspopup="dialog">
-                        <PlugZap :size="14" />数据连接器
+                        :class="{ 'chat-connector-action--compact': compactComposer && collapseContext }"
+                        :disabled="disabled || isRunning" aria-haspopup="dialog" :aria-expanded="connectorPickerOpen" :aria-label="`连接器${selectedConnectors.length ? ` ${selectedConnectors.length}` : ''}`" title="选择数据连接器">
+                        <PlugZap :size="14" /><span :class="{ 'sr-only': compactComposer && collapseContext }">连接器</span><span v-if="selectedConnectors.length" :class="{ 'chat-connector-count': compactComposer && collapseContext }">{{ selectedConnectors.length }}</span>
                     </button>
                     <button v-if="showMcpActions" @click="mcpDialogOpen = true"
                         class="relative rounded-full border border-[var(--border-main)] inline-flex items-center justify-center gap-1 clickable cursor-pointer text-xs text-[var(--text-secondary)] hover:bg-[var(--fill-tsp-gray-main)] w-10 h-10 sm:w-8 sm:h-8 p-0 data-[popover-trigger]:bg-[var(--fill-tsp-gray-main)] shrink-0"
@@ -172,7 +179,7 @@
                         </span>
                     </button>
                 </div>
-                <div class="flex gap-2" :class="compactComposer ? 'pointer-events-auto' : ''">
+                <div class="chat-box-actions-end flex gap-2">
                     <button v-if="!isRunning || sendEnabled || hideStopButton"
                         type="button"
                         class="whitespace-nowrap text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 text-primary-foreground hover:bg-primary/90 p-0 w-10 h-10 sm:w-8 sm:h-8 rounded-full flex items-center justify-center transition-colors hover:opacity-90"
@@ -191,16 +198,22 @@
                     </button>
                 </div>
             </footer>
+            </div>
         </div>
         <DataConnectorPicker v-if="showConnectorActions" v-model:open="connectorPickerOpen" v-model:selected="selectedConnectors" :disabled="disabled || isRunning" @catalog="connectorCatalog = $event" />
         <SkillDialog v-model:open="skillDialogOpen" v-model:selected-skills="selectedSkills" />
         <MCPDialog v-if="showMcpActions" v-model:open="mcpDialogOpen" v-model:selected-servers="selectedMcpServers" />
+        <DataLibraryPicker v-if="showLibraryActions" :exclude-file-ids="readyFiles.map(file => file.file_id)" :visible="libraryPickerOpen" @close="libraryPickerOpen = false" @select="addLibraryFiles" />
+        <SaveToLibraryDialog v-if="showLibraryActions" :visible="saveLibraryOpen" :files="readyFiles" :session-id="sessionId" @close="saveLibraryOpen = false" @saved="saveLibraryOpen = false" />
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import DataConnectorPicker from './DataConnectorPicker.vue';
+import DataLibraryPicker from './DataLibraryPicker.vue';
+import SaveToLibraryDialog from './SaveToLibraryDialog.vue';
+import { readyExplorationFiles, mergeExplorationFiles } from '../utils/explorationFiles';
 import { listDataConnectors, type DataConnector } from '@/api/dataConnector';
 import SendIcon from './icons/SendIcon.vue';
 import { useI18n } from 'vue-i18n';
@@ -209,7 +222,7 @@ import SkillDialog from './SkillDialog.vue';
 import { skillLabel } from '@/utils/skillLabel';
 import { filterSkillCatalog, skillCategory, skillCategories } from '@/utils/skillCatalog';
 import MCPDialog from './MCPDialog.vue';
-import { Check, ChevronRight, CirclePlus, Paperclip, PlugZap, Plus, Puzzle, Search, Settings2, UploadCloud, X } from 'lucide-vue-next';
+import { Check, ChevronDown, ChevronRight, CirclePlus, Paperclip, PlugZap, Plus, Puzzle, Search, Settings2, X } from 'lucide-vue-next';
 import type { FileInfo } from '../api/file';
 import { getSkillPreferences, listSkills, listSkillCatalog, type SkillInfo } from '../api/skill';
 import { showErrorToast } from '../utils/toast';
@@ -222,6 +235,26 @@ const { openSettingsDialog } = useSettingsDialog();
 const hasTextInput = ref(false);
 const chatBoxFileListRef = ref();
 const skillDialogOpen = ref(false);
+const libraryPickerOpen = ref(false);
+const saveLibraryOpen = ref(false);
+const readyFiles = computed(() => readyExplorationFiles(props.attachments));
+const contextExpanded = ref(false);
+const hasUploadActivity = computed(() => props.attachments.some(file => ['uploading', 'failed'].includes((file as FileInfo & { status?: string }).status ?? '')));
+const hasContext = computed(() => Boolean(props.attachments.length || selectedConnectors.value.length || visibleSelectedSkills.value.length || props.dataDiscovery));
+const contextVisible = computed(() => hasContext.value && (contextExpanded.value || hasUploadActivity.value || props.attachments.length > 32));
+const contextSummary = computed(() => [
+    props.dataDiscovery ? '查找开放数据' : '',
+    props.attachments.length ? `${props.isRunning ? '下轮数据' : '数据'} ${props.attachments.length}` : '',
+    hasUploadActivity.value ? '上传状态' : '',
+    selectedConnectors.value.length ? `连接器 ${selectedConnectors.value.length}` : '',
+    visibleSelectedSkills.value.length ? `技能 ${visibleSelectedSkills.value.length}` : '',
+].filter(Boolean).join(' · '));
+const addLibraryFiles = (files: FileInfo[]) => {
+    const merged = mergeExplorationFiles(props.attachments, files);
+    if (merged.length > 32) { showErrorToast('每轮最多使用 32 个文件，请先移除部分文件。'); return; }
+    props.attachments.splice(0, props.attachments.length, ...merged);
+    libraryPickerOpen.value = false;
+};
 const connectorPickerOpen = ref(false);
 const connectorCatalog = ref<DataConnector[]>([]);
 const selectedConnectors = computed({ get: () => props.selectedConnectors ?? [], set: value => emit('update:selectedConnectors', value) });
@@ -251,6 +284,10 @@ const props = withDefaults(defineProps<{
     selectedMcpServers?: string[];
     selectedConnectors?: string[];
     showConnectorActions?: boolean;
+    dataDiscovery?: boolean;
+    discoveryTarget?: string;
+    showLibraryActions?: boolean;
+    sessionId?: string;
     skillMenuPlacement?: 'up' | 'down';
     hideStopButton?: boolean;
     allowSendFilesOnly?: boolean;
@@ -260,13 +297,17 @@ const props = withDefaults(defineProps<{
     disabled?: boolean;
     submitOnEnter?: boolean;
     compactComposer?: boolean;
+    collapseContext?: boolean;
 }>(), {
     showConnectorActions: false,
+    dataDiscovery: false,
+    showLibraryActions: false,
     showFileActions: true,
     showMcpActions: true,
     disabled: false,
     submitOnEnter: false,
     compactComposer: false,
+    collapseContext: false,
 });
 
 const emit = defineEmits<{
@@ -274,6 +315,7 @@ const emit = defineEmits<{
     (e: 'update:selectedSkills', value: string[]): void;
     (e: 'update:selectedMcpServers', value: string[]): void;
     (e: 'update:selectedConnectors', value: string[]): void;
+    (e: 'update:dataDiscovery', value: boolean): void;
     (e: 'submit'): void;
     (e: 'stop'): void;
 }>();
@@ -291,15 +333,17 @@ const selectedMcpServers = computed({
 const visibleSelectedSkills = computed(() => selectedSkills.value.filter(
     (name) => !autoEnabledSkillNames.value.has(name.trim().toLowerCase()),
 ));
+watch(hasContext, present => { if (!present) contextExpanded.value = false; });
 
 const sendEnabled = computed(() => {
-    if (props.disabled) return false;
+    if (props.disabled || (props.isRunning && !props.dataDiscovery) || (props.showLibraryActions && props.attachments.length > 32)) return false;
     const hasFiles = (props.attachments?.length ?? 0) > 0;
     const allUploaded = chatBoxFileListRef.value?.isAllUploaded ?? true;
+    if (hasFiles && !allUploaded) return false;
     if (props.allowSendFilesOnly) {
-        return hasTextInput.value || (hasFiles && allUploaded);
+        return hasTextInput.value || hasFiles;
     }
-    return hasTextInput.value && (!hasFiles || allUploaded);
+    return hasTextInput.value;
 });
 
 const actionFilteredSkills = computed(() => {
@@ -320,19 +364,32 @@ const handleSkillPreferencesUpdated = (payload: unknown) => {
     }
 };
 
+let skillCatalogRevision = 0;
 const loadSkillLabels = async () => {
-    try { labelSkills.value = await listSkillCatalog(); } catch { labelSkills.value = []; }
+    const revision = skillCatalogRevision;
+    try { const skills = await listSkillCatalog(); if (revision === skillCatalogRevision) labelSkills.value = skills; }
+    catch { if (revision === skillCatalogRevision) labelSkills.value = []; }
 };
 
-const handleSkillCatalogUpdated = () => {
+const handleSkillCatalogUpdated = (payload: unknown) => {
+    skillCatalogRevision += 1;
+    if (payload && typeof payload === 'object' && 'deletedSkillName' in payload && typeof payload.deletedSkillName === 'string') {
+        const name = payload.deletedSkillName;
+        selectedSkills.value = selectedSkills.value.filter(item => item !== name);
+        availableSkills.value = availableSkills.value.filter(item => item.name !== name);
+        autoEnabledSkillNames.value.delete(name.trim().toLowerCase());
+    }
     void loadSkillLabels();
+    void loadAutoEnabledSkills();
     skillsLoaded.value = false;
     if (actionSkillMenuOpen.value) void loadAvailableSkills();
 };
 
 const loadAutoEnabledSkills = async () => {
+    const revision = skillCatalogRevision;
     try {
-        setAutoEnabledSkills(await getSkillPreferences());
+        const preferences = await getSkillPreferences();
+        if (revision === skillCatalogRevision) setAutoEnabledSkills(preferences);
     } catch (error) {
         console.error('Failed to load automatic skill preferences:', error);
     }
@@ -340,18 +397,22 @@ const loadAutoEnabledSkills = async () => {
 
 const loadAvailableSkills = async () => {
     if (skillsLoaded.value || skillsLoading.value) return;
+    const revision = skillCatalogRevision;
     skillsLoading.value = true;
     try {
         const [skills, preferences] = await Promise.all([listSkills(), getSkillPreferences()]);
+        if (revision !== skillCatalogRevision) return;
         availableSkills.value = skills;
         setAutoEnabledSkills(preferences);
         skillsLoaded.value = true;
     } catch (error) {
+        if (revision !== skillCatalogRevision) return;
         console.error('Failed to load skills:', error);
         showErrorToast(t('Failed to load skills'));
         actionSkillMenuOpen.value = false;
     } finally {
         skillsLoading.value = false;
+        if (revision !== skillCatalogRevision && actionSkillMenuOpen.value) void loadAvailableSkills();
     }
 };
 
@@ -446,25 +507,15 @@ const uploadFile = () => {
     chatBoxFileListRef.value?.uploadFile();
 };
 
-const uploadLargeFile = () => {
-    chatBoxFileListRef.value?.uploadLargeFile();
-};
-
 const handleUploadFileAction = () => {
     actionMenuOpen.value = false;
     closeActionSkillMenu();
     uploadFile();
 };
 
-const handleUploadLargeFileAction = () => {
-    actionMenuOpen.value = false;
-    closeActionSkillMenu();
-    uploadLargeFile();
-};
-
 watch(() => props.modelValue, (value) => {
     hasTextInput.value = value.trim() !== '';
-});
+}, { immediate: true });
 
 watch(skillDialogOpen, (isOpen, wasOpen) => {
     if (!isOpen && wasOpen) skillsLoaded.value = false;
@@ -505,4 +556,26 @@ onUnmounted(() => {
     eventBus.off(EVENT_SKILL_CATALOG_UPDATED, handleSkillCatalogUpdated);
     eventBus.off(EVENT_SKILL_PREFERENCES_UPDATED, handleSkillPreferencesUpdated);
 });
+defineExpose({ uploadFile, openConnectorPicker, openLibraryPicker: () => { libraryPickerOpen.value = true; }, focus: () => textareaRef.value?.focus() });
 </script>
+
+<style scoped>
+.chat-context { display: flex; min-height: 0; flex-direction: column; gap: 10px; }
+.chat-context--collapsible { max-height: min(180px, 25dvh); overflow-y: auto; overscroll-behavior: contain; padding: 4px 0 8px; }
+.chat-context-toggle { display: flex; align-items: center; align-self: flex-start; min-width: 0; max-width: calc(100% - 24px); gap: 6px; margin: 0 12px; padding: 2px 4px; color: var(--text-tertiary); font-size: 11px; line-height: 20px; border-radius: 5px; }
+.chat-context-toggle:hover { color: var(--text-primary); background: var(--fill-tsp-gray-main); }
+.chat-context-toggle svg { flex: none; }
+.chat-connector-action--compact { position: relative; justify-content: center; width: 32px; flex-shrink: 0; padding: 0; }
+.chat-connector-count { position: absolute; top: -5px; right: -5px; min-width: 14px; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 14px; background: var(--fill-tsp-white-dark); color: var(--text-secondary); }
+.chat-box-entry { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+/* Reserve space for every visible action, including DataLab connectors. */
+.chat-box-entry--compact { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 8px; padding: 0 12px; }
+.chat-box-entry--compact > .chat-box-editor { grid-column: 2; grid-row: 1; }
+.chat-box-entry--compact > .chat-box-footer { display: contents; }
+.chat-box-entry--compact .chat-box-actions-start { grid-column: 1; grid-row: 1; }
+.chat-box-entry--compact .chat-box-actions-end { grid-column: 3; grid-row: 1; }
+@media (max-width: 639px) { .chat-box-entry--compact { gap: 6px; padding: 0 8px; } }
+
+.chat-composer-surface { box-shadow: 0 2px 10px rgb(0 0 0 / 1%); }
+.chat-composer-surface:focus-within { border-color: #9bbdad; }
+</style>

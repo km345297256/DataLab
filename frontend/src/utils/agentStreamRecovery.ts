@@ -32,6 +32,8 @@ export function createAgentStreamRecovery(request: ChatRequestBody) {
       message: accepted ? '' : initialBody.message,
       client_message_id: accepted ? undefined : initialBody.client_message_id,
       resume_from: accepted ? undefined : initialBody.resume_from,
+      visualization_contexts: accepted ? undefined : initialBody.visualization_contexts,
+      clarification_id: accepted ? undefined : initialBody.clarification_id,
       event_id: eventId,
       // New clients recover from durable history, even before their first event.
       event_seq: cursor.lastSeq ?? (eventId ? undefined : 0),

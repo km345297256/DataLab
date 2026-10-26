@@ -14,8 +14,8 @@
                   </label>
                 </div>
                 <input v-model="formData.fullname"
-                  class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-1.5 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] w-full"
-                  :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.fullname }" id="fullname"
+                  class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-1.5 pb-1 pl-3 w-full"
+                  :aria-invalid="Boolean(validationErrors.fullname)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.fullname }" id="fullname" autocomplete="name" maxlength="100"
                   :placeholder="t('Enter your full name')" :disabled="isLoading" @input="validateField('fullname')"
                   @blur="validateField('fullname')">
                 <div
@@ -34,8 +34,8 @@
                   </label>
                 </div>
                 <input v-model="formData.email"
-                  class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-1.5 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] w-full"
-                  :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.email }" id="email"
+                  class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pr-1.5 pb-1 pl-3 w-full"
+                  :aria-invalid="Boolean(validationErrors.email)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.email }" id="email" autocomplete="email"
                   placeholder="mail@domain.com" type="email" :disabled="isLoading" @input="validateField('email')"
                   @blur="validateField('email')">
                 <div
@@ -55,9 +55,9 @@
                 </div>
                 <div class="relative w-full">
                   <input v-model="formData.password"
-                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] pr-[40px]"
-                    :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.password }"
-                    :placeholder="t('Enter password')" :type="showPassword ? 'text' : 'password'"
+                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pb-1 pl-3 pr-[40px]"
+                    :aria-invalid="Boolean(validationErrors.password)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.password }"
+                    id="password" autocomplete="new-password" :placeholder="t('Enter password')" :type="showPassword ? 'text' : 'password'"
                     :disabled="isLoading" @input="validateField('password')" @blur="validateField('password')">
                   <div
                     class="text-[var(--icon-tertiary)] absolute z-30 right-[6px] top-[50%] p-[6px] rounded-md transform -translate-y-1/2 cursor-pointer hover:text-[--icon-primary] active:opacity-90 transition-all"
@@ -83,9 +83,9 @@
                 </div>
                 <div class="relative w-full">
                   <input v-model="formData.confirmPassword"
-                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pb-1 pl-3 focus:ring-[1.5px] focus:ring-[var(--border-dark)] pr-[40px]"
-                    :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.confirmPassword }"
-                    :placeholder="t('Enter password again')" :type="showConfirmPassword ? 'text' : 'password'"
+                    class="rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] h-10 w-full disabled:cursor-not-allowed placeholder:text-[var(--text-disable)] bg-[var(--fill-input-chat)] pt-1 pb-1 pl-3 pr-[40px]"
+                    :aria-invalid="Boolean(validationErrors.confirmPassword)" :class="{ 'ring-1 ring-[var(--function-error)]': validationErrors.confirmPassword }"
+                    id="confirmPassword" autocomplete="new-password" :placeholder="t('Enter password again')" :type="showConfirmPassword ? 'text' : 'password'"
                     :disabled="isLoading" @input="validateField('confirmPassword')"
                     @blur="validateField('confirmPassword')">
                   <div
@@ -143,6 +143,7 @@ const { t } = useI18n()
 // Emits
 const emits = defineEmits<{
   switchToLogin: []
+  submitted: [message: string]
 }>()
 
 const { register, isLoading, authError } = useAuth()
@@ -253,17 +254,17 @@ const handleSubmit = async () => {
   }
 
   try {
-    await register({
-      fullname: formData.value.fullname,
-      email: formData.value.email,
+    const result = await register({
+      fullname: formData.value.fullname.trim(),
+      email: formData.value.email.trim(),
       password: formData.value.password
     })
     
-    showSuccessToast(t('Registration submitted. Please wait for administrator approval before logging in.'))
+    const message = t(result.message || 'Registration submitted. Please wait for administrator approval before logging in.')
+    showSuccessToast(message)
     clearForm()
-    emits('switchToLogin')
+    emits('submitted', message)
   } catch (error: any) {
-    console.error('Registration failed:', error)
     // Display error message using toast
     showErrorToast(authError.value || t('Registration failed, please try again'))
   }

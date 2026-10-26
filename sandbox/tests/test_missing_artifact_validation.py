@@ -9,7 +9,7 @@ from app.services import artifact_validation as validation
 
 
 def receipt(path, root, kind="table"):
-    return validation.validate_artifacts([{"path": str(path), "kind": kind}], root=root)["files"][0]
+    return validation.validate_artifacts([{"path": str(path), "kind": kind}], root=root, purpose="content")["files"][0]
 
 
 @pytest.mark.parametrize("name,kind", [

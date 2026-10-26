@@ -54,6 +54,7 @@ const canScroll = () => {
 };
 
 defineExpose({
+    getScrollElement: () => contentWrapperRef.value,
     scrollToBottom,
     scrollToTop,
     isScrolledToBottom,
@@ -117,6 +118,10 @@ defineExpose({
     scrollbar-width: none;
     -ms-overflow-style: none
 }
+
+/* Keep the scroll region keyboard reachable without a page-wide pointer frame. */
+.simplebar-content-wrapper:focus { outline: 0; }
+.simplebar-content-wrapper:focus-visible { box-shadow: inset 0 0 0 1px var(--border-dark, #737373); }
 
 .simplebar-content-wrapper::-webkit-scrollbar,
 .simplebar-hide-scrollbar::-webkit-scrollbar {

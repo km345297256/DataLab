@@ -4,7 +4,7 @@ import copy
 import pytest
 
 from app.application.services.array_window_visualization import (
-    ArrayWindowError, VALUE_SEMANTICS, WARNING, validate_array_window_options,
+    ArrayWindowError, VALUE_SEMANTICS, WARNING, PHYSICAL_SEMANTICS, PHYSICAL_WARNING, RAW_MISSING, PHYSICAL_MISSING, validate_array_window_options,
     validate_array_window_payload,
 )
 
@@ -17,6 +17,7 @@ def fixture(kind="series"):
         "choices": {"variables": [{"id": ID, "label": "signal", "shape": [4], "dtype": "<f8", "chunks": [2], "selectable": True, "reason": ""}]},
         "selected": selected if kind == "series" else {}, "warnings": [WARNING], "sampled": False,
         "metadata": {"format": "h5", "container": "HDF5", "input_mode": "window", "value_semantics": VALUE_SEMANTICS,
+            "units": "", "calendar": "", "missing_value_policy": RAW_MISSING, "coordinate_semantics": "zero-based dimension indices",
             "source_bytes": 1024**3, "read_bytes": 16384, "read_requests": 1, "chunks_touched": 2 if kind == "series" else 0,
             "decoded_chunk_bytes": 32 if kind == "series" else 0, "catalog_truncated": False, "attributes": {}, "nonfinite_values": 1 if kind == "series" else 0,
             "coordinates": "zero-based dimension indices; not geospatial coordinates", "limits": {"max_elements": 16384, "max_chunk_bytes": 4194304, "max_decoded_bytes": 16777216, "max_nodes": 128}}}
@@ -32,6 +33,22 @@ def fixture(kind="series"):
 def test_valid_bound_response(kind):
     value = fixture(kind)
     assert validate_array_window_payload(value, kind=kind, options=value["selected"], fmt="h5", source_bytes=1024**3, read_bytes=16384, read_requests=1) is value
+
+
+def test_physical_mode_binds_semantics_and_accepts_decoded_integer_values():
+    value = fixture()
+    value["selected"]["decode"] = "physical"
+    value["choices"]["variables"][0]["dtype"] = "<i2"
+    value["metadata"].update(value_semantics=PHYSICAL_SEMANTICS, missing_value_policy=PHYSICAL_MISSING,
+                             attributes={"scale_factor": 0.1, "add_offset": -1, "units": "K"}, units="K", decoded_chunk_bytes=8)
+    value["warnings"] = [PHYSICAL_WARNING]
+    value["array"]["values"] = [-0.9, None, 0.2, 0.3]
+    assert validate_array_window_payload(value, options=value["selected"]) is value
+    for mutate in [lambda r: r["selected"].update(decode="raw"), lambda r: r["metadata"].update(units="degC"),
+                   lambda r: r["metadata"].update(missing_value_policy=RAW_MISSING), lambda r: r.update(warnings=[WARNING])]:
+        changed = copy.deepcopy(value); mutate(changed)
+        with pytest.raises(ArrayWindowError):
+            validate_array_window_payload(changed)
 
 
 @pytest.mark.parametrize("bindings", [{"kind": "image"}, {"fmt": "nc"}, {"source_bytes": 1024}, {"read_bytes": 4}, {"read_requests": 2},

@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Body, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
+from typing import Literal
 
 from app.application.services.auth_service import AuthService
+from app.application.services.auth_rate_limit import AuthRateLimiter, get_auth_rate_limiter
 from app.application.services.token_service import TokenService
 from app.application.services.file_service import FileService
 from app.application.services.agent_service import AgentService
@@ -17,10 +19,10 @@ from app.interfaces.schemas.auth import (
     LoginRequest, RegisterRequest, ChangePasswordRequest, ChangeFullnameRequest, RefreshTokenRequest,
     SendVerificationCodeRequest, ResetPasswordRequest,
     LoginResponse, RegisterResponse, AuthStatusResponse, RefreshTokenResponse,
-    UserResponse
+    UserResponse, UserListResponse, UserUpdateRequest
 )
 from app.core.config import get_settings
-from app.domain.models.user import User
+from app.domain.models.user import User, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +97,15 @@ def _build_email_verification_url(token: str) -> str:
 @router.post("/login", response_model=APIResponse[LoginResponse])
 async def login(
     request: LoginRequest,
-    auth_service: AuthService = Depends(get_auth_service)
+    http_request: Request,
+    auth_service: AuthService = Depends(get_auth_service),
+    rate_limiter: AuthRateLimiter = Depends(get_auth_rate_limiter),
 ) -> APIResponse[LoginResponse]:
     """User login endpoint"""
+    await rate_limiter.check("login", request.email, http_request.client.host if http_request.client else "unknown")
     # Authenticate user and get tokens
     auth_result = await auth_service.login_with_tokens(request.email, request.password)
+    await rate_limiter.login_succeeded(request.email)
     
     # Return success response with tokens
     return APIResponse.success(LoginResponse(
@@ -113,9 +119,12 @@ async def login(
 @router.post("/register", response_model=APIResponse[RegisterResponse])
 async def register(
     request: RegisterRequest,
+    http_request: Request,
     auth_service: AuthService = Depends(get_auth_service),
+    rate_limiter: AuthRateLimiter = Depends(get_auth_rate_limiter),
 ) -> APIResponse[RegisterResponse]:
     """Submit a user registration request for administrator review."""
+    await rate_limiter.check("register", request.email, http_request.client.host if http_request.client else "unknown")
     user = await auth_service.register_user(
         fullname=request.fullname,
         password=request.password,
@@ -249,7 +258,7 @@ async def deactivate_user(
     if current_user.id == user_id:
         raise BadRequestError("Cannot deactivate your own account")
     
-    await auth_service.deactivate_user(user_id)
+    await auth_service.deactivate_user(user_id, current_user.id)
     return APIResponse.success({})
 
 
@@ -264,7 +273,7 @@ async def activate_user(
     if current_user.role != "admin":
         raise UnauthorizedError("Admin access required")
     
-    await auth_service.activate_user(user_id)
+    await auth_service.activate_user(user_id, current_user.id)
     return APIResponse.success({})
 
 
@@ -287,14 +296,12 @@ async def refresh_token(
 async def logout(
     current_user: User = Depends(get_current_user),
     bearer_credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
-    auth_service: AuthService = Depends(get_auth_service)
+    auth_service: AuthService = Depends(get_auth_service),
+    refresh: RefreshTokenRequest | None = Body(default=None),
 ) -> APIResponse[dict]:
     """User logout endpoint"""
-    if get_settings().auth_provider == "none":
-        raise BadRequestError("Logout is not allowed")
-    
     # Revoke token
-    await auth_service.logout(bearer_credentials.credentials)
+    await auth_service.logout(bearer_credentials.credentials, refresh.refresh_token if refresh else None)
     
     return APIResponse.success({})
 
@@ -342,3 +349,59 @@ async def reset_password(
     
     return APIResponse.success({})
  
+
+
+@router.get("/registrations", response_model=APIResponse[list[UserResponse]])
+async def list_registrations(
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    if current_user.role != UserRole.ADMIN:
+        raise UnauthorizedError("Admin access required")
+    users = await auth_service.user_repository.list_users(limit=limit, offset=offset)
+    return APIResponse.success([UserResponse.from_user(user) for user in users])
+
+
+@router.get("/users", response_model=APIResponse[UserListResponse])
+async def list_users(
+    query: str | None = Query(default=None, max_length=200),
+    role: UserRole | None = Query(default=None),
+    status: Literal["pending", "approved", "rejected", "active", "inactive"] | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> APIResponse[UserListResponse]:
+    if current_user.role != UserRole.ADMIN:
+        raise UnauthorizedError("Admin access required")
+    users, total = await auth_service.list_users(query=query, role=role, status=status, limit=limit, offset=offset)
+    return APIResponse.success(UserListResponse(users=[UserResponse.from_user(user) for user in users], total=total))
+
+
+@router.patch("/user/{user_id}", response_model=APIResponse[UserResponse])
+async def update_user(
+    user_id: str,
+    request: UserUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> APIResponse[UserResponse]:
+    user = await auth_service.update_account(user_id, current_user.id, role=request.role, is_active=request.is_active)
+    return APIResponse.success(UserResponse.from_user(user))
+
+
+from app.interfaces.schemas.admin import AdminRegistrationDecisionRequest
+
+
+@router.post("/registrations/{user_id}/decision", response_model=APIResponse[UserResponse])
+async def decide_registration(
+    user_id: str,
+    request: AdminRegistrationDecisionRequest,
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    if current_user.role != UserRole.ADMIN:
+        raise UnauthorizedError("Admin access required")
+    user = await auth_service.decide_registration(user_id, request.status, current_user.id, request.decision_note)
+    return APIResponse.success(UserResponse.from_user(user))

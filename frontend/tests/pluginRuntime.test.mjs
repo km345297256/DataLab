@@ -77,30 +77,24 @@ test('plugin runtime API uses the dedicated snapshot and reload endpoints', asyn
 });
 
 
-test('plugins page adds a responsive analysis-tools catalog without replacing legacy tabs', async () => {
+test('the product catalog hides runtime administration without removing runtime APIs', async () => {
   const source = await readFile(new URL('../src/pages/PluginsPage.vue', import.meta.url), 'utf8');
-
-  assert.match(source, /key: 'runtime', label: t\('Analysis Tools'\)/);
-  assert.match(source, /activeTab === 'runtime'/);
-  assert.match(source, /reloadPluginRuntime\(\)/);
-  assert.match(source, /grid-cols-2[^\n]*sm:grid-cols-4/);
-  assert.match(source, /plugin\.errors\.length/);
-  assert.match(source, /runtimeSnapshot\.value\.status === 'error'/);
-  assert.match(source, /runtimeSnapshot\.last_error/);
-  assert.match(source, /pagedRuntimePlugins/);
-  assert.match(source, /runtimeTotalPages/);
   assert.match(source, /activeTab === 'skills'/);
-  assert.match(source, /activeTab === 'mcp'/);
-  assert.match(source, /activeTab === 'renderers'/);
+  assert.match(source, /activeTab === 'connectors'/);
+  assert.doesNotMatch(source, /activeTab === '(mcp|renderers|runtime|presets|credentials)'/);
+  assert.doesNotMatch(source, /reloadPluginRuntime|loadMcpServers|loadRenderers|loadRuntime|loadPresets|ToolCredentialsPanel/);
 });
 
 
-test('plugins catalog is directly routable at the documented /plugins URL', async () => {
+test('skills and connectors have independent routes and navigation entries', async () => {
   const routerSource = await readFile(new URL('../src/router/index.ts', import.meta.url), 'utf8');
   const navigationSource = await readFile(new URL('../src/components/LeftPanel.vue', import.meta.url), 'utf8');
 
-  assert.match(routerSource, /path:\s*'plugins',[\s\S]*?alias:\s*'\/plugins',[\s\S]*?component:\s*PluginsPage/);
-  assert.match(navigationSource, /router\.push\('\/plugins'\)/);
+  assert.match(routerSource, /path:\s*'skills',[\s\S]*?name:\s*'SkillsLibrary',[\s\S]*?catalogType:\s*'skills'/);
+  assert.match(routerSource, /path:\s*'connectors',[\s\S]*?name:\s*'DataConnectors',[\s\S]*?catalogType:\s*'connectors'/);
+  assert.match(navigationSource, /router\.push\('\/skills'\)/);
+  assert.match(navigationSource, /router\.push\('\/connectors'\)/);
+  assert.doesNotMatch(navigationSource, /机构数据|分析能力与数据源/);
 });
 
 

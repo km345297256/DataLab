@@ -1,3 +1,4 @@
+import { viewModules } from './helpers/viewModules.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -19,6 +20,8 @@ const source = readFileSync(new URL('../src/visualizations/extended/scientific/r
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 new Function('require', 'module', 'exports', compiled)((id) => { assert.equal(id, './data'); return guards; }, module, module.exports);
 const { buildRootNumericObject } = module.exports;
+const plotlyModule = { exports: {} };
+new Function('require', 'module', 'exports', ts.transpileModule(readFileSync(new URL('../src/visualizations/extended/scientific/plotlyData.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(id => { assert.equal(id, './data'); return guards; }, plotlyModule, plotlyModule.exports);
 const core = { create, createHistogram, createTGraph };
 const bytes = (value) => new TextEncoder().encode(value).buffer;
 
@@ -101,11 +104,11 @@ function mountScientific(name, dependencies) {
   const script = compileScript(parse(text).descriptor, { id: name });
   const code = ts.transpileModule(script.content, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const local = { exports: {} };
-  const modules = { vue, '../../../composables/usePreviewLoad': { usePreviewLoad }, './data': guards, './PreviewFrame.vue': { default: {} }, './nmriumReadOnly': { nmriumReadOnlyPreferences }, './rootData': { buildRootNumericObject }, './browserLibraries': { loadNmrBrowserLibrary: () => assert.fail('Unexpected library load') }, ...dependencies };
+  const modules = { ...viewModules, vue, '../../../composables/usePreviewLoad': { usePreviewLoad }, './data': guards, './plotlyData': plotlyModule.exports, './PreviewFrame.vue': { default: {} }, './nmriumReadOnly': { nmriumReadOnlyPreferences }, './rootData': { buildRootNumericObject }, './browserLibraries': { loadNmrBrowserLibrary: () => assert.fail('Unexpected library load') }, ...dependencies };
   new Function('require', 'module', 'exports', code)((id) => { assert.ok(id in modules, `Unexpected adapter dependency ${id}`); return modules[id]; }, local, local.exports);
   const props = vue.reactive({ file: { file_id: 'file-one', filename: 'input.csv' }, plugin: { id: `viz-${name}`, enabled: true } });
   const scope = vue.effectScope();
-  const state = scope.run(() => local.exports.default.setup(props, { expose() {} }));
+  const state = scope.run(() => local.exports.default.setup(props, { expose() {}, emit() {} }));
   state.target.value = { clientWidth: 800, clientHeight: 480 };
   return { state, props, unmount: () => scope.stop() };
 }
@@ -117,10 +120,10 @@ test('Plotly does not paint a late response after plugin disposal', async () => 
 });
 test('Plotly abbreviates long legends without losing column identity or numeric values', async () => {
   const name = 'measurement_with_a_shared_long_prefix_';
-  const table = { columns: ['sample', `${name}one`, `${name}two`], rows: [['a', 1, true], ['b', null, false], ['c', 3, null]] };
+  const table = { columns: ['sample', `${name}one`, `${name}two`], rows: [['a', 1, true], ['b', null, false], ['c', 3, null]], row_offset: 0, column_offset: 0, total_rows: 3, total_columns: 3 };
   const frames = [];
   const adapter = mountScientific('PlotlyPreview', {
-    '../runtime': { requestPreview: async () => ({ table }) },
+    '../runtime': { requestPreview: async () => ({ table, version: 'a'.repeat(64) }) },
     './browserLibraries': { loadBrowserLibrary: async () => ({ react(_target, traces, layout) { frames.push({ traces, layout }); }, purge() {} }) },
   });
   try {
@@ -136,8 +139,157 @@ test('Plotly abbreviates long legends without losing column identity or numeric 
     assert.ok(traces.every((trace) => trace.mode === 'markers' && trace.connectgaps === false));
     assert.equal(layout.legend.orientation, 'h'); assert.equal(layout.legend.maxheight, 88);
     adapter.state.mode.value = 'histogram'; await adapter.state.draw();
-    assert.deepEqual(frames.at(-1).traces.map((trace) => trace.x), [[1, null, 3], [1, 0, null]]);
+    assert.deepEqual(frames.at(-1).traces.map((trace) => trace.x), [[1, 3], [1, 0]]);
     assert.deepEqual(frames.at(-1).traces.map((trace) => trace.meta.columnName), table.columns.slice(1));
+  } finally { adapter.unmount(); }
+});
+test('Plotly row and column windows pin the file version and preserve absolute row and column identity', async () => {
+  const requests = [], frames = [];
+  const adapter = mountScientific('PlotlyPreview', {
+    '../runtime': { requestPreview: async (_file, _plugin, options) => {
+      requests.push(structuredClone(options));
+      const row = options.row_offset, column = options.column_offset;
+      const rows = Array.from({ length: Math.min(200, 205 - row) }, (_, index) => Array.from({ length: Math.min(100, 103 - column) }, (_, col) => (row + index) * 1000 + column + col));
+      return { version: 'a'.repeat(64), sampled: row > 0 || column > 0 || row < 5, warnings: [],
+        table: { columns: Array.from({ length: rows[0].length }, (_, index) => `c${column + index}`), rows,
+          row_offset: row, column_offset: column, total_rows: row + rows.length === 205 ? 205 : null, total_columns: 103 } };
+    } },
+    './browserLibraries': { loadBrowserLibrary: async () => ({ react(_target, traces, layout) { frames.push({ traces, layout }); }, purge() {} }) },
+  });
+  try {
+    await flush(); assert.equal(adapter.state.error.value, '');
+    assert.equal(requests.length, 1);
+    assert.deepEqual(frames.at(-1).traces[0].x, Array.from({ length: 200 }, (_, i) => i + 1));
+    assert.match(adapter.state.windowSummary.value, /数据行 1–200，列 1–100 \/ 103；总行数未统计/);
+    adapter.state.yColumns.value = [1, 2];
+    adapter.state.mode.value = 'histogram'; await adapter.state.draw();
+    adapter.state.mode.value = 'markers'; await adapter.state.draw();
+    await adapter.state.loadData();
+    assert.equal(requests.length, 1, 'column selection, modes and unchanged windows render locally');
+    await adapter.state.moveWindow('row', 1);
+    assert.deepEqual(requests[1], { kind: 'table', row_offset: 200, column_offset: 0, version: 'a'.repeat(64) });
+    assert.deepEqual(adapter.state.yColumns.value, [1, 2]);
+    assert.deepEqual(frames.at(-1).traces[0].x, [201, 202, 203, 204, 205]);
+    assert.deepEqual(frames.at(-1).traces[0].y, [200001, 201001, 202001, 203001, 204001]);
+    assert.equal(adapter.state.table.value.partial, true);
+    assert.equal(adapter.state.table.value.hasMoreRows, false);
+    assert.match(adapter.state.windowSummary.value, /数据行 201–205.*共 205 行/);
+    await adapter.state.moveWindow('column', 1);
+    assert.deepEqual(requests[2], { kind: 'table', row_offset: 200, column_offset: 100, version: 'a'.repeat(64) });
+    assert.equal(adapter.state.table.value.columns.length, 3);
+    assert.equal(adapter.state.table.value.hasMoreColumns, false);
+    assert.deepEqual(frames.at(-1).traces[0].y, [200100, 201100, 202100, 203100, 204100]);
+    await adapter.state.moveWindow('row', -1);
+    assert.equal(requests[3].row_offset, 0); assert.equal(requests[3].column_offset, 100);
+    adapter.state.rowStart.value = 203; adapter.state.columnStart.value = 102;
+    await adapter.state.loadData();
+    assert.equal(requests[4].row_offset, 202); assert.equal(requests[4].column_offset, 101);
+    assert.deepEqual(frames.at(-1).traces[0].x, [203, 204, 205]);
+    adapter.state.rowStart.value = 0; await adapter.state.loadData();
+    assert.equal(requests.length, 5, 'invalid windows fail before an object read');
+    assert.match(adapter.state.error.value, /起始数据行/);
+  } finally { adapter.unmount(); }
+});
+test('Plotly rejects mismatched window metadata and keeps missing-only selected columns', () => {
+  const { parsePlotlyTableWindow, preservePlotlyColumns } = plotlyModule.exports;
+  const raw = { columns: ['a', 'b'], rows: [[1, 2]], row_offset: 0, column_offset: 0, total_rows: 1, total_columns: 2 };
+  const first = parsePlotlyTableWindow(raw, { rowOffset: 0, columnOffset: 0 });
+  for (const patch of [{ row_offset: true }, { column_offset: 1 }, { total_rows: null }, { total_columns: 4 }, { total_rows: 0 }]) {
+    assert.throws(() => parsePlotlyTableWindow({ ...raw, ...patch }, { rowOffset: 0, columnOffset: 0 }));
+  }
+  const missing = parsePlotlyTableWindow({ ...raw, rows: [[null, null]], row_offset: 200, total_rows: 201 }, { rowOffset: 200, columnOffset: 0 });
+  assert.deepEqual(preservePlotlyColumns(first, missing, 0, [1]), { x: 0, ys: [1] });
+  assert.equal(missing.partial, true);
+});
+test('Plotly preserves only column choices across a failed window retry and resets them for a new file or plugin', async () => {
+  let failRead = false;
+  const requests = [];
+  const adapter = mountScientific('PlotlyPreview', {
+    '../runtime': { requestPreview: async (_file, _plugin, options) => {
+      requests.push(structuredClone(options));
+      if (failRead) throw new Error('窗口读取失败');
+      const row = options.row_offset, column = options.column_offset;
+      return { version: 'a'.repeat(64), table: {
+        columns: Array.from({ length: 3 - column }, (_, index) => `c${column + index}`),
+        rows: Array.from({ length: 200 }, (_, index) => Array.from({ length: 3 - column }, (_, col) => row + index + col)),
+        row_offset: row, column_offset: column, total_rows: 400, total_columns: 3,
+      } };
+    } },
+    './browserLibraries': { loadBrowserLibrary: async () => ({ react() {}, purge() {} }) },
+  });
+  try {
+    await flush();
+    adapter.state.columnStart.value = 2; await adapter.state.loadData();
+    adapter.state.xColumn.value = 1; adapter.state.yColumns.value = [1];
+    failRead = true; await adapter.state.moveWindow('row', 1);
+    assert.equal(adapter.state.error.value, '窗口读取失败');
+    assert.equal(adapter.state.table.value, undefined, 'Failed reads do not retain the previous source window');
+    assert.deepEqual(adapter.state.tableSelection.value, { columnOffset: 1, x: 1, ys: [1] });
+    failRead = false; await adapter.state.loadData();
+    assert.equal(adapter.state.error.value, '');
+    assert.equal(adapter.state.table.value.rowOffset, 200);
+    assert.equal(adapter.state.xColumn.value, 1); assert.deepEqual(adapter.state.yColumns.value, [1]);
+    assert.deepEqual(requests.at(-1), { kind: 'table', row_offset: 200, column_offset: 1, version: 'a'.repeat(64) });
+    adapter.props.file = { file_id: 'file-two', filename: 'another.csv' }; await flush();
+    assert.equal(adapter.state.xColumn.value, -1); assert.deepEqual(adapter.state.yColumns.value, [0]);
+    assert.equal(adapter.state.tableSelection.value, undefined);
+    assert.deepEqual(requests.at(-1), { kind: 'table', row_offset: 0, column_offset: 0 });
+    adapter.state.xColumn.value = 2; adapter.state.yColumns.value = [2];
+    adapter.props.plugin = { id: 'viz-PlotlyPreview', version: '2', enabled: true }; await flush();
+    assert.equal(adapter.state.xColumn.value, -1); assert.deepEqual(adapter.state.yColumns.value, [0]);
+    assert.equal(adapter.state.tableSelection.value, undefined);
+    assert.deepEqual(requests.at(-1), { kind: 'table', row_offset: 0, column_offset: 0 });
+  } finally { adapter.unmount(); }
+});
+test('Plotly clears a rendering error only after successfully drawing actual data', async () => {
+  let failDraw = false, failRead = false, draws = 0;
+  const adapter = mountScientific('PlotlyPreview', {
+    '../runtime': { requestPreview: async () => {
+      if (failRead) throw new Error('窗口读取失败');
+      return { version: 'a'.repeat(64), table: { columns: ['value', 'missing'], rows: [[1, null]], row_offset: 0, column_offset: 0, total_rows: 1, total_columns: 2 } };
+    } },
+    './browserLibraries': { loadBrowserLibrary: async () => ({ react() { draws++; if (failDraw) throw new Error('Renderer failed'); }, purge() {} }) },
+  });
+  try {
+    await flush();
+    failDraw = true; await adapter.state.draw();
+    assert.match(adapter.state.error.value, /图表绘制失败/);
+    failDraw = false; adapter.state.yColumns.value = [1]; await adapter.state.draw();
+    assert.match(adapter.state.error.value, /图表绘制失败/, 'An all-missing trace is not a recovered plot');
+    adapter.state.yColumns.value = []; await adapter.state.draw();
+    assert.match(adapter.state.error.value, /图表绘制失败/, 'Clearing the selected traces does not hide the error');
+    adapter.state.yColumns.value = [0]; await adapter.state.draw();
+    assert.equal(adapter.state.error.value, '');
+    failRead = true; adapter.state.rowStart.value = 2; await adapter.state.loadData();
+    const beforeEmptyDraw = draws; await adapter.state.draw();
+    assert.equal(draws, beforeEmptyDraw, 'There is no drawable table after a failed read');
+    assert.equal(adapter.state.error.value, '窗口读取失败');
+  } finally { adapter.unmount(); }
+});
+test('Plotly array mode changes retain valid leading slice indices', async () => {
+  const requests = [], frames = [];
+  const adapter = mountScientific('PlotlyPreview', {
+    '../runtime': { requestPreview: async (file, _plugin, options) => {
+      requests.push({ file: file.filename, options: structuredClone(options) });
+      if (file.filename.endsWith('.csv')) return { version: 'a'.repeat(64), table: { columns: ['x'], rows: [[1]], row_offset: 0, column_offset: 0, total_rows: 1, total_columns: 1 } };
+      const heatmap = options.kind === 'heatmap';
+      const indices = [...options.indices, 0, 0].slice(0, heatmap ? 1 : 2);
+      return { version: 'b'.repeat(64), array: { shape: heatmap ? [3, 4] : [4], values: Array.from({ length: heatmap ? 12 : 4 }, (_, index) => indices[0] * 12 + (heatmap ? 0 : indices[1] * 4) + index) },
+        choices: { variables: ['array'] }, selected: { variable: 'array', indices }, metadata: { source_shape: [2, 3, 4], strides: heatmap ? [1, 1] : [1] }, sampled: true, warnings: ['显示固定切片与等间隔抽样；未作全数组聚合，横轴为索引。'] };
+    } },
+    './browserLibraries': { loadBrowserLibrary: async () => ({ react(_target, traces) { frames.push(traces); }, purge() {} }) },
+  });
+  try {
+    await flush(); adapter.props.file = { file_id: 'array-file', filename: 'array.npy' }; await flush();
+    await adapter.state.loadData();
+    assert.equal(requests.length, 2, 'The reader-resolved default array slice is reused without another read');
+    adapter.state.indices.value = [1, 2]; await adapter.state.loadData();
+    assert.deepEqual(frames.at(-1)[0].y, [20, 21, 22, 23]);
+    adapter.state.arrayKind.value = 'heatmap'; await adapter.state.loadData();
+    assert.deepEqual(requests.at(-1).options.indices, [1]);
+    assert.equal(requests.at(-1).options.version, 'b'.repeat(64));
+    assert.deepEqual(frames.at(-1)[0].z, [[12, 13, 14, 15], [16, 17, 18, 19], [20, 21, 22, 23]]);
+    assert.match(adapter.state.arraySummary.value, /固定 dim_0=1/);
   } finally { adapter.unmount(); }
 });
 test('H5Web handles default-only React CommonJS imports and disposes the real root boundary', async () => {

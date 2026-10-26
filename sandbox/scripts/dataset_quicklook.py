@@ -10,22 +10,22 @@ same safe recursive extractor shipped with the sandbox.
 from __future__ import annotations
 
 import argparse
+import codecs
 import csv
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 import hashlib
 import io
+from itertools import islice
 import json
 import math
 import os
 from pathlib import Path, PurePosixPath
 import re
-import signal
 import shutil
 import sys
 import tempfile
-import threading
 import time
 from typing import Any, Iterable
 
@@ -52,6 +52,7 @@ EXCEL_SUFFIXES = {".xlsx": "excel", ".xlsm": "excel", ".xls": "excel"}
 RASTER_SUFFIXES = {".tif": "geotiff", ".tiff": "geotiff"}
 NETCDF_SUFFIXES = {".nc": "netcdf", ".nc4": "netcdf", ".cdf": "netcdf"}
 SUPPORTED_SUFFIXES = {**TABULAR_SUFFIXES, **EXCEL_SUFFIXES, **RASTER_SUFFIXES, **NETCDF_SUFFIXES}
+CHART_MEDIA_TYPES = {"png": "image/png", "svg": "image/svg+xml"}
 NULL_TEXT = {"", "na", "n/a", "nan", "null", "none", "-"}
 TOOL_EVIDENCE_MAX_DATASETS = 4
 TOOL_EVIDENCE_MAX_COLUMNS = 8
@@ -84,7 +85,6 @@ class Limits:
     max_raster_bands: int = 8
     max_plot_points: int = 2_000
     max_plots: int = 4
-    max_runtime_seconds: int = 90
     max_archive_expanded_bytes: int = 2 * 1024 * 1024 * 1024
     # File-organization output is intentionally smaller than discovery.  It is
     # returned to the conversation, so it must remain readable even when a
@@ -134,100 +134,80 @@ class ArchiveBudget:
     expanded_bytes: int = 0
 
 
-class Deadline:
-    def __init__(self, seconds: int) -> None:
-        self.started = time.monotonic()
-        self.seconds = seconds
-        self._old_handler: Any = None
-        self._old_timer: tuple[float, float] | None = None
-        self._armed = False
 
-    def check(self) -> None:
-        if time.monotonic() - self.started > self.seconds:
-            raise QuicklookError(
-                f"quicklook exceeded its {self.seconds}-second runtime budget"
-            )
-
-    @property
-    def elapsed(self) -> float:
-        return time.monotonic() - self.started
-
-    @property
-    def remaining(self) -> float:
-        return max(0.0, self.seconds - self.elapsed)
-
-    def arm(self) -> None:
-        """Enforce the deadline even while Python is reading a large archive."""
-        if (
-            self._armed
-            or not hasattr(signal, "setitimer")
-            or threading.current_thread() is not threading.main_thread()
-        ):
-            return
-
-        def timeout_handler(_signum: int, _frame: Any) -> None:
-            raise QuicklookError(
-                f"quicklook exceeded its {self.seconds}-second runtime budget"
-            )
-
-        self._old_handler = signal.getsignal(signal.SIGALRM)
-        self._old_timer = signal.getitimer(signal.ITIMER_REAL)
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.setitimer(signal.ITIMER_REAL, max(0.001, self.remaining))
-        self._armed = True
-
-    def cancel(self) -> None:
-        if not self._armed:
-            return
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, self._old_handler)
-        if self._old_timer and self._old_timer[0] > 0:
-            restored = max(0.001, self._old_timer[0] - self.elapsed)
-            signal.setitimer(signal.ITIMER_REAL, restored, self._old_timer[1])
-        self._armed = False
+def _chart_formats(values: Iterable[str] | None) -> tuple[str, ...]:
+    if values is None:
+        return ("png",)
+    # Do not silently replace an unsupported requested format with a PNG.
+    if isinstance(values, (str, bytes)):
+        raise QuicklookError("chart_formats must be a nonempty list of png or svg")
+    supplied = tuple(values)
+    if not supplied or any(not isinstance(value, str) or value not in CHART_MEDIA_TYPES for value in supplied):
+        raise QuicklookError("chart_formats must be a nonempty list of png or svg")
+    return tuple(dict.fromkeys(supplied))
 
 
 class PlotCollector:
-    def __init__(self, root: Path, maximum: int) -> None:
+    def __init__(self, root: Path, maximum: int, chart_formats: Iterable[str] | None = None) -> None:
         self.root = root
         self.maximum = maximum
+        self.chart_formats = _chart_formats(chart_formats)
+        self.chart_count = 0
         self.artifacts: list[dict[str, Any]] = []
 
     @property
     def remaining(self) -> int:
-        return max(0, self.maximum - len(self.artifacts))
+        return max(0, self.maximum - self.chart_count)
 
     def save(self, figure: Any, *, stem: str, title: str, source: str) -> bool:
         if not self.remaining:
             plt.close(figure)
             return False
-        number = len(self.artifacts) + 1
+        number = self.chart_count + 1
         digest = hashlib.sha1(source.encode("utf-8")).hexdigest()[:8]
         safe_stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_") or "dataset"
-        filename = f"quicklook_{number:02d}_{safe_stem[:40]}_{digest}.png"
-        temporary = self.root / f".{filename}.tmp"
-        final = self.root / filename
+        basename = f"quicklook_{number:02d}_{safe_stem[:40]}_{digest}"
+        staged: list[tuple[Path, Path, str]] = []
         try:
-            figure.savefig(
-                temporary,
-                format="png",
-                dpi=140,
-                bbox_inches="tight",
-                metadata={"Software": "AI-DataSeek dataset quicklook"},
-            )
-            os.replace(temporary, final)
+            # Export the original figure through each native backend. In
+            # particular, SVG is not a wrapper around a rendered PNG.
+            for chart_format in self.chart_formats:
+                filename = f"{basename}.{chart_format}"
+                temporary = self.root / f".{filename}.tmp"
+                final = self.root / filename
+                staged.append((temporary, final, chart_format))
+                figure.savefig(
+                    temporary,
+                    format=chart_format,
+                    dpi=140,
+                    bbox_inches="tight",
+                    metadata={
+                        "Software" if chart_format == "png" else "Creator":
+                        "AI-DataSeek dataset quicklook"
+                    },
+                )
+            for temporary, final, _ in staged:
+                os.replace(temporary, final)
+        except Exception:
+            # A partially exported figure is not a successful format set.
+            for _, final, _ in staged:
+                final.unlink(missing_ok=True)
+            raise
         finally:
-            temporary.unlink(missing_ok=True)
+            for temporary, _, _ in staged:
+                temporary.unlink(missing_ok=True)
             plt.close(figure)
-        self.artifacts.append(
+        self.chart_count += 1
+        self.artifacts.extend(
             {
-                "path": filename,
-                "media_type": "image/png",
+                "path": final.name,
+                "media_type": CHART_MEDIA_TYPES[chart_format],
                 "role": "visualization",
                 "title": title,
                 "source": source,
                 "size": final.stat().st_size,
             }
+            for _, final, chart_format in staged
         )
         return True
 
@@ -259,15 +239,24 @@ def _json_value(value: Any) -> Any:
 
 
 def _unique_names(values: Iterable[Any], maximum: int) -> list[str]:
+    bases = [
+        (str(value).strip() if value is not None else "") or f"column_{index + 1}"
+        for index, value in enumerate(islice(values, maximum))
+    ]
+    reserved = set(bases)
+    used: set[str] = set()
     result: list[str] = []
     counts: dict[str, int] = {}
-    for index, raw_value in enumerate(values):
-        if index >= maximum:
-            break
-        base = str(raw_value).strip() if raw_value is not None else ""
-        base = base or f"column_{index + 1}"
-        counts[base] = counts.get(base, 0) + 1
-        result.append(base if counts[base] == 1 else f"{base}_{counts[base]}")
+    for base in bases:
+        name = base
+        if name in used:
+            number = counts.get(base, 1) + 1
+            while f"{base}_{number}" in reserved or f"{base}_{number}" in used:
+                number += 1
+            counts[base] = number
+            name = f"{base}_{number}"
+        used.add(name)
+        result.append(name)
     return result
 
 
@@ -366,10 +355,24 @@ def _profile_frame(
     }
 
 
-def _decode_text(data: bytes) -> tuple[str, str]:
+def _decode_text(data: bytes, *, truncated: bool = False) -> tuple[str, str]:
+    # A byte budget may end inside a character. An incremental decoder buffers
+    # that suffix instead of misidentifying otherwise valid UTF-8 as GB18030.
+    def decode(encoding: str) -> str:
+        return codecs.getincrementaldecoder(encoding)().decode(data, final=not truncated)
+
+    for signatures, encoding in (
+        ((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE), "utf-32"),
+        ((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE), "utf-16"),
+    ):
+        if data.startswith(signatures):
+            try:
+                return decode(encoding), encoding
+            except UnicodeError as exc:
+                raise QuicklookError("delimited file has invalid Unicode encoding") from exc
     for encoding in ("utf-8-sig", "utf-8", "gb18030"):
         try:
-            return data.decode(encoding), encoding
+            return decode(encoding), encoding
         except UnicodeDecodeError:
             pass
     return data.decode("latin-1", errors="replace"), "latin-1"
@@ -380,11 +383,15 @@ def _read_delimited(path: Path, kind: str, limits: Limits) -> tuple[pd.DataFrame
         raw = stream.read(limits.max_text_bytes + 1)
     byte_truncated = len(raw) > limits.max_text_bytes
     raw = raw[: limits.max_text_bytes]
+    text, encoding = _decode_text(raw, truncated=byte_truncated)
+    if "\x00" in text:
+        raise QuicklookError("delimited file contains unsupported null characters")
     if byte_truncated:
-        boundary = max(raw.rfind(b"\n"), raw.rfind(b"\r"))
-        if boundary > 0:
-            raw = raw[: boundary + 1]
-    text, encoding = _decode_text(raw)
+        # Trim physical lines after decoding (UTF-16/32 newlines are multibyte).
+        # strict csv parsing below also discards a quoted record spanning the
+        # boundary, so partial observations never become statistical evidence.
+        boundary = max(text.rfind("\n"), text.rfind("\r"))
+        text = text[: boundary + 1]
     if not text.strip():
         raise QuicklookError("delimited file is empty")
 
@@ -394,21 +401,38 @@ def _read_delimited(path: Path, kind: str, limits: Limits) -> tuple[pd.DataFrame
             delimiter = csv.Sniffer().sniff(text[:16_384], delimiters=",\t;|").delimiter
         except csv.Error:
             pass
-    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+    text_stream = io.StringIO(text, newline="")
+    reader = csv.reader(text_stream, delimiter=delimiter, strict=True)
     try:
-        raw_header = next(reader)
+        raw_header = next(row for row in reader if row)
     except StopIteration as exc:
         raise QuicklookError("delimited file has no header") from exc
+    except csv.Error as exc:
+        raise QuicklookError("delimited file has an incomplete or invalid header record") from exc
     header = _unique_names(raw_header, limits.max_columns)
     if not header:
         raise QuicklookError("delimited file has no columns")
 
     rows: list[list[Any]] = []
     row_truncated = False
-    for row in reader:
+    while True:
         if len(rows) >= limits.max_rows_per_table:
-            row_truncated = True
+            # Inspect only whether content remains: parsing another record can
+            # fail on an unsampled malformed or oversized field.
+            row_truncated = any(line.strip("\r\n") for line in text_stream)
             break
+        try:
+            row = next(reader)
+        except StopIteration:
+            break
+        except csv.Error as exc:
+            if byte_truncated and str(exc) == "unexpected end of data":
+                break
+            raise QuicklookError("delimited file has an invalid record") from exc
+        if not row:
+            continue
+        if len(row) > len(raw_header):
+            raise QuicklookError("delimited record has more columns than its header")
         selected = row[: len(header)]
         rows.append(selected + [None] * (len(header) - len(selected)))
     frame = _normalize_frame(pd.DataFrame(rows, columns=header), limits)
@@ -419,6 +443,7 @@ def _read_delimited(path: Path, kind: str, limits: Limits) -> tuple[pd.DataFrame
         "bytes_total": path.stat().st_size,
         "byte_truncated": byte_truncated,
         "row_truncated": row_truncated,
+        "column_truncated": len(raw_header) > limits.max_columns,
     }
 
 
@@ -468,7 +493,10 @@ def _read_excel(path: Path, limits: Limits) -> tuple[list[tuple[str, pd.DataFram
                     worksheet.iter_rows(
                         min_row=1,
                         max_row=limits.max_rows_per_table + 2,
-                        max_col=limits.max_columns,
+                        # openpyxl pads every requested column, even beyond
+                        # the sheet's actual extent. Such padding is not a
+                        # source field and must not create phantom columns.
+                        max_col=min(limits.max_columns, worksheet.max_column or limits.max_columns),
                         values_only=True,
                     ),
                     limits,
@@ -639,7 +667,10 @@ def _netcdf_profile_and_plot(
 ) -> dict[str, Any]:
     """Profile one NetCDF file with bounded reads and one representative chart."""
     try:
-        dataset = xr.open_dataset(candidate.path, engine="h5netcdf", chunks={})
+        with candidate.path.open("rb") as stream:
+            signature = stream.read(4)
+        engine = "netcdf4" if signature in {b"CDF\x01", b"CDF\x02", b"CDF\x05"} else "h5netcdf"
+        dataset = xr.open_dataset(candidate.path, engine=engine, chunks={})
     except Exception as exc:
         raise QuicklookError(f"无法读取 NetCDF 文件: {type(exc).__name__}: {exc}") from exc
     try:
@@ -717,7 +748,16 @@ def _netcdf_profile_and_plot(
 def _scaled_shape(height: int, width: int, maximum_pixels: int) -> tuple[int, int]:
     pixels = max(1, height * width)
     scale = max(1.0, math.sqrt(pixels / maximum_pixels))
-    return max(1, int(height / scale)), max(1, int(width / scale))
+    sampled_height = max(1, int(height / scale))
+    sampled_width = max(1, int(width / scale))
+    # Clamping a thin dimension to one can exceed the product budget by orders
+    # of magnitude. Cap the other dimension after that clamp.
+    if sampled_height * sampled_width > maximum_pixels:
+        if sampled_width >= sampled_height:
+            sampled_width = max(1, maximum_pixels // sampled_height)
+        else:
+            sampled_height = max(1, maximum_pixels // sampled_width)
+    return sampled_height, sampled_width
 
 
 def _declared_nodata_value(value: Any) -> Any:
@@ -1358,7 +1398,6 @@ def _unpack_directory_archives(
     *,
     staging: Path,
     limits: Limits,
-    deadline: Deadline,
     discovery_state: DiscoveryState,
     selected_count: int,
 ) -> tuple[
@@ -1377,7 +1416,6 @@ def _unpack_directory_archives(
     archive_layers_truncated = False
     extracted_tree_truncated = False
     for index, archive in enumerate(archives, start=1):
-        deadline.check()
         if selected_count + len(selected) >= limits.max_files_analyze:
             items.append(
                 {
@@ -1435,9 +1473,6 @@ def _unpack_directory_archives(
                     max_single_file_bytes=min(
                         limits.max_source_bytes,
                         limits.max_archive_expanded_bytes,
-                    ),
-                    timeout_seconds=max(
-                        1, min(int(math.ceil(deadline.remaining)), 600)
                     ),
                 ),
             )
@@ -1557,7 +1592,8 @@ def _analyze_table_candidate(
         profile = _profile_frame(
             frame,
             rows_total=None,
-            truncated=read_metadata["byte_truncated"] or read_metadata["row_truncated"],
+            truncated=(read_metadata["byte_truncated"] or read_metadata["row_truncated"]
+                       or read_metadata["column_truncated"]),
         )
         result = {
             "path": candidate.display_path,
@@ -2282,14 +2318,21 @@ def _write_markdown(manifest: dict[str, Any], target: Path) -> None:
             )
     lines.extend(["", "## 输出图表", ""])
     for artifact in manifest["artifacts"]:
-        if artifact["media_type"] == "image/png":
+        if artifact.get("role") == "visualization":
             lines.append(f"- [{artifact['title']}]({artifact['path']})")
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def generate_quicklook(source: Path, output: Path, limits: Limits | None = None) -> dict[str, Any]:
+def generate_quicklook(
+    source: Path,
+    output: Path,
+    limits: Limits | None = None,
+    *,
+    chart_formats: Iterable[str] | None = None,
+) -> dict[str, Any]:
     """Generate a quicklook directory and return its persisted manifest."""
     limits = limits or Limits()
+    formats = _chart_formats(chart_formats)
     source = source.expanduser().resolve(strict=True)
     output = output.expanduser().resolve(strict=False)
     if not source.is_file() and not source.is_dir():
@@ -2304,8 +2347,7 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
     original_tree = _original_source_tree(source, limits)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.tmp-", dir=output.parent))
-    deadline = Deadline(limits.max_runtime_seconds)
-    deadline.arm()
+    started = time.monotonic()
     archive_manifest: dict[str, Any] | None = None
     archive_organization: dict[str, Any] = {
         "archive_layers": [],
@@ -2331,7 +2373,6 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
                         max_single_file_bytes=min(
                             limits.max_source_bytes, limits.max_archive_expanded_bytes
                         ),
-                        timeout_seconds=min(limits.max_runtime_seconds, 600),
                     ),
                 )
             except Exception as exc:
@@ -2346,7 +2387,6 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
                         include_type=False,
                     )
                 ) from exc
-            deadline.check()
             discovery_state = DiscoveryState(maximum=limits.max_files_scan)
             discovered, _nested_archives = _discover(
                 unpacked,
@@ -2412,7 +2452,6 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
                     directory_archives,
                     staging=staging,
                     limits=limits,
-                    deadline=deadline,
                     discovery_state=discovery_state,
                     selected_count=len(candidates),
                 )
@@ -2435,12 +2474,11 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
         if not candidates:
             raise QuicklookError("no supported CSV/TSV, Excel, NetCDF, or GeoTIFF files found")
 
-        plots = PlotCollector(staging, max(1, min(limits.max_plots, 4)))
+        plots = PlotCollector(staging, max(1, min(limits.max_plots, 4)), formats)
         datasets: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = list(pre_analysis_errors)
         first_table: tuple[pd.DataFrame, str, str, str] | None = None
         for candidate in candidates:
-            deadline.check()
             if candidate.size > limits.max_source_bytes:
                 errors.append(
                     {
@@ -2493,7 +2531,6 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
                     }
                 )
 
-        deadline.check()
         if first_table is not None and plots.remaining:
             frame, label, stem, display_path = first_table
             _plot_table_extras(
@@ -2514,7 +2551,6 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
         # result would make artifact discovery upload the entire dataset again.
         for workspace in temporary_workspaces:
             shutil.rmtree(workspace, ignore_errors=True)
-        deadline.check()
 
         manifest: dict[str, Any] = {
             "version": 1,
@@ -2540,12 +2576,14 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
                 },
             },
             "limits": asdict(limits),
+            "chart_formats": list(formats),
             "discovery": discovery,
             "summary": {
                 "files_analyzed": len(datasets),
                 "files_failed": len(errors),
-                "plot_count": len(plots.artifacts),
-                "elapsed_seconds": round(deadline.elapsed, 3),
+                "plot_count": plots.chart_count,
+                "plot_file_count": len(plots.artifacts),
+                "elapsed_seconds": round(time.monotonic() - started, 3),
             },
             "datasets": datasets,
             "errors": errors,
@@ -2577,15 +2615,14 @@ def generate_quicklook(source: Path, output: Path, limits: Limits | None = None)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    finally:
-        deadline.cancel()
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate a bounded CSV/TSV, Excel, NetCDF, or GeoTIFF quicklook with 1-4 PNG "
-            "charts plus JSON and Markdown summaries. Archives are unpacked safely."
+            "Generate a bounded CSV/TSV, Excel, NetCDF, or GeoTIFF quicklook with 1-4 "
+            "charts (PNG by default, optionally SVG) "
+            "plus JSON and Markdown summaries. Archives are unpacked safely."
         )
     )
     parser.add_argument("input", type=Path, help="dataset file, archive, or directory")
@@ -2600,7 +2637,10 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-rows", type=int, default=20_000)
     parser.add_argument("--max-columns", type=int, default=80)
     parser.add_argument("--max-plots", type=int, default=4)
-    parser.add_argument("--timeout-seconds", type=int, default=90)
+    parser.add_argument(
+        "--chart-formats", nargs="+", choices=tuple(CHART_MEDIA_TYPES), default=["png"],
+        help="native export formats for every chart; defaults to png",
+    )
     return parser.parse_args(argv)
 
 
@@ -2612,10 +2652,9 @@ def main(argv: list[str] | None = None) -> int:
         max_rows_per_table=max(10, min(args.max_rows, 100_000)),
         max_columns=max(1, min(args.max_columns, 256)),
         max_plots=max(1, min(args.max_plots, 4)),
-        max_runtime_seconds=max(5, min(args.timeout_seconds, 600)),
     )
     try:
-        manifest = generate_quicklook(args.input, args.output, limits)
+        manifest = generate_quicklook(args.input, args.output, limits, chart_formats=args.chart_formats)
     except (OSError, UnpackError, QuicklookError) as exc:
         public_error = _public_error_text(
             exc,

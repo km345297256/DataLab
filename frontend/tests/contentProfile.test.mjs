@@ -1,3 +1,4 @@
+import { viewModules } from './helpers/viewModules.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -5,12 +6,14 @@ import * as vue from 'vue';
 import { compileScript, parse } from '@vue/compiler-sfc';
 import ts from 'typescript';
 import * as profileTools from '../src/visualizations/contentProfile.ts';
+import * as selection from '../src/visualizations/selection.ts';
 import * as previewIdentity from '../src/visualizations/previewIdentity.ts';
 import { matchingVisualizations, viewKindLabel } from '../src/visualizations/contract.ts';
 import { VISUALIZATION_ADAPTERS } from '../src/visualizations/adapters.generated.ts';
 import { usePreviewLoad } from '../src/composables/usePreviewLoad.ts';
 import * as plotHelpers from '../src/visualizations/plot.ts';
-import { parseArray, plainLabel } from '../src/visualizations/extended/scientific/data.ts';
+import * as scientificData from '../src/visualizations/extended/scientific/data.ts';
+const { parseArray, plainLabel } = scientificData;
 
 const { parseContentProfile, profileCandidates, canProfileFilename, profileLabel } = profileTools;
 const profile = (overrides = {}) => ({ profile_version: 1, container: 'tiff', dialect: 'tiff', traits: [], evidence: ['tiff-header'], bytes_read: 4096, truncated: false, ...overrides });
@@ -107,6 +110,7 @@ test('unknown/incomplete content never suppresses the original fallback candidat
 });
 
 function compileSfc(path, dependencies, inlineTemplate = true) {
+  dependencies={...viewModules, '../composables/useTaskData': { useTaskData: () => ({ active: vue.ref(false), locked: vue.ref(true), sessionId: vue.ref() }) }, '../utils/eventBus': { eventBus: { emit() {} } }, ...dependencies};
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');
   const descriptor = parse(source).descriptor;
   const code = compileScript(descriptor, { id: 'profile-host-test', inlineTemplate }).content;
@@ -118,6 +122,17 @@ function compileSfc(path, dependencies, inlineTemplate = true) {
     return dependencies[id];
   }, module, module.exports);
   return module.exports.default;
+}
+
+function compileTsModule(path, dependencies) {
+  const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', js)(id => {
+    assert.ok(Object.hasOwn(dependencies, id), `Unexpected module dependency ${id}`);
+    return dependencies[id];
+  }, module, module.exports);
+  return module.exports;
 }
 
 function find(node, type) {
@@ -144,6 +159,7 @@ function mountHost(t, { plugins = [tiff(), geo(), ome()], current = file(), requ
     './contract': { matchingVisualizations, viewKindLabel },
     './adapters': { getVisualizationAdapter: () => Adapter },
     './contentProfile': profileTools,
+    './selection': selection,
     './previewIdentity': previewIdentity,
     './runtime': { requestVisualization: (f, p, operation, options, signal) => {
       const item = { file: f, plugin: p, operation, options, signal }; requests.push(item);
@@ -284,7 +300,7 @@ test('a matching filename without declared prepare capability never issues a pro
 for (const size of [-1, NaN, Infinity, 65 * 1024 * 1024]) test(`invalid or excessive source size ${size} never issues probe or mounts a decoder`, async (t) => {
   const host = mountHost(t, { current: file('invalid', { size }) }); await flush();
   assert.equal(host.requests.length, 0); assert.equal(host.active().length, 0);
-  assert.match(host.text(), /安全预览上限/);
+  assert.match(host.text(), Number.isFinite(size) && size >= 0 ? /安全预览上限/ : /文件大小信息无效/);
 });
 
 for (const marker of ['dataset_file_version', 'sha256', 'content_sha256']) test(`same-ID same-size ${marker} replacement cancels old probe and reprobes`, async (t) => {
@@ -322,7 +338,7 @@ test('actual NetCDF adapter does not re-read or reset selection for an equivalen
     './assets/world-outline.json': { default: { geometry: { coordinates: [] } } },
   }, false);
   const props = vue.reactive({ file: file('source', { filename: 'source.nc' }), plugin: ncSeries() });
-  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {} }));
+  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {}, emit() {} }));
   t.after(() => scope.stop()); await flush(); assert.equal(reads, 1);
   state.variable.value = 'kept-user-selection';
   for (let index = 0; index < 3; index++) { props.plugin = structuredClone(ncSeries()); await flush(); }
@@ -338,7 +354,7 @@ test('actual H5Web adapter does not re-read its tree or reset selection for an e
     './PreviewFrame.vue': { default: {} },
   }, false);
   const props = vue.reactive({ file: file('source', { filename: 'source.h5' }), plugin: hdf() });
-  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {} }));
+  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {}, emit() {} }));
   t.after(() => scope.stop()); await flush(); assert.equal(reads, 1);
   state.path.value = '/kept-user-selection';
   for (let index = 0; index < 3; index++) { props.plugin = structuredClone(hdf()); await flush(); }
@@ -371,7 +387,7 @@ test('actual H5Web uses the approved tree version for automatic and user slices 
     ndarray: { default: (data, shape) => ({ data, shape }) }, '@h5web/lib/styles.css': {},
   }, false);
   const props = vue.reactive({ file: file('source', { filename: 'source.h5' }), plugin: hdf() });
-  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {} }));
+  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {}, emit() {} }));
   state.target.value = { clientWidth: 800, clientHeight: 480 };
   t.after(() => scope.stop()); await flush();
   assert.equal(state.error.value, ''); assert.equal(state.loading.value, false);
@@ -416,7 +432,7 @@ test('actual H5Web preserves a group and string-only directory with warnings wit
     './data': { parseArray: () => assert.fail('No numeric decoder should run'), plainLabel }, './PreviewFrame.vue': { default: {} },
   }, false);
   const props = vue.reactive({ file: file('source', { filename: 'metadata-only.h5' }), plugin: hdf() });
-  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {} }));
+  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {}, emit() {} }));
   t.after(() => scope.stop()); await flush();
   assert.deepEqual(requests, [{ kind: 'tree' }]); assert.equal(state.error.value, ''); assert.equal(state.loading.value, false);
   assert.deepEqual(state.nodes.value, tree); assert.deepEqual(state.warnings.value, warnings);
@@ -432,9 +448,10 @@ test('actual Plotly adapter does not re-read an array or reset its variable and 
     '../../../composables/usePreviewLoad': { usePreviewLoad },
     '../runtime': { requestPreview: async () => {
       reads++;
-      return { array: { shape: [2], values: [1, 2] }, choices: { variables: ['initial'] }, selected: { variable: 'initial' }, metadata: { source_shape: [3, 2], strides: [1] }, sampled: false };
+      return { version: 'a'.repeat(64), array: { shape: [2], values: [1, 2] }, choices: { variables: ['initial'] }, selected: { variable: 'initial' }, metadata: { source_shape: [3, 2], strides: [1] }, sampled: false };
     } },
     './data': { parseArray: value => value, parseTable: value => value, numericColumns: () => [], numericCell: value => value, plainLabel: String },
+    './plotlyData': compileTsModule('../src/visualizations/extended/scientific/plotlyData.ts', { './data': scientificData }),
     './PreviewFrame.vue': { default: {} },
     './browserLibraries': { loadBrowserLibrary: async () => {
       libraryLoads++;
@@ -442,7 +459,7 @@ test('actual Plotly adapter does not re-read an array or reset its variable and 
     } },
   }, false);
   const props = vue.reactive({ file: file('source', { filename: 'source.mat' }), plugin: plotly() });
-  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {} }));
+  const scope = vue.effectScope(); const state = scope.run(() => Component.setup(props, { expose() {}, emit() {} }));
   t.after(() => scope.stop()); await flush();
   assert.equal(reads, 1); assert.equal(libraryLoads, 1); assert.equal(state.error.value, '');
   state.variable.value = 'kept-user-selection'; state.indices.value = [2];

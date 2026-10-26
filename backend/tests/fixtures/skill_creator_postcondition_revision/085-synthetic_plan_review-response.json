@@ -1,0 +1,5 @@
+{
+  "kind": "response",
+  "stage": "synthetic_plan_review",
+  "content": "{\"scripts\":[{\"script_path\":\"scripts/longitudinal_report.py\",\"support\":{\"status\":\"accepted\",\"explanation\":\"公开接口为以 --input 读取 JSON、以 --output 指定输出目录，与该无效输入用例的拒绝路径一致；参考证据显示该脚本在本案实际非零退出且输入文件哈希未变。\"},\"cases\":[{\"case_id\":\"invalid_missing_table\",\"input_validity\":{\"status\":\"accepted\",\"explanation\":\"合成 JSON 顶层仅有 pairs、associations、hypotheses、long_rows，缺少必需的 observations 对象数组，确实构成 R003 规定的缺表无效输入；空数组本身不改变该无效条件。\"},\"exit_behavior\":{\"status\":\"accepted\",\"explanation\":\"方法要求任一必需表缺失即拒绝整个任务，公开接口未规定精确退出码，因此使用 nonzero 合理；参考证据实际退出码为 2，输入未变。\"},\"method_coverage\":{\"status\":\"rejected\",\"explanation\":\"该用例只检查非零退出，未对 R018 的“任一表无效则不产生部分输出”做任何产物或输出目录断言；无法区分拒绝且未写出与先写出后失败，故其引用的方法要求未被完整检验。需要补充输出目录为空或 report.json/wide.csv 不存在的验收。\"},\"assertions\":[]}]}]}"
+}

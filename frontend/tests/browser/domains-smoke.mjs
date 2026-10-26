@@ -58,6 +58,7 @@ const { databaseRecordsCases } = await import('./database-records-fixtures.mjs')
 const { pgDumpCases } = await import('./pg-dump-fixtures.mjs'); cases = [...cases, ...pgDumpCases];
 const { sqlDumpCases } = await import('./sql-dump-fixtures.mjs'); cases = [...cases, ...sqlDumpCases];
 const { physicalDatabaseCases } = await import('./physical-database-fixtures.mjs'); cases = [...cases, ...physicalDatabaseCases];
+const { viewWorkflowCases } = await import('./view-workflow-fixtures.mjs'); cases=[...cases,...viewWorkflowCases];
 if (process.env.VISUALIZATION_BROWSER_CASES) cases = cases.filter((item) => process.env.VISUALIZATION_BROWSER_CASES.split(',').includes(item.name));
 if (!cases.length) throw new Error('No browser cases selected');
 const modules = [...new Set(cases.map((item) => item.component))];
@@ -74,7 +75,7 @@ import {useFilePanel} from ${JSON.stringify(resolve(frontend, 'src/composables/u
 const related=${JSON.stringify(Object.fromEntries(cases.filter(item => item.relatedFiles).map(item => [item.name, item.relatedFiles])))};
 const components={${modules.map((path) => `${JSON.stringify(path)}:()=>import(${JSON.stringify(resolve(frontend, 'src/visualizations/extended', path))})`).join(',')}};
 const cases=${JSON.stringify(safeDescriptors)}; let app;
-window.mountHarness=async(name)=>{if(app)app.unmount();document.getElementById('app').replaceChildren();useFilePanel().relatedFiles.value=related[name]||[];const item=cases[name],module=await components[item.component]();app=createApp({render:()=>h(module.default,{file:item.file,plugin:item.plugin})});app.mount('#app');};
+window.mountHarness=async(name)=>{if(app)app.unmount();document.getElementById('app').replaceChildren();useFilePanel().relatedFiles.value=related[name]||[];const item=cases[name],module=await components[item.component]();app=createApp({render:()=>h(module.default,{file:item.file,plugin:item.plugin,onViewContext:value=>{window.__viewContext=value;}})});app.mount('#app');};
 window.unmountHarness=()=>{if(app){app.unmount();app=null;}document.getElementById('app').replaceChildren();};
 window.harnessReady=true;`;
 

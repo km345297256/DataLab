@@ -8,7 +8,10 @@ from app.domain.external.file import FileStorage
 from app.domain.models.file import FileInfo
 from app.domain.models.execution_environment import ExecutionEnvironmentSnapshot
 from app.domain.models.audit import AuditRiskLevel, AuditStatus
-from app.domain.models.event import AgentEvent, DoneEvent, ErrorEvent, MessageEvent
+from app.domain.models.event import AgentEvent, DoneEvent, ErrorEvent, MessageEvent, WaitEvent
+from app.domain.models.request_intent import ClarificationRequest
+from app.domain.services.analysis_clarification import create_clarification_view, clarification_message
+from app.domain.models.input_admission import input_key, terminal_event_id
 from app.domain.models.session import SessionStatus
 from app.domain.repositories.session_repository import SessionRepository
 from app.domain.services.audit_service import AuditService
@@ -18,6 +21,9 @@ from app.domain.services.execution_environment import (
     create_lightweight_execution_snapshot,
 )
 from app.domain.utils.public_error import public_error_message
+from app.domain.services.analysis_terminal import terminal_analysis_message
+from app.domain.services.model_runtime import model_execution_scope
+from app.infrastructure.repositories.mongo_model_trace_repository import get_model_trace_repository
 from pydantic import TypeAdapter
 
 logger = logging.getLogger(__name__)
@@ -136,10 +142,19 @@ class LightweightTaskRunner(TaskRunner):
             logger.warning("Durable event live publication unavailable error_type=%s", type(error).__name__)
         if delivery is not None and identity is not None:
             await delivery.complete(self._session_id, identity, event)
-            if isinstance(event, (DoneEvent, ErrorEvent)):
+            if isinstance(event, (DoneEvent, ErrorEvent, WaitEvent)):
                 self._accepted_input_finished = True
 
     async def run(self, task: Task) -> None:
+        task_id = getattr(task, "id", None)
+        if isinstance(task_id, str) and task_id:
+            with model_execution_scope(user_id=self._user_id, session_id=self._session_id,
+                                       task_id=task_id, store=get_model_trace_repository()):
+                await self._run_with_model_budget(task)
+        else:
+            await self._run_with_model_budget(task)
+
+    async def _run_with_model_budget(self, task: Task) -> None:
         try:
             pop_input_or_close = getattr(task, "pop_input_or_close", None)
             event_id, event_str = (
@@ -154,7 +169,6 @@ class LightweightTaskRunner(TaskRunner):
                 raise RuntimeError("Lightweight task requires a user message")
             delivery = getattr(self, "_input_delivery", None)
             if delivery is not None and await delivery.start(self._session_id, user_event, task):
-                from app.domain.models.input_admission import input_key
                 self._accepted_input_key = input_key(user_event)
             await self._record_execution_snapshot(
                 self._execution_task_id(task),
@@ -162,6 +176,25 @@ class LightweightTaskRunner(TaskRunner):
             )
             review = self._resolution.decision.safety
             await self._record_safety_audit(review)
+            if review.allowed and self._resolution.mode == "clarify":
+                request = ClarificationRequest.model_validate(self._resolution.decision.clarification)
+                view = create_clarification_view(request, user_event.seq, identity=input_key(user_event))
+                answer = clarification_message(view)
+                assistant_event = MessageEvent(
+                    id=terminal_event_id(input_key(user_event), "clarification"),
+                    role="assistant", message=answer,
+                    metadata={"execution_mode": "lightweight", "clarification": view.model_dump(mode="json"),
+                              "front_controller": self._resolution.controller_metadata},
+                )
+                if self._resolution.decision.clarification_response == "replace":
+                    assistant_event.metadata["clarification_reset"] = True
+                await self._publish(task, assistant_event)
+                await self._session_repository.update_latest_message(self._session_id, answer, assistant_event.timestamp)
+                await self._session_repository.increment_unread_message_count(self._session_id)
+                await self._publish(task, WaitEvent())
+                await self._session_repository.update_status(self._session_id, SessionStatus.WAITING)
+                return
+            technical_failure = False
             if not review.allowed:
                 technical_failure = any(
                     category in {"front_controller_unavailable", "front_controller_decision_missing"}
@@ -176,6 +209,14 @@ class LightweightTaskRunner(TaskRunner):
                     "front_controller_error" if technical_failure else "safety_review": review.model_dump(),
                     "front_controller": self._resolution.controller_metadata,
                 }
+                if technical_failure:
+                    code = self._resolution.controller_metadata.get("failure_code")
+                    if code not in {"transport_timeout", "transport_error", "invalid_response",
+                                    "invalid_safety", "invalid_routing", "invalid_decision"}:
+                        code = "front_controller_unavailable"
+                    answer += f"\n\n失败阶段：前置路由；错误码：{code}。本轮没有执行分析工具或生成分析成果。"
+                    metadata.update(terminal_analysis_message(answer, reason_code=code,
+                        stage="routing", analysis_started=False).metadata)
             else:
                 answer = self._resolution.answer
                 metadata = {
@@ -192,8 +233,19 @@ class LightweightTaskRunner(TaskRunner):
             await self._publish(task, assistant_event)
             await self._session_repository.update_latest_message(self._session_id, answer, assistant_event.timestamp)
             await self._session_repository.increment_unread_message_count(self._session_id)
-            advice = self._completion_advice.default_advice()
-            await self._publish(task, DoneEvent(advice=self._completion_advice.to_payload(advice)))
+            # An unexecuted routing failure has no conclusion to expand or
+            # reusable analysis to turn into a skill.
+            advice = None
+            if not technical_failure and review.allowed:
+                try:
+                    generated = await self._completion_advice.analyze(
+                        [user_event, assistant_event],
+                        llm_overrides=getattr(self, "_llm_overrides", None),
+                    )
+                    advice = self._completion_advice.to_payload(generated)
+                except Exception as exc:
+                    logger.warning("Lightweight completion advice unavailable error_type=%s", type(exc).__name__)
+            await self._publish(task, DoneEvent(advice=advice))
             await self._session_repository.update_status(self._session_id, SessionStatus.COMPLETED)
         except Exception as exc:
             logger.error(

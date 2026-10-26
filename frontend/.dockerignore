@@ -19,6 +19,8 @@ dist-ssr
 coverage
 
 # 本地环境文件
+.env
+.env.*
 .env.local
 .env.*.local
 
@@ -37,4 +39,5 @@ lerna-debug.log*
 .gitignore
 README.md
 **/TEST*
-**/.env 
+**/.env
+**/.env.*

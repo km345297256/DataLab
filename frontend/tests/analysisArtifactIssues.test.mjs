@@ -34,7 +34,7 @@ test('history without issue metadata remains compatible and is never rewritten',
   const snapshot = JSON.stringify(value);
   const parsed = presentation.readAnalysisOutcome(value);
   assert.deepEqual(parsed.issues, []);
-  assert.equal(presentation.analysisOutcomeTitle(parsed), '成果检查通过');
+  assert.equal(presentation.analysisOutcomeTitle(parsed), '已完成');
   assert.equal(JSON.stringify(value), snapshot);
   for (const issues of [null, false, 'legacy data', {}]) {
     assert.deepEqual(read({ issues }).issues, []);
@@ -98,12 +98,12 @@ test('diagnostics are bounded, copied, and exact duplicates are removed', () => 
 test('successful required delivery stays completed while auxiliary failures render separately', async () => {
   const value = read({ issues: [issue(), issue({ artifact_name: 'optional.py', kind: 'code', reason_code: 'invalid_code_syntax' })] });
   assert.equal(presentation.analysisOutcomeIsComplete(value), true);
-  assert.equal(presentation.analysisOutcomeTitle(value), '成果检查通过');
-  assert.equal(presentation.analysisOutcomeReason(value), '该条结果的成果检查已通过，整体任务完成情况尚未确认。');
+  assert.equal(presentation.analysisOutcomeTitle(value), '已完成');
+  assert.equal(presentation.analysisOutcomeReason(value), '本次执行已完成；文件交付情况以附件为准。');
   const html = await renderNotice(value, true);
   assert.match(html, /已完成/);
   assert.match(html, /附加文件问题/);
-  assert.match(html, /不影响已完成的所需成果/);
+  assert.match(html, /以下文件未计入本次交付/);
   assert.match(html, /附加说明.json/);
   assert.match(html, /JSON 语法不合法/);
   assert.match(html, /optional.py/);
@@ -155,7 +155,7 @@ test('real analysis text is not replaced by status notices, in history or in the
   const source = readFileSync(new URL('../src/components/ChatMessage.vue', import.meta.url), 'utf8');
   assert.match(source, /v-html="renderMarkdown\(visibleAssistantContent\)"/);
   assert.ok(source.indexOf('renderMarkdown(visibleAssistantContent)') < source.indexOf('<AnalysisOutcomeNotice'));
-  assert.match(source, /const visibleAssistantContent = computed\(\(\) => stripHiddenDatasetResultNotices\(messageContent.value.content\)\)/);
+  assert.match(source, /const visibleAssistantContent = computed\(\(\) => messageContent.value.content\)/);
 });
 
 test('step diagnostics preserve answers without closing progress for subsequent steps', () => {

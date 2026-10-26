@@ -137,3 +137,6 @@ uv.lock
 !backend/uv.lock
 !sandbox/uv.lock
 specs
+
+# Local analysis deliveries and review artifacts (existing tracked catalogs stay tracked)
+/outputs/

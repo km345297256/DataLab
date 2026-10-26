@@ -26,7 +26,7 @@ services:
     env_file:
       - .env
     environment:
-      AUTH_PROVIDER: none
+      AUTH_PROVIDER: password
       MONGODB_URI: mongodb://mongodb:27017
       MONGODB_DATABASE: ai_dataseek
       REDIS_HOST: redis
@@ -40,8 +40,11 @@ services:
       JUPYTER_NAME_PREFIX: ${STACK_PREFIX:-datalab}-jupyter
       DATASET_STORAGE_ROOT: /data/datasets
       DATASET_MANAGED_VOLUME: ${STACK_PREFIX:-datalab}-dataset-data
+      JUPYTER_WORKSPACES_HOST_ROOT: ${JUPYTER_WORKSPACES_HOST_ROOT:-}
+      JUPYTER_WORKSPACES_STORAGE_ROOT: /data/jupyter-workspaces
       SKILLS_DIR: /app/skills
       USER_SKILLS_DIR: /data/skills/users
+      OPEN_DATA_DOWNLOAD_ROOT: /data/open-data-downloads
       ONLYOFFICE_ENABLED: ${ONLYOFFICE_ENABLED:-false}
       ONLYOFFICE_PUBLIC_ORIGIN: http://office.localhost:${FRONTEND_PORT:-10030}
       ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
@@ -50,6 +53,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - dataset-data:/data/datasets
       - skills-data:/data/skills
+      - open-data-downloads:/data/open-data-downloads
+      - jupyter-workspaces:/data/jupyter-workspaces
     depends_on:
       sandbox-image:
         condition: service_completed_successfully
@@ -118,12 +123,15 @@ services:
     image: ${MONGODB_IMAGE:-mongo:7.0}
     volumes:
       - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
     restart: unless-stopped
     networks:
       - datalab-network
 
   redis:
     image: ${REDIS_IMAGE:-redis:7.0}
+    volumes:
+      - redis-data:/data
     restart: unless-stopped
     networks:
       - datalab-network
@@ -194,12 +202,23 @@ services:
 volumes:
   mongodb-data:
     name: ${STACK_PREFIX:-datalab}-mongodb-data
+  mongodb-config:
+    name: ${MONGODB_CONFIG_VOLUME:-datalab-mongodb-config}
+    external: ${MONGODB_CONFIG_EXTERNAL:-false}
+  redis-data:
+    name: ${REDIS_DATA_VOLUME:-datalab-redis-data}
+    external: ${REDIS_DATA_EXTERNAL:-false}
   minio-data:
     name: ${STACK_PREFIX:-datalab}-minio-data
   dataset-data:
     name: ${STACK_PREFIX:-datalab}-dataset-data
   skills-data:
     name: ${STACK_PREFIX:-datalab}-skills-data
+  open-data-downloads:
+    name: ${STACK_PREFIX:-datalab}-open-data-downloads
+  jupyter-workspaces:
+    name: ${JUPYTER_WORKSPACES_VOLUME:-datalab-jupyter-workspaces}
+    external: ${JUPYTER_WORKSPACES_EXTERNAL:-false}
 
 networks:
   datalab-network:

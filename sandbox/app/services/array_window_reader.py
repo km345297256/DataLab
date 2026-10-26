@@ -37,6 +37,10 @@ MAX_DECODED_BYTES = 16 * 1024**2
 MAX_CHUNKS = 128
 VALUE_SEMANTICS = "raw storage values; no CF scale/add_offset or finite fill masking"
 WARNING = "仅显示显式选择的原始存储值；未应用 CF 缩放、偏移或有限填充值掩膜。非有限值显示为空。"
+PHYSICAL_SEMANTICS = "physical values; scalar CF scale/add_offset after finite fill masking"
+PHYSICAL_WARNING = "仅对当前切片应用受支持的标量 CF 缩放、偏移和填充值掩膜；不转换时间日历或地理坐标，非有限值显示为空。"
+RAW_MISSING = "non-finite values are null; finite fill values retained"
+PHYSICAL_MISSING = "finite fill values masked before scale/add_offset; non-finite values are null"
 REASONS = {"", "link", "alias", "depth", "type", "shape", "storage", "filter", "chunk"}
 _IDENTIFIER = re.compile(r"v-[0-9a-f]{32}\Z")
 _SENSITIVE = re.compile(r"(?:/Users/|/home/|/tmp/|/private/|/var/|file:|https?://|[A-Za-z]:\\)", re.I)
@@ -61,7 +65,7 @@ def validate_array_window_options(kind, options):
         if options:
             _fail()
         return {}
-    if set(options) != {"variable", "selection", "decode"} or options["decode"] != "raw" or not isinstance(options["variable"], str) or not _IDENTIFIER.fullmatch(options["variable"]):
+    if set(options) != {"variable", "selection", "decode"} or not isinstance(options["decode"], str) or options["decode"] not in {"raw", "physical"} or not isinstance(options["variable"], str) or not _IDENTIFIER.fullmatch(options["variable"]):
         _fail()
     selection = options["selection"]
     if not isinstance(selection, list) or not 1 <= len(selection) <= MAX_RANK:
@@ -294,27 +298,53 @@ def _catalog(handle):
     return tree, variables, paths, truncated
 
 
-def _attributes(dataset):
+def _attributes(dataset, physical=False):
     """Read only tiny fixed-size whitelisted scalar attributes, never vlen."""
     import numpy as np
     output = {}
-    for name in ("units", "scale_factor", "add_offset", "_FillValue", "missing_value"):
+    if physical and any(name in dataset.attrs for name in ("_Unsigned", "valid_range", "valid_min", "valid_max")):
+        raise ArrayWindowError("此变量包含尚不支持的 CF 有效范围或无符号转换；请选择原始值模式。")
+    for name in ("units", "calendar", "scale_factor", "add_offset", "_FillValue", "missing_value"):
         if name not in dataset.attrs:
             continue
         aid = dataset.attrs.get_id(name)
         dtype = aid.dtype
         if aid.shape not in {(), (1,)} or dtype.itemsize > 128 or dtype.kind not in {"i", "u", "f", "S"} or dtype.metadata and not (dtype.kind == "S" and set(dtype.metadata) <= {"h5py_encoding"}):
+            if physical and name not in {"units", "calendar"}:
+                raise ArrayWindowError("CF 解码属性不是受支持的安全标量；请选择原始值模式。")
             continue
         value = dataset.attrs[name]
         if isinstance(value, np.ndarray):
             value = value.reshape(-1)[0]
-        if dtype.kind == "S" and name == "units":
+        if dtype.kind == "S" and name in {"units", "calendar"}:
             output[name] = _label(bytes(value).decode("utf-8", errors="replace"))
-        elif dtype.kind in {"i", "u", "f"} and name != "units":
+        elif dtype.kind in {"i", "u", "f"} and name not in {"units", "calendar"}:
             number = value.item() if hasattr(value, "item") else value
             if math.isfinite(number) and (not isinstance(number, int) or abs(number) <= 2**53 - 1):
                 output[name] = number
+            elif physical and (name in {"scale_factor", "add_offset"} or math.isfinite(number)):
+                raise ArrayWindowError("CF 解码属性不是可精确表示的有限标量；请选择原始值模式。")
+        elif physical and name not in {"units", "calendar"}:
+            raise ArrayWindowError("CF 解码属性不是数值；请选择原始值模式。")
     return output
+
+
+def _physical_values(values, attributes):
+    """Decode only the selected window, preserving the raw-domain fill mask."""
+    import numpy as np
+    mask = ~np.isfinite(values)
+    for name in ("_FillValue", "missing_value"):
+        if name in attributes:
+            mask |= values == attributes[name]
+    finite = values[~mask]
+    if values.dtype.kind in {"i", "u"} and any(abs(int(value)) > 2**53 - 1 for value in finite.flat):
+        raise ArrayWindowError("整数超出浏览器可精确表示的范围，请使用原始数据分析。")
+    with np.errstate(over="ignore", invalid="ignore"):
+        decoded = values.astype(np.float64) * attributes.get("scale_factor", 1) + attributes.get("add_offset", 0)
+    if np.any(~np.isfinite(decoded) & ~mask):
+        raise ArrayWindowError("CF 物理解码溢出 Float64 范围，请使用原始值模式或分析工具。")
+    decoded[mask] = np.nan
+    return decoded
 
 
 def _slice_plan(dataset, options):
@@ -388,6 +418,7 @@ def _verify_chunks(dataset, selection, source_size):
 def array_window_preview(read_range, size, fmt, kind="tree", options=None, limits=None):
     """Private v2 result. Call only inside the isolated window worker."""
     options = validate_array_window_options(kind, {} if options is None else options)
+    physical = options.get("decode") == "physical"
     if not isinstance(fmt, str) or fmt not in {"h5", "hdf5", "hdf", "nc", "nc4", "netcdf", "mat"}:
         _fail()
     source = RangeFile(read_range, size, limits)
@@ -412,7 +443,7 @@ def array_window_preview(read_range, size, fmt, kind="tree", options=None, limit
             tree, variables, paths, truncated = _catalog(handle)
             payload = {"contract_version": 2, "type": "array-window", "reader": "array-window", "kind": kind,
                        "media_type": "application/json", "choices": {"variables": variables}, "selected": options,
-                       "warnings": [WARNING], "sampled": False}
+                       "warnings": [PHYSICAL_WARNING if physical else WARNING], "sampled": False}
             attributes, chunks, decoded, nonfinite = {}, 0, 0, 0
             if kind == "tree":
                 payload["tree"] = tree
@@ -424,18 +455,22 @@ def array_window_preview(read_range, size, fmt, kind="tree", options=None, limit
                     _fail()
                 index, axes, chunks, decoded = _slice_plan(dataset, options)
                 _verify_chunks(dataset, options["selection"], size)
-                attributes = _attributes(dataset)
+                attributes = _attributes(dataset, physical)
                 values = dataset[index]
                 if values.size > MAX_ELEMENTS or values.ndim != (1 if kind == "series" else 2):
                     _fail()
-                if values.dtype.kind in {"i", "u"} and (np.any(values > 2**53 - 1) or np.any(values < -(2**53 - 1))):
+                if physical:
+                    values = _physical_values(values, attributes)
+                elif values.dtype.kind in {"i", "u"} and (np.any(values > 2**53 - 1) or np.any(values < -(2**53 - 1))):
                     _fail()  # Never silently lose integer precision in JSON/JS.
                 flat = [int(v) if isinstance(v, bool) else v for v in values.reshape(-1).tolist()]
                 nonfinite = sum(not math.isfinite(v) for v in flat)
                 payload["array"] = {"shape": list(values.shape), "dimensions": ["index_" + str(a["dimension"]) for a in axes],
                                     "values": [v if math.isfinite(v) else None for v in flat]}
                 payload["axes"] = axes
-            payload["metadata"] = {"format": fmt, "container": "HDF5", "input_mode": "window", "value_semantics": VALUE_SEMANTICS,
+            payload["metadata"] = {"format": fmt, "container": "HDF5", "input_mode": "window", "value_semantics": PHYSICAL_SEMANTICS if physical else VALUE_SEMANTICS,
+                "units": attributes.get("units", ""), "calendar": attributes.get("calendar", ""),
+                "missing_value_policy": PHYSICAL_MISSING if physical else RAW_MISSING, "coordinate_semantics": "zero-based dimension indices",
                 "source_bytes": size, "read_bytes": source.read_bytes, "read_requests": source.read_requests,
                 "chunks_touched": chunks, "decoded_chunk_bytes": decoded, "catalog_truncated": truncated,
                 "attributes": attributes, "nonfinite_values": nonfinite, "coordinates": "zero-based dimension indices; not geospatial coordinates",

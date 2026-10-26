@@ -2,7 +2,7 @@ from typing import Optional, Type, Sequence
 import asyncio
 import logging
 from datetime import datetime, UTC
-import time
+from contextlib import asynccontextmanager
 
 import httpx
 import docker
@@ -13,6 +13,12 @@ from app.domain.models.execution_node import ExecutionNodeCapacity, ExecutionNod
 from app.core.config import get_settings
 from app.domain.models.session import Session
 from app.domain.models.dataset import DatasetMount
+from app.domain.models.file import FileInfo
+from app.domain.models.object_file import ObjectFileMountError
+from app.infrastructure.external.sandbox.object_mount import (
+    ObjectMountSpec, ObjectMountIdentityError, release_object_mount_helpers,
+)
+from app.domain.utils.shutdown import join_cleanup
 from app.infrastructure.models.documents import ExecutionNodeDocument, SandboxAllocationDocument
 from app.infrastructure.external.sandbox.docker_sandbox import DockerSandbox
 from app.infrastructure.external.sandbox.node_health import LOCAL_DEFAULT_NODE_ID, check_execution_node, ensure_local_default_node, mark_execution_node_unhealthy, resolve_node_credential
@@ -22,7 +28,7 @@ _SANDBOX_ADMISSION_LOCK = asyncio.Lock()
 
 
 class SandboxCapacityError(RuntimeError):
-    """Raised when no execution slot becomes available within the queue window."""
+    """The eligible execution nodes currently have no free slot."""
 
 
 async def _ensure_local_default_node() -> None:
@@ -63,35 +69,46 @@ async def _list_execution_node_candidates(required_node_ids: set[str] | None = N
     return [node for node in candidates if node.capacity.max_sandboxes > node.health.running_sandboxes]
 
 
+@asynccontextmanager
+async def _admit_execution_node_candidates(
+    required_node_ids: set[str] | None = None,
+    *,
+    wait_for_capacity: bool = True,
+):
+    """Wait without a deadline; serialize capacity checks with actual admission.
+
+    Never hold the admission lock while sleeping for capacity. A full local
+    node (including a background warm-pool request) must not block work whose
+    eligible remote node still has space. Cancellation releases the lock.
+    """
+    settings = get_settings()
+    poll_seconds = max(0.1, float(settings.sandbox_capacity_poll_seconds))
+    logged_wait = False
+    while True:
+        async with _SANDBOX_ADMISSION_LOCK:
+            try:
+                candidates = (
+                    await _list_execution_node_candidates(required_node_ids)
+                    if required_node_ids is not None
+                    else await _list_execution_node_candidates()
+                )
+            except SandboxCapacityError:
+                if not wait_for_capacity:
+                    raise
+            else:
+                yield candidates
+                return
+        if not logged_wait:
+            logger.info("Sandbox capacity is full; waiting for an available slot")
+            logged_wait = True
+        await asyncio.sleep(poll_seconds)
+
+
 async def _wait_for_execution_node_candidates(
     required_node_ids: set[str] | None = None,
 ) -> list[ExecutionNodeDocument]:
-    settings = get_settings()
-    wait_seconds = max(0.0, float(settings.sandbox_capacity_wait_seconds))
-    poll_seconds = max(0.1, float(settings.sandbox_capacity_poll_seconds))
-    deadline = time.monotonic() + wait_seconds
-    logged_wait = False
-    while True:
-        try:
-            return (
-                await _list_execution_node_candidates(required_node_ids)
-                if required_node_ids is not None
-                else await _list_execution_node_candidates()
-            )
-        except SandboxCapacityError as exc:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise SandboxCapacityError(
-                    "Analysis environments are busy; no sandbox slot became available "
-                    f"within {wait_seconds:.0f} seconds"
-                ) from exc
-            if not logged_wait:
-                logger.info(
-                    "Sandbox capacity is full; queueing allocation for up to %.1fs",
-                    wait_seconds,
-                )
-                logged_wait = True
-            await asyncio.sleep(min(poll_seconds, remaining))
+    async with _admit_execution_node_candidates(required_node_ids) as candidates:
+        return candidates
 
 
 async def _select_execution_node() -> ExecutionNodeDocument:
@@ -134,8 +151,7 @@ class NodeBoundSandbox:
         # A resumed container consumes the same active slot as a newly-created
         # one. Serialize both paths so concurrent requests cannot overcommit a
         # node after observing the same stale health snapshot.
-        async with _SANDBOX_ADMISSION_LOCK:
-            await _wait_for_execution_node_candidates({self.node.node_id})
+        async with _admit_execution_node_candidates({self.node.node_id}):
             return await self.sandbox.resume()
 
 
@@ -162,7 +178,7 @@ class WorkerAgentSandbox(DockerSandbox):
     ):
         self._worker_url = worker_url.rstrip("/")
         self._worker_headers = headers or {}
-        self.client = httpx.AsyncClient(timeout=600)
+        self.client = httpx.AsyncClient(timeout=None)
         self._container_name = sandbox_id
         self._docker_host = None
         self._image_reference = image_reference
@@ -382,10 +398,73 @@ async def _upsert_allocation(
         logger.warning("Failed to upsert sandbox allocation for %s: %s", sandbox.id, exc)
 
 
+async def _retire_failed_allocation(sandbox: Sandbox, failure: BaseException) -> None:
+    async def destroy() -> None:
+        if not await sandbox.destroy():
+            raise RuntimeError("Sandbox allocation cleanup failed")
+
+    try:
+        await join_cleanup(asyncio.create_task(destroy()))
+    except BaseException as cleanup_error:
+        raise BaseExceptionGroup("Sandbox allocation and cleanup failed", [failure, cleanup_error])
+
+
+async def _own_sandbox_allocation(operation) -> Sandbox:
+    """Creation owns its result until the caller receives it, even on cancel.
+
+    Cancelling a Docker to_thread or worker HTTP await does not cancel the
+    external creation. Keep that transaction alive, then retire its returned
+    handle before releasing the admission slot. Capacity waiting happens before
+    this helper and remains immediately cancellable.
+    """
+    creation = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(creation)
+    except asyncio.CancelledError as cancellation:
+        async def retire_creation() -> None:
+            sandbox = await creation
+            await _retire_failed_allocation(sandbox, cancellation)
+
+        try:
+            await join_cleanup(asyncio.create_task(retire_creation()))
+        except BaseException as error:
+            # join_cleanup preserves repeated cancellation via its cause; don't
+            # lose a real creation/retirement failure inside a CancelledError.
+            while isinstance(error, asyncio.CancelledError):
+                error = error.__cause__
+            if error is not None:
+                raise BaseExceptionGroup("Sandbox creation cancellation and cleanup failed", [cancellation, error])
+            raise cancellation
+        raise cancellation
+
+
+async def _restore_local_sandbox(sandbox_id: str) -> Sandbox:
+    try:
+        return await DockerSandbox.get(sandbox_id)
+    except ObjectMountIdentityError:
+        # Docker metadata confirmed the selected view is gone/invalid. Retire
+        # only that owned runtime before allowing a fresh allocation. A network
+        # failure is deliberately not classified as an identity failure.
+        broken = DockerSandbox(container_name=sandbox_id)
+        if not await broken.destroy():
+            raise ObjectFileMountError("失效的只读挂载环境未能安全释放，请稍后重试。") from None
+        raise SandboxNotFoundError("The previous read-only input mount is no longer available") from None
+    except docker.errors.NotFound:
+        client = docker.from_env(timeout=get_settings().sandbox_docker_create_timeout_seconds)
+        try:
+            await release_object_mount_helpers(client, sandbox_name=sandbox_id)
+        finally:
+            client.close()
+        raise SandboxNotFoundError("The previous analysis environment is no longer available") from None
+
+
 class LocalDockerRuntime:
-    async def allocate(self, session: Optional[Session] = None, dataset_ids: Sequence[str] | None = None) -> Sandbox:
+    async def allocate(self, session: Optional[Session] = None, dataset_ids: Sequence[str] | None = None,
+                       input_files: Sequence[FileInfo] | None = None) -> Sandbox:
         required_node_ids = None
         dataset_service = None
+        if input_files and (session is None or not session.user_id):
+            raise ObjectFileMountError("挂载分析文件需要有效的任务所有者。")
         if dataset_ids:
             from app.application.services.data_center_dataset_service import DataCenterDatasetService
 
@@ -394,9 +473,15 @@ class LocalDockerRuntime:
                 dataset_ids,
                 user_id=session.user_id if session else None,
             )
+        if input_files:
+            # Object helper support is explicitly local until another node
+            # implements the same scoped-grant and readonly-bind boundary.
+            required_node_ids = ({LOCAL_DEFAULT_NODE_ID} if required_node_ids is None
+                                 else required_node_ids & {LOCAL_DEFAULT_NODE_ID})
+            if not required_node_ids:
+                raise ObjectFileMountError("所选数据所在节点尚未支持只读对象挂载。")
         last_error: Optional[Exception] = None
-        async with _SANDBOX_ADMISSION_LOCK:
-            candidates = await _wait_for_execution_node_candidates(required_node_ids)
+        async with _admit_execution_node_candidates(required_node_ids) as candidates:
             for node in candidates:
                 try:
                     mounts = (
@@ -408,7 +493,17 @@ class LocalDockerRuntime:
                         if dataset_service
                         else []
                     )
-                    return await self._allocate_on_node(node, session, mounts)
+                    operation = (self._allocate_on_node(node, session, mounts, input_files=input_files)
+                                 if input_files else self._allocate_on_node(node, session, mounts))
+                    return await _own_sandbox_allocation(operation)
+                except BaseExceptionGroup:
+                    # Failed retirement leaves ownership unresolved. Never
+                    # allocate another container on a different node as retry.
+                    raise
+                except ObjectFileMountError:
+                    # A denied object grant or unavailable mount is an input
+                    # admission failure, not an unhealthy execution machine.
+                    raise
                 except Exception as exc:
                     last_error = exc
                     logger.warning("Sandbox allocation failed on node %s: %s", node.node_id, exc)
@@ -424,9 +519,23 @@ class LocalDockerRuntime:
         node: ExecutionNodeDocument,
         session: Optional[Session] = None,
         mounts: Sequence[DatasetMount] | None = None,
+        input_files: Sequence[FileInfo] | None = None,
     ) -> Sandbox:
         docker_host = _node_docker_host(node)
-        if node.type == ExecutionNodeType.WORKER_AGENT:
+        if input_files:
+            if node.type != ExecutionNodeType.LOCAL_DOCKER or docker_host or session is None or not session.user_id:
+                raise ObjectFileMountError("当前执行节点不支持只读对象挂载。")
+            from app.application.services.object_mount_service import get_object_mount_service
+
+            service = get_object_mount_service()
+            grant = await service.issue(session.id, session.user_id, input_files)
+            spec = ObjectMountSpec(grant.grant_id, grant.token, tuple(input_files))
+            try:
+                sandbox = await DockerSandbox.create(mounts=list(mounts or []), object_mount=spec)
+            except BaseException:
+                await join_cleanup(asyncio.create_task(service.revoke(grant.grant_id)))
+                raise
+        elif node.type == ExecutionNodeType.WORKER_AGENT:
             sandbox = (
                 await _create_worker_sandbox(node, session, mounts)
                 if mounts
@@ -441,29 +550,73 @@ class LocalDockerRuntime:
                 )
             else:
                 sandbox = await DockerSandbox.create(list(mounts)) if mounts else await DockerSandbox.create()
-        if session and node.type != ExecutionNodeType.WORKER_AGENT:
-            await DockerSandbox.create_record(
-                sandbox.id,
-                sandbox.ip,
-                status="assigned",
-                session_id=session.id,
-            )
-        if session:
-            await _upsert_allocation(sandbox=sandbox, node_id=node.node_id, session=session)
-        return NodeBoundSandbox(sandbox, node)
+        try:
+            if session and node.type != ExecutionNodeType.WORKER_AGENT:
+                await DockerSandbox.create_record(
+                    sandbox.id,
+                    sandbox.ip,
+                    status="assigned",
+                    session_id=session.id,
+                )
+            if session:
+                await _upsert_allocation(sandbox=sandbox, node_id=node.node_id, session=session)
+            return NodeBoundSandbox(sandbox, node)
+        except BaseException as error:
+            await _retire_failed_allocation(sandbox, error)
+            raise
 
-    async def allocate_local_warm(self) -> Sandbox:
+    async def allocate_local_warm(self, *, wait_for_capacity: bool = True) -> Sandbox:
         """Allocate a warm-pool sandbox only on this backend's Docker node."""
 
-        async with _SANDBOX_ADMISSION_LOCK:
-            node = (await _wait_for_execution_node_candidates({LOCAL_DEFAULT_NODE_ID}))[0]
-            sandbox = await self._allocate_on_node(node)
-            await _upsert_allocation(
-                sandbox=sandbox,
-                node_id=node.node_id,
-                status=SandboxAllocationStatus.RUNNING,
-            )
-            return sandbox
+        async with _admit_execution_node_candidates(
+            {LOCAL_DEFAULT_NODE_ID}, wait_for_capacity=wait_for_capacity,
+        ) as candidates:
+            node = candidates[0]
+            async def release(sandbox, failure):
+                async def destroy():
+                    if not await sandbox.destroy():
+                        raise RuntimeError("Warm allocation cleanup failed")
+                try:
+                    await join_cleanup(asyncio.create_task(destroy()))
+                except asyncio.CancelledError as cancellation:
+                    if cancellation.__cause__ is not None:
+                        raise BaseExceptionGroup("Warm allocation and cleanup failed", [failure, cancellation.__cause__])
+                    raise failure
+                except BaseException as cleanup_error:
+                    raise BaseExceptionGroup("Warm allocation and cleanup failed", [failure, cleanup_error])
+
+            # Capacity waiting above remains cancellable. Once creation starts,
+            # retain ownership until it yields a handle we can return or retire;
+            # cancelling an await must not orphan a Docker-side creation.
+            creation = asyncio.create_task(self._allocate_on_node(node))
+            try:
+                sandbox = await asyncio.shield(creation)
+            except asyncio.CancelledError as cancellation:
+                async def retire_creation():
+                    sandbox = await creation
+                    await release(sandbox, cancellation)
+                try:
+                    await join_cleanup(asyncio.create_task(retire_creation()))
+                except BaseException as error:
+                    # Repeated cancellation after successful cleanup is still
+                    # cancellation; a real creation/cleanup failure must survive
+                    # gather(return_exceptions=True), which erases cancel causes.
+                    while isinstance(error, asyncio.CancelledError):
+                        error = error.__cause__
+                    if error is not None:
+                        raise BaseExceptionGroup("Warm creation cancellation and cleanup failed", [cancellation, error])
+                    raise cancellation
+                raise cancellation
+            try:
+                await _upsert_allocation(
+                    sandbox=sandbox,
+                    node_id=node.node_id,
+                    status=SandboxAllocationStatus.RUNNING,
+                )
+                return sandbox
+            except BaseException as error:
+                await release(sandbox, error)
+                raise
 
     async def restore(self, sandbox_id: str) -> Sandbox:
         allocation = await _restore_allocation_for_sandbox(sandbox_id)
@@ -489,7 +642,7 @@ class LocalDockerRuntime:
                 ) from exc
         if allocation and allocation.node_id == LOCAL_DEFAULT_NODE_ID:
             try:
-                local_sandbox = await DockerSandbox.get(sandbox_id)
+                local_sandbox = await _restore_local_sandbox(sandbox_id)
             except docker.errors.NotFound as exc:
                 raise SandboxNotFoundError(
                     f"Sandbox {sandbox_id} no longer exists"
@@ -520,7 +673,7 @@ class LocalDockerRuntime:
             )
             return worker_sandbox
         try:
-            local_sandbox = await DockerSandbox.get(sandbox_id)
+            local_sandbox = await _restore_local_sandbox(sandbox_id)
         except docker.errors.NotFound as exc:
             raise SandboxNotFoundError(
                 f"Sandbox {sandbox_id} no longer exists"
@@ -540,6 +693,12 @@ class LocalDockerRuntime:
     async def assign(self, sandbox: Sandbox, session: Session, task_id: Optional[str] = None) -> None:
         node = sandbox.node if isinstance(sandbox, NodeBoundSandbox) else None
         raw_sandbox = sandbox.sandbox if isinstance(sandbox, NodeBoundSandbox) else sandbox
+        grant_id = getattr(raw_sandbox, "object_mount_grant_id", None)
+        if isinstance(grant_id, str) and grant_id:
+            from app.application.services.object_mount_service import get_object_mount_service
+
+            if not await get_object_mount_service().renew(grant_id, session.user_id, session.id):
+                raise ObjectFileMountError("分析文件的只读挂载授权已失效，请重新选择文件后重试。")
         if isinstance(raw_sandbox, WorkerAgentSandbox):
             raw_sandbox = await _assign_worker_sandbox(raw_sandbox, session, task_id)
         else:
@@ -559,7 +718,12 @@ class SandboxClassRuntime:
     def __init__(self, sandbox_cls: Type[Sandbox]):
         self._sandbox_cls = sandbox_cls
 
-    async def allocate(self, session: Optional[Session] = None, dataset_ids: Sequence[str] | None = None) -> Sandbox:
+    async def allocate(self, session: Optional[Session] = None, dataset_ids: Sequence[str] | None = None,
+                       input_files: Sequence[FileInfo] | None = None) -> Sandbox:
+        if input_files:
+            if self._sandbox_cls is not DockerSandbox:
+                raise ObjectFileMountError("当前执行环境不支持只读对象挂载。")
+            return await LocalDockerRuntime().allocate(session, dataset_ids, input_files)
         if dataset_ids and self._sandbox_cls is not DockerSandbox:
             raise RuntimeError("The configured sandbox runtime does not support dataset mounts")
         mounts = []
@@ -572,18 +736,27 @@ class SandboxClassRuntime:
                 LOCAL_DEFAULT_NODE_ID,
                 user_id=session.user_id if session else None,
             )
-        sandbox = await self._sandbox_cls.create(mounts=mounts) if mounts else await self._sandbox_cls.create()
-        if isinstance(sandbox, DockerSandbox) and session:
-            await DockerSandbox.create_record(
-                sandbox.id,
-                sandbox.ip,
-                status="assigned",
-                session_id=session.id,
-            )
-            await _upsert_allocation(sandbox=sandbox, node_id=LOCAL_DEFAULT_NODE_ID, session=session)
-        return sandbox
+        async def create() -> Sandbox:
+            sandbox = await self._sandbox_cls.create(mounts=mounts) if mounts else await self._sandbox_cls.create()
+            try:
+                if isinstance(sandbox, DockerSandbox) and session:
+                    await DockerSandbox.create_record(
+                        sandbox.id,
+                        sandbox.ip,
+                        status="assigned",
+                        session_id=session.id,
+                    )
+                    await _upsert_allocation(sandbox=sandbox, node_id=LOCAL_DEFAULT_NODE_ID, session=session)
+                return sandbox
+            except BaseException as error:
+                await _retire_failed_allocation(sandbox, error)
+                raise
+
+        return await _own_sandbox_allocation(create())
 
     async def restore(self, sandbox_id: str) -> Sandbox:
+        if self._sandbox_cls is DockerSandbox:
+            return await _restore_local_sandbox(sandbox_id)
         return await self._sandbox_cls.get(sandbox_id)
 
     async def assign(self, sandbox: Sandbox, session: Session, task_id: Optional[str] = None) -> None:

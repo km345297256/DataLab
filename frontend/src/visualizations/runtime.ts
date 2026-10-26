@@ -2,6 +2,7 @@ import { BASE_URL } from '../api/client';
 import { getFileDownloadUrl, type FileInfo, type FilePreviewPage, type MolecularPreviewPreparation } from '../api/file';
 import type { VisualizationPlugin } from './contract';
 import { readBoundedBinary } from './boundedBinary';
+import { authenticatedApiFetch } from '../utils/authenticatedFetch';
 
 export type VisualizationOperation = 'bytes' | 'page' | 'preview' | 'prepare';
 export interface VisualizationResult {
@@ -60,7 +61,7 @@ async function fetchVisualization(file: FileInfo, plugin: VisualizationPlugin, o
   if (sharedPage() && !plugin.capabilities.shared) throw new Error('共享页面不开放此读取操作。');
   const { kind, version, ...readerOptions } = options;
   const pinnedVersion = Object.prototype.hasOwnProperty.call(options, 'version') ? version : versions.get(signal)?.get(versionKey(file, plugin));
-  const response = await fetch(`${BASE_URL}/files/${encodeURIComponent(file.file_id)}/visualization`, {
+  const response = await authenticatedApiFetch(BASE_URL, `${BASE_URL}/files/${encodeURIComponent(file.file_id)}/visualization`, {
     method: 'POST', credentials: 'same-origin', signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plugin_id: plugin.id, operation, version: readerOptions.resource_id ? undefined : pinnedVersion, kind, options: readerOptions }),

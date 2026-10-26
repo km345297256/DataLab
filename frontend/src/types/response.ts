@@ -54,6 +54,9 @@ export interface ConsoleRecord {
     output: string;
     session_id: string;
     console: ConsoleRecord[];
+    output_metadata?: import('../utils/shellOutputPage').ShellOutputMetadata;
+    output_page?: import('../utils/shellOutputPage').ShellOutputPage;
+    console_truncated?: boolean;
   }
 
 export interface FileViewResponse {

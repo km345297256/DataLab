@@ -455,6 +455,7 @@ async def clear_session_sandbox_references(
     for session in sessions:
         session.sandbox_id = None
         session.sandbox_dataset_ids = []
+        session.sandbox_input_signature = None
         # Task instances are process-local. If the backing container vanished,
         # a persisted task id cannot be resumed safely after reconciliation.
         session.task_id = None

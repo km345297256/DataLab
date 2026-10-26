@@ -401,10 +401,11 @@ def test_dynamic_system_prompt_excludes_untrusted_session_context():
 
     prompt = flow._dynamic_system_prompt()
 
-    assert "<runtime_context>" in prompt
-    assert "Current session ID: session-123" in prompt
-    assert "Current local time:" in prompt
-    assert "Current UTC time:" in prompt
+    assert "<runtime_context>" not in prompt
+    runtime_facts = flow._runtime_context_prompt()
+    assert "Current session ID: session-123" in runtime_facts
+    assert "Current local time:" in runtime_facts
+    assert "Current UTC time:" in runtime_facts
     assert "skill-context" in prompt
     assert "session-context" not in prompt
     assert flow._dynamic_user_context() == "session-context"
@@ -412,11 +413,15 @@ def test_dynamic_system_prompt_excludes_untrusted_session_context():
 
 def test_docker_sandbox_file_upload_rewinds_stream(monkeypatch):
     import io
+    from types import SimpleNamespace
 
     captured = {}
 
     class FakeClient:
-        async def post(self, url, files=None, data=None):
+        async def head(self, url):
+            return SimpleNamespace(status_code=404)
+
+        async def post(self, url, files=None, data=None, timeout=None):
             file_obj = files["file"][1]
             captured["position"] = file_obj.tell()
             captured["content"] = file_obj.read()
@@ -458,29 +463,34 @@ def test_tool_rejects_unexpected_model_arguments_without_execution():
     assert error.value.fields == [{"field": "url", "type": "unknown_field"}]
 
 
-def test_unsynced_message_attachment_is_not_dropped(monkeypatch):
+def test_unmounted_message_attachment_stops_processing_without_dropping_the_request(monkeypatch):
     import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import pytest
 
     runner = object.__new__(AgentTaskRunner)
     runner._agent_id = "agent"
-
-    async def fake_sync_file_to_sandbox(file_id):
-        return None
+    runner._user_id = "owner"
 
     class FakeSessionRepository:
         async def add_file(self, session_id, file_info):
             raise AssertionError("unsynced attachment should not be added as session file")
 
-    runner._sync_file_to_sandbox = fake_sync_file_to_sandbox
     runner._session_repository = FakeSessionRepository()
     runner._session_id = "session"
 
     original = FileInfo(file_id="file-1", filename="image.png")
     event = MessageEvent(message="看图", role="user", attachments=[original])
+    runner._file_storage = SimpleNamespace(get_file_info=AsyncMock(return_value=original),
+        download_file=AsyncMock(side_effect=AssertionError("no copy fallback")))
+    runner._sandbox = SimpleNamespace(verify_readonly_inputs=AsyncMock(side_effect=RuntimeError("mount unavailable")))
 
-    asyncio.run(runner._sync_message_attachments_to_sandbox(event))
+    with pytest.raises(ValueError, match="只读挂载不可用"):
+        asyncio.run(runner._sync_message_attachments_to_sandbox(event))
 
     assert event.attachments == [original]
+    runner._file_storage.download_file.assert_not_awaited()
 
 
 def test_upload_file_to_storage_wraps_bytes():
@@ -507,18 +517,26 @@ def test_upload_file_to_storage_wraps_bytes():
 def test_vision_agent_builds_image_block_from_storage(monkeypatch):
     import asyncio
     import io
+    from PIL import Image
 
     monkeypatch.setenv("API_KEY", "default-key")
 
+    payload = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(payload, format="PNG")
+
     class FakeStorage:
-        async def download_file(self, file_id, user_id=None):
+        async def get_file_info(self, file_id, user_id=None):
             assert file_id == "file-1"
             assert user_id == "user-1"
-            return io.BytesIO(b"image-bytes"), FileInfo(
+            return FileInfo(
                 file_id=file_id,
                 filename="image.png",
                 content_type="image/png",
+                size=len(payload.getvalue()),
             )
+
+        async def download_file_range(self, file_id, user_id, *, offset, length):
+            return payload.getvalue()[offset:offset + length], await self.get_file_info(file_id, user_id)
 
     agent = VisionAgent(
         agent_id="agent",

@@ -19,16 +19,14 @@ afterEach(() => panel.hideFilePanel());
 async function testRouter(t, initialPath) {
   const MainLayout = {};
   const ShareLayout = {};
-  const DatasetSeekPage = {};
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/dataset/seek/:datasetId', component: DatasetSeekPage },
       {
         path: '/chat',
         component: MainLayout,
         children: [
-          { path: 'datasets', alias: '/datasets', component: {} },
+          { path: 'my-data', alias: '/my-data', component: {} },
           { path: ':sessionId', component: {} },
         ],
       },
@@ -54,11 +52,11 @@ function deferred() {
   return { promise, resolve };
 }
 
-test('dataset exploration to newly mounted management layout clears shared preview state', async (t) => {
-  const router = await testRouter(t, '/dataset/seek/dataset-a');
+test('shared exploration to newly mounted personal library clears preview state', async (t) => {
+  const router = await testRouter(t, '/share/task-a');
   const previousLayout = router.currentRoute.value.matched[0].components.default;
   panel.showFilePanel(fileA, files);
-  await router.push('/datasets');
+  await router.push('/my-data');
   assert.notEqual(router.currentRoute.value.matched[0].components.default, previousLayout);
   assertClosed();
 });
@@ -78,16 +76,16 @@ test('switching tasks inside a reused main layout clears the previous task file'
 test('leaving a shared analysis for management clears the shared layout preview', async (t) => {
   const router = await testRouter(t, '/share/task-a');
   panel.showFilePanel(fileA, files);
-  await router.push('/datasets');
+  await router.push('/my-data');
   assertClosed();
 });
 
 test('an aborted navigation retains the current file and pending preparation', async (t) => {
   const router = await testRouter(t, '/chat/task-a');
-  router.beforeEach((to) => to.path === '/datasets' ? false : undefined);
+  router.beforeEach((to) => to.path === '/my-data' ? false : undefined);
   panel.showFilePanel(fileA, files);
   const request = panel.beginFilePreview();
-  const failure = await router.push('/datasets');
+  const failure = await router.push('/my-data');
   assert.equal(isNavigationFailure(failure, NavigationFailureType.aborted), true);
   assert.equal(panel.isShow.value, true);
   assert.equal(panel.fileInfo.value.file_id, fileA.file_id);
@@ -121,11 +119,11 @@ test('closing clears file references and restores visibility for subsequent prev
 });
 
 test('an async preparation completing after navigation cannot reopen the panel', async (t) => {
-  const router = await testRouter(t, '/dataset/seek/dataset-a');
+  const router = await testRouter(t, '/share/task-a');
   const request = panel.beginFilePreview();
   const preparation = deferred();
   const completion = preparation.promise.then((file) => request.show(file, files));
-  await router.push('/datasets');
+  await router.push('/my-data');
   preparation.resolve(fileA);
   assert.equal(await completion, false);
   assert.equal(request.isCurrent(), false);
@@ -163,7 +161,7 @@ test('a newer preparation invalidates an older one even before either completes'
 });
 
 test('resetting a conversation without URL changes invalidates a pending preparation', async (t) => {
-  const router = await testRouter(t, '/dataset/seek/dataset-a');
+  const router = await testRouter(t, '/share/task-a');
   const path = router.currentRoute.value.fullPath;
   const request = panel.beginFilePreview();
   panel.hideFilePanel();
@@ -247,33 +245,18 @@ test('application router installs the shared lifecycle independently of layout m
   assert.match(router, /installFilePanelRouteLifecycle\(router\)/);
 });
 
-test('same-page conversation reset closes previews before clearing the previous task', () => {
-  const page = source('../src/pages/DatasetSeekPage.vue');
-  const reset = page.slice(page.indexOf('function clearConversationState()'), page.indexOf('async function loadConversation('));
-  assert.match(reset, /function clearConversationState\(\)\s*\{\s*hideFilePanel\(\)/);
-  const load = page.slice(page.indexOf('async function loadConversation('), page.indexOf('async function restoreConversation('));
-  assert.ok(load.indexOf('clearConversationState()') >= 0);
-  assert.ok(load.indexOf('clearConversationState()') < load.indexOf('await getSessionHistory('));
-  const fresh = page.slice(page.indexOf('function newConversationFromHistory()'), page.indexOf('async function stop()'));
-  assert.match(fresh, /clearConversationState\(\)/);
-});
-
-test('async shapefile preparation captures its request before awaiting and uses guarded completion', () => {
-  const page = source('../src/pages/DatasetSeekPage.vue');
-  const start = page.indexOf('async function openShapefilePreview(');
-  assert.ok(start >= 0);
-  const preview = page.slice(start, page.indexOf('function openMolecularPreview(', start));
-  const capture = preview.indexOf('const previewRequest = beginFilePreview()');
-  const preparation = preview.indexOf('await prepareShapefilePreview(');
-  assert.ok(capture >= 0 && preparation > capture);
-  assert.match(preview.slice(preparation), /if \(selected\) previewRequest\.show\(selected, files\)/);
-  assert.match(preview, /if \(previewRequest\.isCurrent\(\)\) showErrorToast/);
-  assert.doesNotMatch(preview, /\bshowFilePanel\(/);
-});
-
 test('switching to the tool panel resets previews and unregisters only its own handler', () => {
   const component = source('../src/components/FilePanel.vue');
   assert.match(component, /const handleToolPanelShown = \(\) =>\s*\{\s*hideFilePanel\(\)\s*visible\.value = false/);
   assert.match(component, /eventBus\.on\(EVENT_SHOW_TOOL_PANEL, handleToolPanelShown\)/);
   assert.match(component, /eventBus\.off\(EVENT_SHOW_TOOL_PANEL, handleToolPanelShown\)/);
 });
+
+test('identity cleanup hides a private file and invalidates delayed preview preparation', () => {
+  panel.showFilePanel({ file_id: 'alice-private', filename: 'alice.csv' })
+  const pending = panel.beginFilePreview()
+  eventBus.emit('auth:cleared')
+  assert.equal(panel.isShow.value, false)
+  assert.equal(panel.fileInfo.value, undefined)
+  assert.equal(pending.show({ file_id: 'alice-late', filename: 'private.csv' }), false)
+})

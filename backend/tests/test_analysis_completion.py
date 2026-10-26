@@ -24,6 +24,15 @@ def assess(requirements, artifacts, **kwargs):
                            execution_success=True, **kwargs)
 
 
+def test_cancelled_validation_never_becomes_invalid_file_or_rewrite_permission():
+    record, uploaded = artifact()
+    record.update(valid=False, reason="validation_cancelled")
+    outcome = assess([{"kind": "image"}], [(record, uploaded)])
+    assert outcome.status == "failed"
+    assert outcome.reason_code == "validation_unavailable"
+    assert outcome.issues[0].reason_code == "validation_unavailable"
+
+
 @pytest.mark.parametrize("kind", ["image", "any"])
 def test_code_attachment_never_satisfies_a_result_requirement(kind):
     outcome = assess([{"kind": kind}], [artifact("script.py", "code")])
@@ -241,6 +250,43 @@ def test_partial_summary_reports_the_actual_chart_and_code_without_a_generic_scr
     assert "代码附件不代表" not in text
     assert "阶段性文件" not in text
     assert "/home/ubuntu" not in text
+
+
+def test_summary_distinguishes_missing_markdown_from_delivered_json_reports():
+    files = [artifact(f"result-{index}.json", "report", identity=f"json-{index}") for index in range(3)]
+    outcome = assess([{"kind": "report", "formats": ["md"]}], files)
+    before = outcome.model_dump()
+    text = outcome_message(outcome, delivered_files=[uploaded for _, uploaded in files])
+    assert "已交付并保留：报告 × 3。" in text
+    assert "待完成：报告（MD） × 1。" in text
+    assert outcome.model_dump() == before
+    assert outcome.status == "partial"
+    assert outcome.reason_code == "artifacts_missing"
+    assert [(item.kind, item.min_count, item.formats) for item in outcome.missing] == [("report", 1, ["md"])]
+
+
+@pytest.mark.parametrize("formats,expected", [
+    ([".MD", "md", "TXT"], "报告（MD / TXT） × 2"),
+    ([], "报告 × 2"),
+    (["unknownformat"], "报告 × 2"),
+])
+def test_missing_summary_formats_are_bounded_labels(formats, expected):
+    outcome = AnalysisOutcome(status="partial", reason_code="artifacts_missing", missing=[
+        DeliverableRequirement(kind="report", min_count=2, formats=formats),
+    ])
+    assert f"待完成：{expected}。" in outcome_message(outcome)
+
+
+@pytest.mark.parametrize("formats", [
+    None, "md", {}, [None], [1], ["md", "/private/secret"], ["<script>"],
+    ["md\nsecret"], [" md "], ["..md"], ["md"] * 9,
+])
+def test_missing_summary_does_not_expose_malformed_formats_from_internal_copies(formats):
+    outcome = AnalysisOutcome(status="partial", reason_code="artifacts_missing", missing=[
+        DeliverableRequirement(kind="report"),
+    ])
+    outcome.missing[0] = outcome.missing[0].model_copy(update={"formats": formats})
+    assert "待完成：报告 × 1。" in outcome_message(outcome)
 
 
 def test_success_summary_does_not_say_failed_or_hide_verified_delivery_types():

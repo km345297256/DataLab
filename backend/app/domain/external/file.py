@@ -1,8 +1,23 @@
 from typing import Protocol, BinaryIO, Optional, Dict, Any, Tuple
 from app.domain.models.file import FileInfo
+from app.domain.models.object_file import ObjectFileReference
 
 class FileStorage(Protocol):
     """File storage service interface for file upload and download operations"""
+
+    async def get_object_reference(self, file_id: str, user_id: str) -> ObjectFileReference:
+        """Resolve an owned object for a server-side mount without reading bytes.
+
+        Ownership is mandatory. Unsupported backends must reject the request;
+        they must never materialize a local copy as a mount fallback.
+        """
+        ...
+
+    async def read_object_range(
+        self, reference: ObjectFileReference, user_id: str, *, offset: int, length: int,
+    ) -> bytes:
+        """Read a bounded range pinned to an authorized immutable object version."""
+        ...
     
     async def upload_file(
         self,

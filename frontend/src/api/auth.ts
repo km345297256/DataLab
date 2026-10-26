@@ -6,6 +6,30 @@ import { apiClient, ApiResponse } from './client';
  */
 export type UserRole = 'admin' | 'user' | 'software';
 export type RegistrationStatus = 'pending' | 'approved' | 'rejected';
+export type UserStatusFilter = RegistrationStatus | 'active' | 'inactive';
+
+export interface UserListQuery {
+  query?: string;
+  role?: UserRole;
+  status?: UserStatusFilter;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listUsers(params: UserListQuery = {}, signal?: AbortSignal): Promise<{ users: User[]; total: number }> {
+  const response = await apiClient.get<ApiResponse<{ users: User[]; total: number }>>('/auth/users', { params, signal });
+  return response.data.data;
+}
+
+export async function updateUser(userId: string, request: { role?: UserRole; is_active?: boolean }): Promise<User> {
+  const response = await apiClient.patch<ApiResponse<User>>(`/auth/user/${encodeURIComponent(userId)}`, request);
+  return response.data.data;
+}
+
+export async function decideRegistration(userId: string, status: 'approved' | 'rejected'): Promise<User> {
+  const response = await apiClient.post<ApiResponse<User>>(`/auth/registrations/${encodeURIComponent(userId)}/decision`, { status });
+  return response.data.data;
+}
 
 /**
  * User response type
@@ -237,7 +261,7 @@ export async function refreshToken(request: RefreshTokenRequest): Promise<Refres
  * @returns Success response
  */
 export async function logout(): Promise<{}> {
-  const response = await apiClient.post<ApiResponse<{}>>('/auth/logout');
+  const response = await apiClient.post<ApiResponse<{}>>('/auth/logout', { refresh_token: getStoredRefreshToken() });
   return response.data.data;
 }
 

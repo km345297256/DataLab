@@ -15,4 +15,13 @@ def test_message_ask_user_tool_description_is_not_generic_clarification():
     assert tool is not None
     assert "Use only when execution is blocked" in tool.description
     assert "Do not use for optional preferences" in tool.description
-    assert "reasonable assumption and continue" in tool.description
+    assert "ask instead of guessing" in tool.description
+    assert "First inspect the selected data" in tool.description
+    assert "reasonable assumption and continue" not in tool.description
+
+
+def test_question_schema_supports_reason_and_bounded_options():
+    tool = MessageToolkit().get_tool("message_ask_user")
+    fields = tool.args_schema.model_fields
+    assert "reason" in fields
+    assert "options" in fields

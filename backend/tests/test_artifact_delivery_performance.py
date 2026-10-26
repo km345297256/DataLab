@@ -14,6 +14,7 @@ from app.domain.models.event import (
     ToolStatus,
 )
 from app.domain.models.file import FileInfo
+from app.domain.models.tool_result import ToolResult
 from app.domain.models.plan import ExecutionStatus, Step
 from app.domain.services.agent_task_runner import (
     ARTIFACT_HASH_METADATA_KEY,
@@ -41,6 +42,17 @@ def _allow_controller_resolution():
     )
 
 
+@pytest.mark.parametrize("returncode", [0, 7, -9, None])
+def test_completed_shell_console_preserves_actual_exit_without_coercion(returncode):
+    event = ToolEvent(tool_call_id="exit-test", tool_name="shell", function_name="shell_run",
+        function_args={"command": "analysis-command"}, status=ToolStatus.CALLED,
+        function_result=ToolResult(success=returncode == 0,
+            data={"status": "completed", "command": "analysis-command", "output": "", "returncode": returncode}))
+    console = AgentTaskRunner._completed_shell_console_from_result(event)
+    assert console[0]["returncode"] == returncode
+    assert console[0]["output"] == ""
+
+
 def test_dataset_analysis_tool_renders_safe_result_console_without_program_source():
     event = ToolEvent(
         status=ToolStatus.CALLED,
@@ -62,7 +74,6 @@ def test_dataset_analysis_tool_renders_safe_result_console_without_program_sourc
         "command": "分析数据集并生成成果",
         "output": "已生成降水趋势图。",
         "status": "completed",
-        "returncode": 0,
     }]
     assert "base64" not in str(console).lower()
 
@@ -234,7 +245,7 @@ async def test_completed_steps_deliver_once_only_at_task_end(with_summary, secon
             yield DoneEvent()
 
     class _Advice:
-        def analyze_fast(self, events):
+        async def analyze(self, events, *, llm_overrides=None):
             return CompletionAdvice([], False, "")
 
         def to_payload(self, advice):
@@ -266,7 +277,8 @@ async def test_completed_steps_deliver_once_only_at_task_end(with_summary, secon
     runner._sync_step_attachments_to_storage = _sync_step
     runner._sync_discovered_artifacts_to_storage = _discover
 
-    async def validate(items):
+    async def validate(items, *, purpose="delivery"):
+        assert purpose == "delivery"
         return SimpleNamespace(success=True, data={"version": 1, "files": [
             {"path": item["path"], "kind": "image", "valid": True, "size": 10, "sha256": "a" * 64}
             for item in items]})
@@ -291,60 +303,50 @@ async def test_completed_steps_deliver_once_only_at_task_end(with_summary, secon
 
 
 @pytest.mark.asyncio
-async def test_done_uses_fast_advice_without_loading_session_history_or_model():
+async def test_verified_result_is_delivered_before_awaiting_model_advice():
     class _Flow:
         status = AgentStatus.EXECUTING
 
         async def run(self, message):
+            yield MessageEvent(message="已验证本轮降水趋势。")
             yield DoneEvent()
 
+    observed = []
     class _Advice:
-        analyze_called = False
-
-        async def analyze(self, events):
-            self.analyze_called = True
-            raise AssertionError("model-backed advice must not run on the Done path")
-
-        def analyze_fast(self, events):
-            assert any(
-                isinstance(event, MessageEvent) and event.role == "user"
-                for event in events
-            )
-            return CompletionAdvice(["继续分析", "导出结果", "解释结论"], False, "")
+        async def analyze(self, events, *, llm_overrides=None):
+            assert observed == ["result_delivered"]
+            assert llm_overrides == {"model_name": "chosen-model"}
+            assert [event.message for event in events if isinstance(event, MessageEvent)] == ["分析数据", "已验证本轮降水趋势。"]
+            return CompletionAdvice(["比较降水季节差异", "核对降水异常月份", "导出降水趋势表"], False, "")
 
         def to_payload(self, advice):
-            return {
-                "recommendations": advice.recommendations,
-                "is_skill_candidate": advice.is_skill_candidate,
-                "skill_reason": advice.skill_reason,
-            }
+            return {"recommendations": advice.recommendations, "is_skill_candidate": advice.is_skill_candidate,
+                    "skill_reason": advice.skill_reason}
 
-    advice = _Advice()
     runner = AgentTaskRunner.__new__(AgentTaskRunner)
     runner._agent_id = "agent-1"
     runner._session_id = "session-1"
     runner._flow = _Flow()
     runner._front_controller_resolution = _allow_controller_resolution()
     runner._generated_files = []
-    runner._completion_advice_service = advice
+    runner._completion_advice_service = _Advice()
+    runner._llm_overrides = {"model_name": "chosen-model"}
     runner._record_safety_audit = _noop
     runner._initialize_mcp_tool = _noop
-
-    discovery_calls = 0
+    runner._sync_message_attachments_to_storage = _noop
 
     async def _discover(*, skip_paths=None):
-        nonlocal discovery_calls
-        discovery_calls += 1
-        return []
-
+        raise AssertionError("Advice must not rediscover files or load session history")
     runner._sync_discovered_artifacts_to_storage = _discover
-
-    events = [event async for event in runner._run_flow(_message("分析数据"))]
-
-    assert len(events) == 1
-    assert events[0].advice["recommendations"][0] == "继续分析"
-    assert advice.analyze_called is False
-    assert discovery_calls == 0
+    iterator = runner._run_flow(_message("分析数据"))
+    result = await anext(iterator)
+    assert isinstance(result, MessageEvent)
+    observed.append("result_delivered")
+    done = await anext(iterator)
+    assert isinstance(done, DoneEvent)
+    assert done.advice["recommendations"][0] == "比较降水季节差异"
+    with pytest.raises(StopAsyncIteration):
+        await anext(iterator)
 
 
 @pytest.mark.asyncio
@@ -377,7 +379,8 @@ async def test_late_discovered_artifact_is_emitted_before_done():
 
     runner._sync_discovered_artifacts_to_storage = _discover
 
-    async def validate(items):
+    async def validate(items, *, purpose="delivery"):
+        assert purpose == "delivery"
         return SimpleNamespace(success=True, data={"version": 1, "files": [
             {"path": item["path"], "kind": "table", "valid": True, "size": 10, "sha256": "a" * 64}
             for item in items]})
@@ -436,7 +439,8 @@ async def test_partial_artifact_is_emitted_before_terminal_error():
 
     runner._sync_step_attachments_to_storage = _sync_step
 
-    async def validate(items):
+    async def validate(items, *, purpose="delivery"):
+        assert purpose == "delivery"
         return SimpleNamespace(success=True, data={"version": 1, "files": [
             {"path": item["path"], "kind": "table", "valid": True, "size": 10, "sha256": "a" * 64}
             for item in items]})
@@ -570,7 +574,8 @@ async def test_successful_compiled_analysis_reconciles_undeclared_artifacts():
                         metadata={ARTIFACT_HASH_METADATA_KEY: "a" * 64})
     validation_calls = []
 
-    async def validate(items):
+    async def validate(items, *, purpose="delivery"):
+        assert purpose == "delivery"
         validation_calls.append(items)
         return SimpleNamespace(success=True, data={"version": 1, "files": [{
             "path": artifact.file_path, "kind": "image", "expected_kind": "image",
@@ -591,7 +596,9 @@ async def test_successful_compiled_analysis_reconciles_undeclared_artifacts():
 
     assert any(isinstance(event, MessageEvent) and event.attachments == [artifact] for event in events)
     assert discovery_calls == 1
-    assert validation_calls == [[{"path": artifact.file_path, "kind": "image"}]] * 2
+    # The step receipt binds the immutable upload. Done must reuse that proof,
+    # not query a mutable sandbox path again after successful reconciliation.
+    assert validation_calls == [[{"path": artifact.file_path, "kind": "image"}]]
     assert completed_step.outcome.status == "succeeded"
 
 

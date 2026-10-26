@@ -74,5 +74,18 @@ export async function getScientificVisualization(file: FileInfo, plugin: Visuali
   if (data.kind === 'map' && (data.x.length !== data.width || data.y.length !== data.height || data.y.some((value) => value === null))) {
     throw new Error('地图插件缺少明确的经纬度栅格坐标。');
   }
+  if (data.kind === 'image') {
+    const shape = data.metadata.source_shape, strides = data.metadata.strides;
+    if (data.reader !== 'fits' || !Array.isArray(shape) || shape.length < 2 || shape.length > 8
+      || !shape.every(size => Number.isSafeInteger(size) && size > 0)
+      || !Array.isArray(strides) || strides.length !== 2 || !strides.every(step => Number.isSafeInteger(step) && step >= 1)
+      || strides.some((step, index) => step !== Math.max(1, Math.ceil(shape[shape.length - 2 + index] / 128)))
+      || data.metadata.axis_coordinates !== 'source pixel indices' || data.extent !== null
+      || data.x.length !== data.width || data.y.length !== data.height
+      || data.width !== Math.ceil(shape[shape.length - 1] / strides[1]) || data.height !== Math.ceil(shape[shape.length - 2] / strides[0])
+      || data.x.some((value, index) => value !== index * strides[1]) || data.y.some((value, index) => value !== index * strides[0])) {
+      throw new Error('科学图像缺少与源形状一致的原始像素坐标。');
+    }
+  }
   return data;
 }

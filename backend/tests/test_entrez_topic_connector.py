@@ -57,15 +57,18 @@ def test_query_limits_and_public_geo_url():
 
 
 def test_catalog_and_trusted_read_allowlist():
+    from app.domain.models.open_data_registry import connector_sources, public_connector_read_operations
     catalog = build_data_connector_service(None).catalog()
-    assert [c.id for c in catalog] == ['ncbi-datasets-v2', 'ncbi-geo', 'ncbi-sra']
+    assert [c.id for c in catalog] == ['ncbi-datasets-v2', 'ncbi-geo', 'ncbi-sra', *[source.id for source in connector_sources()]]
     # Construct without backing services: authorization identifies the actual registered tool.
     toolkit = DataDiscoveryToolkit(user_id='owner', session_id='session', service=object())
     tool = toolkit.get_tool('data_connector_call')
     assert not audited_public_data_read(tool, {'connector_id':[], 'operation':'search'})
     assert not audited_public_data_read(tool, {'connector_id':'ncbi-geo', 'operation':[]})
-    for connector in ['ncbi-geo', 'ncbi-sra']:
+    for connector, operations in public_connector_read_operations().items():
         assert audited_public_data_read(tool, {'connector_id':connector,'operation':'search'})
+        for operation in operations:
+            assert audited_public_data_read(tool, {'connector_id': connector, 'operation': operation})
         assert not audited_public_data_read(tool, {'connector_id':connector,'operation':'acquire'})
 
 

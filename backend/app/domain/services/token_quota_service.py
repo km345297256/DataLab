@@ -52,10 +52,11 @@ class TokenQuotaService:
 
     async def initialize_user_quota(self, user: UserDocument) -> None:
         quota = await self.get_role_quota(user.role)
-        user.token_balance = quota.initial_tokens
-        user.token_last_refill_date = date.today()
-        user.updated_at = datetime.now(UTC)
-        await user.save()
+        await user.set({
+            "token_balance": quota.initial_tokens,
+            "token_last_refill_date": date.today(),
+            "updated_at": datetime.now(UTC),
+        })
 
     async def apply_daily_refill(self, user: UserDocument) -> UserDocument:
         today = date.today()
@@ -64,7 +65,7 @@ class TokenQuotaService:
         if user.token_balance is None:
             user.token_last_refill_date = today
             user.updated_at = datetime.now(UTC)
-            await user.save()
+            await user.set({"token_last_refill_date": user.token_last_refill_date, "updated_at": user.updated_at})
             return user
         quota = await self.get_role_quota(user.role)
         daily_refill = (
@@ -78,7 +79,7 @@ class TokenQuotaService:
             user.token_balance = max(0, user.token_balance or 0) + daily_refill
         user.token_last_refill_date = today
         user.updated_at = datetime.now(UTC)
-        await user.save()
+        await user.set({"token_balance": user.token_balance, "token_last_refill_date": user.token_last_refill_date, "updated_at": user.updated_at})
         return user
 
     async def ensure_user_can_run_task(self, user_id: str) -> Optional[UserDocument]:
@@ -115,7 +116,7 @@ class TokenQuotaService:
                 raise BadRequestError("Daily refill must be non-negative")
             user.token_daily_refill_override = token_daily_refill_override
         user.updated_at = datetime.now(UTC)
-        await user.save()
+        await user.set({"token_balance": user.token_balance, "token_daily_refill_override": user.token_daily_refill_override, "updated_at": user.updated_at})
         return user
 
 

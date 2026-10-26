@@ -1,0 +1,5 @@
+{
+  "kind": "response",
+  "stage": "synthetic_plan_review",
+  "content": "{\"scripts\":[{\"script_path\":\"scripts/longitudinal_report.py\",\"support\":{\"status\":\"accepted\",\"explanation\":\"该脚本以单文件标准库实现，公开接口为 --input 读取 JSON、--output 指定输出目录，可对 invalid 用例只检查非零退出与输入不变，符合本片段审查范围。\"},\"cases\":[{\"case_id\":\"invalid_group_same\",\"input_validity\":{\"status\":\"accepted\",\"explanation\":\"输入 JSON 通过 data[\\\"group_a\\\"] 与 data[\\\"group_b\\\"] 在原配置位置同时设为 \\\"A\\\"，五张必需表齐全且其余字段合法，正是方法要求拒绝的“两组同名”无效条件，未用 CLI 补偿或迁移配置位置。\"},\"exit_behavior\":{\"status\":\"accepted\",\"explanation\":\"方法契约 R006 要求 group_a 与 group_b 必须不同，公开接口仅声明 --input/--output 为必需，故该输入应在任何写操作前以非零状态拒绝；计划使用 expected_exit_code 为 \\\"nonzero\\\" 而不猜具体退出码，正确。\"},\"method_coverage\":{\"status\":\"accepted\",\"explanation\":\"该用例专门检验参数校验分支中的 group_a≠group_b 约束（R006、R018），并声明无产物断言以确认整体拒绝；本片段无断言目标，不涉及统计计算覆盖，方法覆盖判断与完整 case 一致。\"},\"assertions\":[]}]}]}"
+}

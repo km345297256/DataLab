@@ -1,4 +1,4 @@
-export const DICOM_WARNING = '仅用于已脱敏科学图像探索，不用于诊断；单文件不代表完整临床序列。标签声明和用户确认不保证像素真正脱敏，本工具不会自动脱敏。';
+export const DICOM_WARNING = '仅用于已脱敏科学图像分析，不用于诊断；单文件不代表完整临床序列。标签声明和用户确认不保证像素真正脱敏，本工具不会自动脱敏。';
 const ERROR = 'DICOM 响应或窗口选择无效，请重新打开预览。';
 export type DicomKind = 'tree' | 'image';
 export interface DicomOptions { frame: number; roi: number[]; confirm_deidentified: true }

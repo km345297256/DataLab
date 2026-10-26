@@ -20,7 +20,7 @@ import type { ToolContent } from '../types/message'
 import ToolPanelContent from './ToolPanelContent.vue'
 import { useResizeObserver } from '../composables/useResizeObserver'
 import { eventBus } from '../utils/eventBus'
-import { EVENT_SHOW_FILE_PANEL, EVENT_SHOW_TOOL_PANEL } from '../constants/event'
+import { EVENT_SHOW_FILE_PANEL, EVENT_SHOW_TOOL_PANEL, EVENT_HIDE_TOOL_PANEL, EVENT_SHOW_ACQUISITION_PANEL } from '../constants/event'
 
 const toolPanelRef = ref<HTMLElement>()
 const { size: parentSize } = useResizeObserver(toolPanelRef, {
@@ -64,20 +64,28 @@ const showToolPanel = (content: ToolContent, isLive: boolean = false) => {
 
 const hideToolPanel = () => {
   isShow.value = false
+  eventBus.emit(EVENT_HIDE_TOOL_PANEL)
 }
 
 const jumpToRealTime = () => {
   emit('jumpToRealTime')
 }
 
+const hideForOtherPanel = () => {
+  visible.value = false
+  hideToolPanel()
+}
 onMounted(() => {
-  eventBus.on(EVENT_SHOW_FILE_PANEL, () => {
-    visible.value = false
-  })
+  eventBus.on(EVENT_SHOW_FILE_PANEL, hideForOtherPanel)
+  eventBus.on(EVENT_SHOW_ACQUISITION_PANEL, hideForOtherPanel)
+  eventBus.on('task-data-panel-show', hideForOtherPanel)
 })
 
 onUnmounted(() => {
-  eventBus.off(EVENT_SHOW_FILE_PANEL)
+  eventBus.off(EVENT_SHOW_FILE_PANEL, hideForOtherPanel)
+  eventBus.off(EVENT_SHOW_ACQUISITION_PANEL, hideForOtherPanel)
+  eventBus.off('task-data-panel-show', hideForOtherPanel)
+  eventBus.emit(EVENT_HIDE_TOOL_PANEL)
 })
 
 defineExpose({

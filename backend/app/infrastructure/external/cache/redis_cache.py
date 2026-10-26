@@ -6,12 +6,44 @@ from app.infrastructure.storage.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
+# One Redis operation protects both the attempt budget and successful consumption
+# across workers. PTTL is retained rather than extending the original deadline.
+VERIFY_ONE_TIME_CODE = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ttl = redis.call('PTTL', KEYS[1])
+local ok, data = pcall(cjson.decode, raw)
+if ttl <= 0 or not ok or type(data) ~= 'table' then
+    redis.call('DEL', KEYS[1]); return 0
+end
+local attempts = tonumber(data.attempts) or 0
+if attempts >= 3 then redis.call('DEL', KEYS[1]); return 0 end
+local expected = data.code_hash or data.code
+local candidate = data.code_hash and ARGV[1] or ARGV[2]
+if type(expected) == 'string' and expected == candidate then
+    redis.call('DEL', KEYS[1]); return 1
+end
+data.attempts = attempts + 1
+if data.attempts >= 3 then redis.call('DEL', KEYS[1])
+else redis.call('SET', KEYS[1], cjson.encode(data), 'PX', ttl) end
+return 0
+"""
+
 
 class RedisCache:
     """Redis implementation of Cache interface"""
     
     def __init__(self):
         self.redis_client = get_redis()
+
+    async def set_if_absent(self, key: str, value: Any, ttl: int) -> bool:
+        await self.redis_client.initialize()
+        return bool(await self.redis_client.client.set(key, json.dumps(value), ex=ttl, nx=True))
+
+    async def verify_one_time_code(self, key: str, digest: str, legacy_code: str) -> bool:
+        await self.redis_client.initialize()
+        result = await self.redis_client.client.eval(VERIFY_ONE_TIME_CODE, 1, key, digest, legacy_code)
+        return result == 1
     
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Store a value with optional TTL"""

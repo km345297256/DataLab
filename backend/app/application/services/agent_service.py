@@ -1,6 +1,7 @@
 from typing import AsyncGenerator, Optional, List, Type
 import logging
 from datetime import datetime
+from app.application.errors.exceptions import NotFoundError
 from app.domain.models.session import Session, SessionSummary
 from app.domain.repositories.session_repository import SessionRepository
 
@@ -56,6 +57,7 @@ class AgentService:
         self._spill_artifact_store = spill_artifact_store
         self._analysis_job_service = analysis_job_service
         self._tool_approval_service = tool_approval_service
+        self._input_repository = input_repository
         self._agent_domain_service = AgentDomainService(
             self._agent_repository,
             self._session_repository,
@@ -125,6 +127,9 @@ class AgentService:
         client_message_id: Optional[str] = None,
         resume_from: Optional[str] = None,
         data_connectors: Optional[List[str]] = None,
+        input_file_ids: Optional[List[str]] = None,
+        observe_client_message_id: Optional[str] = None,
+        clarification_id: Optional[str] = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         logger.info(
             "Starting chat session=%s message_chars=%d",
@@ -148,6 +153,9 @@ class AgentService:
             llm_overrides=llm_overrides,
             client_message_id=client_message_id,
             resume_from=resume_from,
+            input_file_ids=input_file_ids,
+            observe_client_message_id=observe_client_message_id,
+            clarification_id=clarification_id,
         ):
             logger.debug(
                 "Received agent event type=%s id=%s",
@@ -158,10 +166,14 @@ class AgentService:
         logger.info(f"Chat with session {session_id} completed")
     
     async def get_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
-        """Get a session by ID, ensuring it belongs to the user"""
+        """Read an accessible session; anonymous reads require explicit sharing."""
         logger.info(f"Getting session {session_id} for user {user_id}")
-        if not user_id:
+        if user_id is None:
             session = await self._session_repository.find_by_id(session_id)
+            if session is not None and not session.is_shared:
+                session = None
+        elif not user_id:
+            session = None
         else:
             session = await self._session_repository.find_by_id_and_user_id(session_id, user_id)
         if not session:
@@ -171,18 +183,48 @@ class AgentService:
     async def get_session_events(self, session_id: str, user_id: Optional[str] = None) -> List[AgentEvent]:
         """Get all events for a session"""
         logger.info(f"Getting events for session {session_id}")
-        if user_id:
-            session = await self._session_repository.find_by_id_and_user_id(session_id, user_id)
-            if not session:
-                raise RuntimeError("Session not found")
+        if await self.get_session(session_id, user_id) is None:
+            raise NotFoundError("Session not found")
         return await self._session_repository.get_events(session_id)
+
+    async def get_input_receipt(self, session_id: str, user_id: str, client_message_id: str) -> dict:
+        """Observe durable admission only; never enqueue, claim, or restart work.
+
+        A negative observation is not a rejection: the original POST may still
+        commit. The caller must keep the same ID when retrying that submission.
+        """
+        from app.application.errors.exceptions import BadRequestError, NotFoundError
+        from app.domain.models.event import MessageEvent
+        from app.domain.models.input_admission import input_key
+
+        if not isinstance(client_message_id, str) or not client_message_id.strip() or len(client_message_id) > 128:
+            raise BadRequestError("Invalid client message identity")
+        if await self.get_session(session_id, user_id) is None:
+            raise NotFoundError("Session not found")
+        receipt = {"client_message_id": client_message_id, "accepted": False}
+        event_id = AgentDomainService._client_message_event_id(session_id, client_message_id)
+        repository = getattr(self, "_input_repository", None)
+        if repository is not None:
+            record = await repository.get(session_id, input_key(MessageEvent(id=event_id, role="user", message="")))
+            if record is not None:
+                if record.session_id != session_id or record.admission.actor_user_id != user_id:
+                    raise NotFoundError("Input not found")
+                return {**receipt, "accepted": True, "event_seq": record.event.seq,
+                        "state": record.admission.state}
+        # Historical user events predate the admission table. A client claim
+        # alone is NOT evidence of durable receipt; only the event is.
+        resolve = getattr(self._session_repository, "resolve_event_sequence", None)
+        seq = await resolve(session_id, event_id) if callable(resolve) else None
+        if type(seq) is int and seq > 0:
+            return {**receipt, "accepted": True, "event_seq": seq}
+        return receipt
     
     async def get_data_runs(self, session_id: str, user_id: str, *, before_seq: int | None = None):
         from app.domain.models.data_run import DataRunPage
         from app.domain.services.data_runs import project_data_run
         session = await self.get_session(session_id, user_id)
         if session is None:
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         starts = await self._session_repository.get_run_starts(session_id, before_seq=before_seq, limit=11)
         latest = (await self._session_repository.get_run_starts(session_id, limit=1)) if before_seq is not None else starts[:1]
         active_run_id = latest[0].run_id if latest else None
@@ -197,7 +239,7 @@ class AgentService:
                                   before_seq: int | None = None) -> SessionHistoryPage:
         session = await self.get_session(session_id, user_id)
         if session is None:
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         return await self._session_repository.get_history_page(session_id, turns=turns, before_seq=before_seq)
 
     async def get_all_sessions(self, user_id: str) -> List[SessionSummary]:
@@ -217,7 +259,7 @@ class AgentService:
         session = await self._session_repository.find_owned_by_id_and_user_id(session_id, user_id)
         if not session:
             logger.error(f"Session {session_id} not found for user {user_id}")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
 
         await self._agent_domain_service.delete_session_resources(session)
         if self._analysis_job_service is not None:
@@ -236,7 +278,7 @@ class AgentService:
         """Update a session title, ensuring it belongs to the user."""
         session = await self._session_repository.find_owned_by_id_and_user_id(session_id, user_id)
         if not session:
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         await self._session_repository.update_title_manually(session_id, title.strip())
 
     async def stop_session(self, session_id: str, user_id: str) -> None:
@@ -246,7 +288,7 @@ class AgentService:
         session = await self._session_repository.find_by_id_and_user_id(session_id, user_id)
         if not session:
             logger.error(f"Session {session_id} not found for user {user_id}")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         await self._agent_domain_service.stop_session(session_id)
         logger.info(f"Session {session_id} stopped successfully")
 
@@ -255,7 +297,7 @@ class AgentService:
         logger.info(f"Clearing unread message count for session {session_id} for user {user_id}")
         session = await self._session_repository.find_by_id_and_user_id(session_id, user_id)
         if not session:
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         await self._session_repository.update_unread_message_count(session_id, 0)
         logger.info(f"Unread message count cleared for session {session_id}")
 
@@ -289,7 +331,7 @@ class AgentService:
         # collaborators must not inherit Kernel access from view permission.
         session = await self._session_repository.find_owned_by_id_and_user_id(session_id, user_id)
         if not session:
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         if session.sandbox_id:
             return session, await self._restore_session_sandbox(session)
         sandbox = await self._sandbox_runtime.allocate(session, dataset_ids=session.dataset_ids)
@@ -301,19 +343,23 @@ class AgentService:
             await ensure_api_ready()
         return session, sandbox
 
-    async def shell_view(self, session_id: str, shell_session_id: str, user_id: str) -> ShellViewResponse:
+    async def shell_view(self, session_id: str, shell_session_id: str, user_id: str, *,
+                         output_id: str | None = None, cursor: int | None = None,
+                         max_bytes: int = 8192) -> ShellViewResponse:
         """View shell session output, ensuring session belongs to the user"""
         logger.info(f"Getting shell view for session {session_id} for user {user_id}")
         session = await self._session_repository.find_by_id_and_user_id(session_id, user_id)
         if not session:
             logger.error(f"Session {session_id} not found for user {user_id}")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         
         sandbox = await self._restore_session_sandbox(session)
         if not sandbox:
             raise RuntimeError("Sandbox environment not found")
         
-        result = await sandbox.view_shell(shell_session_id, console=True)
+        pagination = ({"output_id": output_id, "cursor": cursor, "max_bytes": max_bytes}
+                      if output_id is not None or cursor is not None else {})
+        result = await sandbox.view_shell(shell_session_id, console=True, **pagination)
         if result.success:
             return ShellViewResponse(**result.data)
         else:
@@ -326,7 +372,7 @@ class AgentService:
         session = await self._session_repository.find_by_id(session_id)
         if not session:
             logger.error(f"Session {session_id} not found")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         
         sandbox = await self._restore_session_sandbox(session)
         if not sandbox:
@@ -344,7 +390,7 @@ class AgentService:
         session = await self._session_repository.find_by_id_and_user_id(session_id, user_id)
         if not session:
             logger.error(f"Session {session_id} not found for user {user_id}")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
 
         if session.status != SessionStatus.RUNNING:
             stored_file = next(
@@ -380,13 +426,15 @@ class AgentService:
         session = await self._session_repository.find_by_id(session_id)
         if not session:
             logger.error(f"Session {session_id} not found")
-            raise RuntimeError("Session not found")
+            return False
         return session.is_shared
 
     async def get_session_files(self, session_id: str, user_id: Optional[str] = None) -> List[FileInfo]:
         """Get files for a session, ensuring it belongs to the user"""
         logger.info(f"Getting files for session {session_id} for user {user_id}")
         session = await self.get_session(session_id, user_id)
+        if session is None:
+            raise NotFoundError("Session not found")
         return session.files
     
     async def get_shared_session_files(self, session_id: str) -> List[FileInfo]:
@@ -395,7 +443,7 @@ class AgentService:
         session = await self._session_repository.find_by_id(session_id)
         if not session or not session.is_shared:
             logger.error(f"Shared session {session_id} not found or not shared")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         return session.files
 
     async def share_session(self, session_id: str, user_id: str) -> None:
@@ -405,7 +453,7 @@ class AgentService:
         session = await self._session_repository.find_owned_by_id_and_user_id(session_id, user_id)
         if not session:
             logger.error(f"Session {session_id} not found for user {user_id}")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         
         await self._session_repository.update_shared_status(session_id, True)
         logger.info(f"Session {session_id} shared successfully")
@@ -417,7 +465,7 @@ class AgentService:
         session = await self._session_repository.find_owned_by_id_and_user_id(session_id, user_id)
         if not session:
             logger.error(f"Session {session_id} not found for user {user_id}")
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         
         await self._session_repository.update_shared_status(session_id, False)
         logger.info(f"Session {session_id} unshared successfully")
@@ -434,13 +482,13 @@ class AgentService:
     async def get_session_collaborators(self, session_id: str, user_id: str) -> List[str]:
         session = await self._session_repository.find_by_id_and_user_id(session_id, user_id)
         if not session:
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         return session.collaborator_user_ids
 
     async def update_session_collaborators(self, session_id: str, owner_user_id: str, collaborator_user_ids: List[str]) -> List[str]:
         session = await self._session_repository.find_owned_by_id_and_user_id(session_id, owner_user_id)
         if not session:
-            raise RuntimeError("Session not found")
+            raise NotFoundError("Session not found")
         unique_ids = []
         for collaborator_id in collaborator_user_ids:
             if collaborator_id and collaborator_id != owner_user_id and collaborator_id not in unique_ids:

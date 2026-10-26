@@ -1,338 +1,98 @@
 <template>
-  <div
-    class="h-full flex flex-col shrink-0 overflow-hidden transition-[width] duration-300 max-sm:fixed max-sm:inset-y-0 max-sm:left-0 max-sm:z-50"
-    :class="isLeftPanelShow
-      ? 'w-[300px] max-sm:w-[min(88vw,320px)]'
-      : 'w-[52px] max-sm:w-0 max-sm:pointer-events-none'">
-    <div
-      v-if="isLeftPanelShow"
-      class="flex w-full flex-col overflow-visible bg-[var(--background-nav)] h-full opacity-100 translate-x-0 shadow-[0px_8px_32px_0px_rgba(0,0,0,0.16)] sm:shadow-none">
+  <nav
+    aria-label="主导航"
+    class="flex h-full shrink-0 flex-col border-r border-[var(--border-main)] bg-[var(--background-menu-white)] transition-[width] duration-200 max-sm:fixed max-sm:inset-y-0 max-sm:left-0 max-sm:z-50"
+    :class="isLeftPanelShow ? 'w-[276px] max-sm:w-[min(88vw,320px)]' : 'w-[52px] max-sm:w-0 max-sm:pointer-events-none max-sm:overflow-hidden'">
+    <header class="mobile-safe-top flex min-h-[64px] shrink-0 items-center gap-2 border-b border-[var(--border-main)] px-2" :class="isLeftPanelShow ? 'px-4' : 'justify-center'">
+      <button v-if="isLeftPanelShow" type="button" class="min-w-0 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#2b7659]" aria-label="DataLab，新建分析" title="新建分析" @click="startNewAnalysis">
+        <ManusLogoTextIcon :width="148" :height="34" />
+      </button>
+      <button type="button" class="navigation-icon-button" :class="isLeftPanelShow ? 'ml-auto' : ''" :aria-label="isLeftPanelShow ? '收起导航' : '打开导航'" :title="isLeftPanelShow ? '收起导航' : '打开导航'" @click="toggleLeftPanel">
+        <PanelLeft class="size-5 text-[var(--icon-secondary)]" :class="isLeftPanelShow ? '' : 'rotate-180'" />
+      </button>
+    </header>
 
-      <!-- 顶部折叠按钮 -->
-      <div class="mobile-safe-top flex min-h-[52px] items-center px-3 flex-shrink-0">
-        <div class="flex justify-between w-full px-1 pt-2">
-          <div class="relative flex">
-            <div
-              class="flex h-11 w-11 items-center justify-center cursor-pointer hover:bg-[var(--fill-tsp-gray-main)] rounded-lg sm:h-7 sm:w-7 sm:rounded-md"
-              @click="toggleLeftPanel">
-              <PanelLeft class="h-5 w-5 text-[var(--icon-secondary)]" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 快捷入口区域 -->
-      <div class="flex flex-col flex-1 min-h-0 px-[8px] pb-0 gap-px">
-
-        <!-- 新建任务 -->
-        <div
-          @click="handleNewTaskClick"
-          class="flex items-center rounded-[10px] cursor-pointer transition-colors w-full gap-[12px] h-11 sm:h-[36px] ps-[9px] pe-[2px]"
-          :class="route.path === '/' ? 'bg-[var(--fill-tsp-white-main)]' : 'hover:bg-[var(--fill-tsp-white-light)]'">
-          <div class="shrink-0 size-[18px] flex items-center justify-center">
-            <SquarePen :size="18" class="text-[var(--text-primary)]" />
-          </div>
-          <div class="flex-1 min-w-0 flex gap-[4px] items-center text-[14px] text-[var(--text-primary)]">
-            <span class="truncate">{{ t('New Task') }}</span>
-          </div>
-          <div class="shrink-0 flex items-center gap-1 pe-[6px]">
-            <span class="flex text-[var(--text-tertiary)] justify-center items-center h-5 px-1 rounded-[4px] bg-[var(--fill-tsp-white-light)] border border-[var(--border-light)]">
-              <Command :size="12" />
-            </span>
-            <span class="flex justify-center items-center w-5 h-5 px-1 rounded-[4px] bg-[var(--fill-tsp-white-light)] border border-[var(--border-light)] text-xs text-[var(--text-tertiary)]">
-              K
-            </span>
-          </div>
-        </div>
-
-        <!-- 插件管理 -->
-        <div
-          @click="handlePluginsClick"
-          class="flex items-center rounded-[10px] cursor-pointer transition-colors w-full gap-[12px] h-11 sm:h-[36px] ps-[9px] pe-[2px]"
-          :class="route.path === '/plugins' || route.path === '/chat/plugins' ? 'bg-[var(--fill-tsp-white-main)]' : 'hover:bg-[var(--fill-tsp-white-light)]'">
-          <div class="shrink-0 size-[18px] flex items-center justify-center">
-            <Puzzle :size="18" class="text-[var(--text-primary)]" />
-          </div>
-          <div class="flex-1 min-w-0 flex gap-[4px] items-center text-[14px] text-[var(--text-primary)]">
-            <span class="truncate">{{ t('Plugins') }}</span>
-          </div>
-        </div>
-
-        <!-- 数据集管理与探查入口 -->
-        <div
-          @click="handleDatasetChatClick"
-          class="flex items-center rounded-[10px] cursor-pointer transition-colors w-full gap-[12px] h-11 sm:h-[36px] ps-[9px] pe-[2px]"
-          :class="route.path.startsWith('/dataset') || route.path === '/chat/datasets' ? 'bg-[var(--fill-tsp-white-main)]' : 'hover:bg-[var(--fill-tsp-white-light)]'">
-          <div class="shrink-0 size-[18px] flex items-center justify-center">
-            <Database :size="18" class="text-[var(--text-primary)]" />
-          </div>
-          <div class="flex-1 min-w-0 flex gap-[4px] items-center text-[14px] text-[var(--text-primary)]">
-            <span class="truncate">{{ t('Dataset Management') }}</span>
-          </div>
-        </div>
-
-        <div
-          v-if="isAdmin"
-          @click="handleAdminClick"
-          class="flex items-center rounded-[10px] cursor-pointer transition-colors w-full gap-[12px] h-11 sm:h-[36px] ps-[9px] pe-[2px]"
-          :class="route.path === '/chat/admin' ? 'bg-[var(--fill-tsp-white-main)]' : 'hover:bg-[var(--fill-tsp-white-light)]'">
-          <div class="shrink-0 size-[18px] flex items-center justify-center">
-            <ShieldCheck :size="18" class="text-[var(--text-primary)]" />
-          </div>
-          <div class="flex-1 min-w-0 flex gap-[4px] items-center text-[14px] text-[var(--text-primary)]">
-            <span class="truncate">{{ t('System Admin') }}</span>
-          </div>
-        </div>
-
-        <!-- 所有任务分组标题 + 会话列表 -->
-        <div class="flex flex-col flex-1 min-h-0 -mx-[8px] mt-[4px] overflow-hidden">
-          <div class="w-full border-t border-[var(--border-main)] transition-opacity duration-200" :class="isListScrolled ? 'opacity-100' : 'opacity-0'"></div>
-
-          <!-- 滚动容器：标题 + 列表一起滚动 -->
-          <div ref="scrollContainerRef" class="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-5 px-[8px]" @scroll="handleListScroll">
-
-            <!-- 分组标题 -->
-            <div
-              class="group flex items-center justify-between ps-[10px] pe-[2px] py-[2px] h-11 sm:h-[36px] gap-[12px] flex-shrink-0 cursor-pointer hover:bg-[var(--fill-tsp-white-light)] transition-colors rounded-[10px]"
-              @click="isAllTasksCollapsed = !isAllTasksCollapsed">
-              <div class="flex items-center flex-1 min-w-0 gap-0.5">
-                <span class="text-[13px] leading-[18px] text-[var(--text-tertiary)] font-medium min-w-0 truncate tracking-[-0.091px]">
-                  {{ t('All Tasks') }}
-                </span>
-                <ChevronUp
-                  :size="14"
-                  class="shrink-0 transition-all opacity-0 group-hover:opacity-100"
-                  :class="isAllTasksCollapsed ? 'rotate-180' : 'rotate-90'"
-                  stroke="var(--icon-tertiary)" />
-              </div>
-            </div>
-
-            <!-- 会话列表 -->
-            <template v-if="!isAllTasksCollapsed">
-              <div v-if="sessions.length > 0" class="flex flex-col gap-px">
-                <SessionItem
-                  v-for="session in sessions"
-                  :key="session.session_id"
-                  :session="session"
-                  @deleted="handleSessionDeleted"
-                  @renamed="handleSessionRenamed" />
-              </div>
-              <div v-else class="flex flex-col items-center justify-center gap-4 py-8">
-                <div class="flex flex-col items-center gap-2 text-[var(--text-tertiary)]">
-                  <MessageSquareDashed :size="38" />
-                  <span class="text-sm font-medium">{{ t('Create a task to get started') }}</span>
-                </div>
-              </div>
-            </template>
-
-          </div>
-        </div>
-
-        <!-- 底部用户入口 -->
-        <div class="flex-shrink-0 border-t border-[var(--border-main)] px-[8px] py-[8px]">
-          <div class="relative" ref="userMenuAnchorRef">
-            <div
-              class="flex items-center rounded-[10px] cursor-pointer transition-colors w-full gap-[12px] h-[40px] ps-[9px] pe-[9px] hover:bg-[var(--fill-tsp-white-light)]"
-              @click="toggleUserMenu">
-              <div
-                class="flex-shrink-0 flex items-center justify-center rounded-full font-bold"
-                style="width: 26px; height: 26px; font-size: 13px; color: rgba(255, 255, 255, 0.9); background-color: rgb(59, 130, 246);">
-                {{ avatarLetter }}
-              </div>
-              <span class="flex-1 min-w-0 text-[14px] text-[var(--text-primary)] truncate">{{ currentUser?.fullname }}</span>
-            </div>
-            <!-- UserMenu 弹出（向上展开） -->
-            <div
-              v-if="showUserMenu"
-              class="absolute bottom-full left-0 mb-1 z-50"
-              @mouseleave="showUserMenu = false">
-              <UserMenu />
-            </div>
-          </div>
-        </div>
-
-      </div>
+    <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 py-4">
+      <RouterLink to="/chat" class="navigation-item mb-3" :class="isLeftPanelShow ? '' : 'justify-center'" aria-label="返回分析" title="返回分析">
+        <ChartNoAxesCombined class="size-[18px] shrink-0" />
+        <span v-if="isLeftPanelShow" class="truncate text-sm">返回分析</span>
+      </RouterLink>
+      <p v-if="isLeftPanelShow" class="mb-1 px-3 text-xs font-medium text-[var(--text-tertiary)]">个人中心</p>
+      <RouterLink to="/account" class="navigation-item" :class="[isLeftPanelShow ? '' : 'justify-center', route.name === 'PersonalCenter' ? 'navigation-item-active' : '']" :aria-current="route.name === 'PersonalCenter' ? 'page' : undefined" aria-label="个人中心" title="个人中心">
+        <UserRound class="size-[18px] shrink-0" />
+        <span v-if="isLeftPanelShow" class="truncate text-sm">个人中心</span>
+      </RouterLink>
+      <button type="button" class="navigation-item" :class="[isLeftPanelShow ? '' : 'justify-center', route.name === 'MyData' ? 'navigation-item-active' : '']" :aria-current="route.name === 'MyData' ? 'page' : undefined" aria-label="我的数据" title="我的数据" @click="handleMyDataClick">
+        <FolderOpen class="size-[18px] shrink-0" />
+        <span v-if="isLeftPanelShow" class="truncate text-sm">我的数据</span>
+      </button>
+      <button type="button" class="navigation-item" :class="[isLeftPanelShow ? '' : 'justify-center', route.name === 'SkillsLibrary' ? 'navigation-item-active' : '']" :aria-current="route.name === 'SkillsLibrary' ? 'page' : undefined" aria-label="分析技能库" title="分析技能库" @click="handleSkillsClick">
+        <Puzzle class="size-[18px] shrink-0" />
+        <span v-if="isLeftPanelShow" class="truncate text-sm">分析技能库</span>
+      </button>
+      <button type="button" class="navigation-item" :class="[isLeftPanelShow ? '' : 'justify-center', route.name === 'DataConnectors' ? 'navigation-item-active' : '']" :aria-current="route.name === 'DataConnectors' ? 'page' : undefined" aria-label="数据连接器" title="数据连接器" @click="handleConnectorsClick">
+        <PlugZap class="size-[18px] shrink-0" />
+        <span v-if="isLeftPanelShow" class="truncate text-sm">数据连接器</span>
+      </button>
+      <RouterLink to="/visualizations" class="navigation-item" :class="[isLeftPanelShow ? '' : 'justify-center', route.name === 'VisualizationSettings' ? 'navigation-item-active' : '']" :aria-current="route.name === 'VisualizationSettings' ? 'page' : undefined" aria-label="可视化设置" title="可视化设置">
+        <ChartColumn class="size-[18px] shrink-0" />
+        <span v-if="isLeftPanelShow" class="truncate text-sm">可视化设置</span>
+      </RouterLink>
+      <button v-if="isAdmin" type="button" class="navigation-item" :class="[isLeftPanelShow ? '' : 'justify-center', route.meta.adminOnly ? 'navigation-item-active' : '']" :aria-current="route.meta.adminOnly ? 'page' : undefined" aria-label="系统管理" title="系统管理" @click="handleAdminClick">
+        <ShieldCheck class="size-[18px] shrink-0" />
+        <span v-if="isLeftPanelShow" class="truncate text-sm">系统管理</span>
+      </button>
     </div>
 
-    <div
-      v-else
-      class="hidden h-full flex-col gap-2 overflow-visible rounded-r-xl border border-[var(--border-main)] bg-[var(--background-nav)] px-1 py-2 shadow-[0px_8px_32px_0px_rgba(0,0,0,0.16),0px_0px_0px_1px_rgba(0,0,0,0.06)] sm:flex"
-      style="width: 52px;">
-      <div class="flex items-center justify-center">
-        <div
-          class="flex h-10 w-10 items-center justify-center cursor-pointer rounded-md hover:bg-[var(--fill-tsp-gray-main)]"
-          @click="toggleLeftPanel">
-          <PanelLeft class="h-5 w-5 rotate-180 text-[var(--icon-secondary)]" />
-        </div>
-      </div>
-      <div class="flex flex-col gap-2">
-        <button class="flex h-11 w-11 items-center justify-center rounded-lg hover:bg-[var(--fill-tsp-white-light)]" :class="route.path === '/' ? 'bg-[var(--fill-tsp-white-main)]' : ''" @click="handleNewTaskClick" :title="t('New Task')">
-          <SquarePen :size="18" class="text-[var(--text-primary)]" />
-        </button>
-        <button class="flex h-11 w-11 items-center justify-center rounded-lg hover:bg-[var(--fill-tsp-white-light)]" :class="route.path === '/plugins' || route.path === '/chat/plugins' ? 'bg-[var(--fill-tsp-white-main)]' : ''" @click="handlePluginsClick" title="Plugins">
-          <Puzzle :size="18" class="text-[var(--text-primary)]" />
-        </button>
-        <button class="flex h-11 w-11 items-center justify-center rounded-lg hover:bg-[var(--fill-tsp-white-light)]" :class="route.path.startsWith('/dataset') || route.path === '/chat/datasets' ? 'bg-[var(--fill-tsp-white-main)]' : ''" @click="handleDatasetChatClick" :title="t('Dataset Management')">
-          <Database :size="18" class="text-[var(--text-primary)]" />
-        </button>
-        <button v-if="isAdmin" class="flex h-11 w-11 items-center justify-center rounded-lg hover:bg-[var(--fill-tsp-white-light)]" :class="route.path === '/chat/admin' ? 'bg-[var(--fill-tsp-white-main)]' : ''" @click="handleAdminClick" title="System Admin">
-          <ShieldCheck :size="18" class="text-[var(--text-primary)]" />
-        </button>
-      </div>
-      <div class="mt-auto flex items-center justify-center pb-1">
-        <div class="relative">
-          <button
-            class="flex h-11 w-11 items-center justify-center rounded-lg hover:bg-[var(--fill-tsp-white-light)]"
-            :title="currentUser?.fullname || t('Unknown User')"
-            @click="toggleUserMenu">
-            <span
-              class="flex items-center justify-center rounded-full font-bold"
-              style="width: 26px; height: 26px; font-size: 13px; color: rgba(255, 255, 255, 0.9); background-color: rgb(59, 130, 246);">
-              {{ avatarLetter }}
-            </span>
-          </button>
-          <div
-            v-if="showUserMenu"
-            class="fixed inset-x-3 bottom-[max(12px,env(safe-area-inset-bottom))] z-50 sm:absolute sm:inset-x-auto sm:bottom-0 sm:left-full sm:ml-2"
-            @mouseleave="showUserMenu = false">
-            <UserMenu />
-          </div>
-        </div>
+    <div class="mobile-safe-bottom relative shrink-0 border-t border-[var(--border-main)] p-2" ref="userMenuAnchorRef">
+      <button type="button" class="navigation-item w-full" :class="isLeftPanelShow ? '' : 'justify-center px-0'" :aria-label="currentUser?.fullname ? `${currentUser.fullname}，账号菜单` : '账号菜单'" :aria-expanded="showUserMenu" aria-haspopup="dialog" @click="showUserMenu = !showUserMenu">
+        <span class="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#2b7659]/10 text-sm font-semibold text-[#2b7659] dark:text-[#a9cbbb]">{{ avatarLetter }}</span>
+        <span v-if="isLeftPanelShow" class="min-w-0 flex-1 truncate text-sm text-left">{{ currentUser?.fullname || 'DataLab' }}</span>
+      </button>
+      <div v-if="showUserMenu" class="absolute z-50" :class="isLeftPanelShow ? 'bottom-full left-2 mb-2' : 'bottom-2 left-full ml-2'" @keydown.esc="showUserMenu = false">
+        <UserMenu />
       </div>
     </div>
-  </div>
+  </nav>
 </template>
 
 <script setup lang="ts">
-import { PanelLeft, SquarePen, Command, MessageSquareDashed, ChevronUp, Puzzle, ShieldCheck, Database } from 'lucide-vue-next';
-import SessionItem from './SessionItem.vue';
+import { ChartColumn, ChartNoAxesCombined, FolderOpen, PanelLeft, PlugZap, Puzzle, ShieldCheck, UserRound } from 'lucide-vue-next';
+import ManusLogoTextIcon from './icons/ManusLogoTextIcon.vue';
 import UserMenu from './UserMenu.vue';
 import { useLeftPanel } from '../composables/useLeftPanel';
 import { useAuth } from '../composables/useAuth';
-import { ref, computed, onMounted, watch, onUnmounted } from 'vue';
+import { useNewAnalysis } from '../composables/useNewAnalysis';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getSessions } from '../api/agent';
-import { ListSessionItem } from '../types/response';
-import { useI18n } from 'vue-i18n';
-import { eventBus } from '../utils/eventBus';
-import { EVENT_REFRESH_SESSION_LIST } from '../constants/event';
 
-const { t } = useI18n()
-const { isLeftPanelShow, toggleLeftPanel } = useLeftPanel()
-const { currentUser } = useAuth()
-const route = useRoute()
-const router = useRouter()
+const { isLeftPanelShow, toggleLeftPanel } = useLeftPanel();
+const { currentUser, isAdmin } = useAuth();
+const { startNewAnalysis } = useNewAnalysis();
+const route = useRoute();
+const router = useRouter();
+const showUserMenu = ref(false);
+const userMenuAnchorRef = ref<HTMLElement | null>(null);
+const avatarLetter = computed(() => currentUser.value?.fullname?.charAt(0)?.toUpperCase() || 'D');
 
-const sessions = ref<ListSessionItem[]>([])
-let updateSessionsPromise: Promise<void> | null = null
-const isAllTasksCollapsed = ref(false)
-const isListScrolled = ref(false)
-const scrollContainerRef = ref<HTMLElement | null>(null)
-const showUserMenu = ref(false)
+const handleMyDataClick = () => router.push('/my-data');
+const handleSkillsClick = () => router.push('/skills');
+const handleConnectorsClick = () => router.push('/connectors');
+const handleAdminClick = () => router.push('/chat/admin');
+const closeMenuOutside = (event: PointerEvent) => {
+  if (event.target instanceof Node && !userMenuAnchorRef.value?.contains(event.target)) showUserMenu.value = false;
+};
 
-const avatarLetter = computed(() => currentUser.value?.fullname?.charAt(0)?.toUpperCase() || 'A')
-const isAdmin = computed(() => currentUser.value?.role === 'admin')
-
-const toggleUserMenu = () => {
-  showUserMenu.value = !showUserMenu.value
-}
-
-const handleListScroll = () => {
-  if (scrollContainerRef.value) {
-    isListScrolled.value = scrollContainerRef.value.scrollTop > 0
-  }
-}
-
-// Function to fetch sessions data
-const updateSessions = async () => {
-  if (updateSessionsPromise) {
-    return updateSessionsPromise
-  }
-  updateSessionsPromise = (async () => {
-    try {
-      const response = await getSessions()
-      sessions.value = response.sessions
-    } catch (error) {
-      console.error('Failed to fetch sessions:', error)
-    } finally {
-      updateSessionsPromise = null
-    }
-  })()
-  return updateSessionsPromise
-}
-
-const refreshSessions = () => {
-  updateSessions().catch((error) => {
-    console.error('Failed to fetch sessions:', error)
-  })
-}
-
-/*
- * The task list used to be backed by a long-lived SSE connection. With many
- * users online, every open left panel kept polling /sessions server-side,
- * linearly increasing MongoDB reads and making the network request look
- * perpetually slow. The list is now refreshed by explicit UI events instead.
- */
-const fetchSessions = async () => {
-  try {
-    await updateSessions()
-  } catch (error) {
-    console.error('Failed to fetch sessions:', error)
-  }
-}
-
-const handleNewTaskClick = () => {
-  router.push('/')
-}
-
-const handlePluginsClick = () => {
-  router.push('/plugins')
-}
-
-const handleDatasetChatClick = () => {
-  router.push('/datasets')
-}
-
-const handleAdminClick = () => {
-  router.push('/chat/admin')
-}
-
-const handleSessionDeleted = (sessionId: string) => {
-  console.log('handleSessionDeleted', sessionId)
-  sessions.value = sessions.value.filter(session => session.session_id !== sessionId);
-}
-
-const handleSessionRenamed = ({ sessionId, title }: { sessionId: string; title: string }) => {
-  const session = sessions.value.find(item => item.session_id === sessionId)
-  if (session) session.title = title
-}
-
-// Handle keyboard shortcuts
-const handleKeydown = (event: KeyboardEvent) => {
-  // Check for Command + K (Mac) or Ctrl + K (Windows/Linux)
-  if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-    event.preventDefault()
-    handleNewTaskClick()
-  }
-}
-
-onMounted(() => {
-  // Initial fetch of sessions
-  fetchSessions()
-  eventBus.on(EVENT_REFRESH_SESSION_LIST, refreshSessions)
-
-  // Add keyboard event listener
-  window.addEventListener('keydown', handleKeydown)
-})
-
-onUnmounted(() => {
-  eventBus.off(EVENT_REFRESH_SESSION_LIST, refreshSessions)
-
-  // Remove keyboard event listener
-  window.removeEventListener('keydown', handleKeydown)
-})
-
-watch(() => route.path, async () => {
-  await updateSessions()
-})
+watch(() => route.fullPath, () => { showUserMenu.value = false; });
+onMounted(() => window.addEventListener('pointerdown', closeMenuOutside));
+onUnmounted(() => window.removeEventListener('pointerdown', closeMenuOutside));
 </script>
+
+<style scoped>
+.navigation-icon-button { display: flex; height: 36px; width: 36px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 6px; }
+.navigation-item { display: flex; min-height: 40px; flex-shrink: 0; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; color: var(--text-secondary); text-align: left; transition: background-color 150ms; }
+.navigation-item:hover, .navigation-icon-button:hover { background: var(--fill-tsp-white-light); }
+.navigation-item-active { background: #2b76590d; color: #2b7659; }
+.navigation-item:focus-visible, .navigation-icon-button:focus-visible { outline: 2px solid #2b7659; outline-offset: 2px; }
+:global(.dark) .navigation-item-active { color: #a9cbbb; background: #a9cbbb12; }
+</style>

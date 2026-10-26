@@ -1,9 +1,10 @@
 <template>
   <section class="flex min-h-0 flex-1 flex-col overflow-auto p-4">
-    <p class="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="note">原始存储值：未应用 CF scale_factor、add_offset 或有限填充值掩膜。非有限值留空；坐标为从 0 开始的维度索引，不是地理坐标。此预览不重采样、不转置、不修改源数据。</p>
+    <p class="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="note">{{ data?.valueSemantics === 'physical' ? '物理值：已应用受支持的标量 CF 缩放、偏移和填充值掩膜；不转换时间日历或地理坐标。' : '原始存储值：未应用 CF scale_factor、add_offset 或有限填充值掩膜。' }} 非有限值留空；坐标为从 0 开始的维度索引，不是地理坐标。此预览不重采样、不转置、不修改源数据。</p>
     <form v-if="catalog" class="rounded border p-3 text-sm" @submit.prevent="loadWindow">
       <label>变量 <select v-model="variableId" aria-label="数组变量" class="ml-2 max-w-full rounded border p-1" :disabled="busy"><option value="">请选择数值变量</option><option v-for="variable in catalog.variables" :key="variable.id" :value="variable.id" :disabled="!variable.selectable">{{ variable.label }} · {{ variable.shape.join(' × ') || '标量／不支持维度' }} · {{ variable.dtype }} {{ variable.reason ? `（${reasonLabel(variable.reason)}）` : '' }}</option></select></label>
       <label class="ml-3">视图 <select v-model="viewKind" aria-label="数组视图" class="rounded border p-1" :disabled="busy"><option value="series">数值曲线（1 个切片轴）</option><option value="image">数值热图（2 个切片轴）</option></select></label>
+      <label class="ml-3">数值模式 <select v-model="decode" :disabled="busy"><option value="raw">原始存储值</option><option value="physical">CF 物理值</option></select></label>
       <div v-if="variable" class="my-3 grid gap-2">
         <div v-for="(dimension, axis) in dimensions" :key="axis" class="flex flex-wrap items-center gap-2">
           <span class="w-32">维度 {{ axis }} · {{ variable.shape[axis] }}</span>
@@ -18,7 +19,9 @@
     <p v-if="busy" role="status" class="py-3">正在读取授权的数组字节范围…</p>
     <p v-if="error" role="alert" class="py-3 text-amber-700">{{ error }}</p>
     <p v-if="current" data-testid="array-window-stats" class="my-3 text-xs text-gray-500">本次读取 {{ current.readBytes.toLocaleString() }} 字节 / 源文件 {{ current.sourceBytes.toLocaleString() }} 字节，{{ current.reads }} 次范围请求。{{ current.truncated ? '目录受预算限制，仅列出部分节点。' : '' }}</p>
-    <p v-if="data && Object.keys(data.attributes).length" class="my-2 text-xs text-gray-600">文件声明的属性（仅展示，未应用）：{{ JSON.stringify(data.attributes) }}</p>
+    <p v-if="data && Object.keys(data.attributes).length" class="my-2 text-xs text-gray-600">文件声明的属性（{{ data.valueSemantics === 'physical' ? '已按物理模式应用支持项' : '仅展示，未应用' }}）：{{ JSON.stringify(data.attributes) }}</p>
+    <ViewToolbar :context="viewContext" :image-formats="['png','svg']" :color="data?.array?.shape.length === 2" :extent="data?.array ? finiteExtent(data.array.values) : null" @image="exportImage" @restore="restoreView" @color-range="setColorRange" @reset="resetView" />
+    <p v-if="data?.calendar" class="text-xs">时间日历：{{ data.calendar }}；时间值保持文件数值，不转换为公历日期。</p>
     <div ref="target" class="min-h-0 w-full" aria-label="原始数组切片数值图" />
     <details v-if="catalog" class="mt-3 text-xs text-gray-500"><summary>受控文件目录（不追踪软链接、外部文件或虚拟数据源）</summary><ul class="my-2"><li v-for="node in catalog.tree" :key="node.path" :style="{ paddingLeft: `${node.attributes.depth * 12}px` }">{{ node.attributes.label }} · {{ node.node_type }} {{ reasonLabel(node.attributes.reason) }}</li></ul></details>
   </section>
@@ -32,7 +35,20 @@ import { requestVisualization } from '../runtime';
 import { filePreviewIdentity, pluginPreviewIdentity } from '../previewIdentity';
 import { loadBrowserLibrary } from './scientific/browserLibraries';
 import { parseArrayWindow, validateArraySelection, type ArrayWindowData } from './arrayWindowData';
+import ViewToolbar from '../ViewToolbar.vue';
+import { assertViewExtent, saveViewDataUrl, type NumericRange, type ViewSelection, type VisualizationViewContext } from '../viewContext';
+import { finiteExtent } from '../plot';
+import { bindPlotlyInteractions } from '../plotlyInteractions';
 const props = defineProps<{ file: FileInfo; plugin: VisualizationPlugin }>();
+const emit=defineEmits<{(e:'view-context',context:VisualizationViewContext|null):void}>();
+const viewContext=shallowRef<VisualizationViewContext|null>(null),decode=ref<'raw'|'physical'>('raw'),colorRange=ref<NumericRange>(),selectedRange=ref<ViewSelection>(),zoomRange=ref<{x:NumericRange;y?:NumericRange}>();
+let plotElement:HTMLDivElement|undefined,plotLibrary:typeof import('plotly.js')|undefined;
+function clearContext(){viewContext.value=null;emit('view-context',null);}
+function publishContext(){const d=data.value;if(!d?.selected||!version)return;viewContext.value={schemaVersion:1,fileId:props.file.file_id,version,pluginId:props.plugin.id,pluginVersion:props.plugin.version,adapter:props.plugin.adapter,family:'array-window',request:{operation:'preview',params:{kind:d.array?.shape.length===1?'series':'image',...JSON.parse(JSON.stringify(d.selected))}},view:{kind:d.array?.shape.length===1?'series':'image',units:d.units,valueSemantics:d.valueSemantics,sampled:false,...(colorRange.value?{colorRange:[...colorRange.value] as NumericRange}:{}),...(zoomRange.value?{xRange:zoomRange.value.x,...(zoomRange.value.y?{yRange:zoomRange.value.y}:{})}:{})},...(selectedRange.value?{selection:JSON.parse(JSON.stringify(selectedRange.value))}:{})};emit('view-context',viewContext.value);}
+async function setColorRange(range:NumericRange|undefined){colorRange.value=range;if(data.value){await draw(data.value);publishContext();}}
+async function resetView(){selectedRange.value=undefined;zoomRange.value=undefined;if(data.value){await draw(data.value);publishContext();}}
+async function exportImage(format:'png'|'svg'){try{if(plotLibrary&&plotElement&&viewContext.value)saveViewDataUrl(await plotLibrary.toImage(plotElement,{format,width:1000,height:650}),`array-view.${format}`);}catch{error.value='图像导出失败，请重试。';}}
+async function restoreView(context:VisualizationViewContext){const p=context.request.params;variableId.value=String(p.variable);viewKind.value=p.kind as 'series'|'image';decode.value=p.decode as 'raw'|'physical';await nextTick();dimensions.value=(p.selection as (number|{start:number;stop:number;step:number})[]).map(s=>typeof s==='number'?{mode:'fixed',start:s,stop:s+1,step:1}:{mode:'slice',...s});colorRange.value=context.view.colorRange;await loadWindow();if(!data.value||version!==context.version)return;const axes=data.value.axes,xs=axes[axes.length-1]!.indices,ys=axes.length===2?axes[0]!.indices:null;try{assertViewExtent(context,[Math.min(...xs),Math.max(...xs)],ys?[Math.min(...ys),Math.max(...ys)]:undefined);}catch(reason){error.value=reason instanceof Error?reason.message:'恢复范围无效。';return;}selectedRange.value=context.selection;zoomRange.value=context.view.xRange?{x:context.view.xRange,...(context.view.yRange?{y:context.view.yRange}:{})}:undefined;await draw(data.value);publishContext();}
 const scope = usePreviewLoad(), plotScope = usePreviewLoad();
 const catalog = shallowRef<ArrayWindowData>(), data = shallowRef<ArrayWindowData>();
 const variableId = ref(''), viewKind = ref<'series' | 'image'>('series'), busy = ref(false), error = ref('');
@@ -43,11 +59,13 @@ const current = computed(() => data.value ?? catalog.value);
 let version: string | undefined;
 const reasonLabel = (reason: string) => ({ link: '链接不读取', alias: '重复或循环引用', depth: '目录深度超限', type: '不支持的数据类型', shape: '不支持的形状', storage: '外部或虚拟存储', filter: '不支持的过滤器', chunk: '解码分块超预算' }[reason] ?? '');
 function resetSelection() {
+  clearContext();selectedRange.value=undefined;zoomRange.value=undefined;
   scope.begin(); data.value = undefined; plotScope.begin(); error.value = ''; busy.value = false;
   const count = viewKind.value === 'series' ? 1 : 2, rank = variable.value?.shape.length ?? 0;
   dimensions.value = (variable.value?.shape ?? []).map((size, axis) => ({ mode: axis >= rank - count ? 'slice' : 'fixed', start: 0, stop: Math.min(size, count === 1 ? 1024 : 128), step: 1 }));
 }
 async function inspect() {
+  clearContext();colorRange.value=undefined;selectedRange.value=undefined;zoomRange.value=undefined;
   const request = scope.begin(); plotScope.begin(); catalog.value = undefined; data.value = undefined; version = undefined; variableId.value = ''; dimensions.value = []; error.value = ''; busy.value = false;
   if (!props.plugin.enabled) return;
   busy.value = true;
@@ -66,28 +84,31 @@ async function draw(parsed: ArrayWindowData) {
   try {
     const array = parsed.array;
     if (!array) return;
-    const library = await loadBrowserLibrary('plotly', load.signal);
+    const library = await loadBrowserLibrary('plotly', load.signal);plotLibrary=library;
     await nextTick(); load.assertCurrent(); if (!target.value) return;
-    const element = document.createElement('div'); target.value.replaceChildren(element); element.style.height = '420px';
+    const element = document.createElement('div');plotElement=element; target.value.replaceChildren(element); element.style.height = '420px';
     load.onDispose(() => { library.purge(element); element.remove(); });
     let traces: import('plotly.js').Data[];
     if (array.shape.length === 1) {
-      traces = [{ type: 'scatter', mode: array.shape[0] === 1 ? 'markers' : 'lines', x: parsed.axes[0]!.indices, y: array.values, connectgaps: false, name: '原始存储值' }];
+      traces = [{ type: 'scatter', mode: array.shape[0] === 1 ? 'markers' : 'lines', x: parsed.axes[0]!.indices, y: array.values, connectgaps: false, name: parsed.valueSemantics==='physical'?'物理值':'原始存储值' }];
     } else {
       const width = array.shape[1]!, z = Array.from({ length: array.shape[0]! }, (_, row) => array.values.slice(row * width, (row + 1) * width));
-      traces = [{ type: 'heatmap', z, x: parsed.axes[1]!.indices, y: parsed.axes[0]!.indices, zsmooth: false, connectgaps: false, colorscale: 'Viridis' }];
+      traces = [{ type: 'heatmap', z, x: parsed.axes[1]!.indices, y: parsed.axes[0]!.indices, zsmooth: false, connectgaps: false, colorscale: 'Viridis',...(colorRange.value?{zmin:colorRange.value[0],zmax:colorRange.value[1]}:{}) }];
     }
-    await library.newPlot(element, traces, { margin: { l: 75, r: 40, t: 25, b: 55 }, xaxis: { title: { text: array.dimensions[array.shape.length - 1] } }, yaxis: { title: { text: array.shape.length === 1 ? '原始存储值' : array.dimensions[0] }, ...(array.shape.length === 2 ? { autorange: 'reversed' as const } : {}) } }, { responsive: true, displaylogo: false, displayModeBar: false });
+    await library.newPlot(element, traces, { margin: { l: 75, r: 40, t: 25, b: 55 }, xaxis: { ...(zoomRange.value?{range:zoomRange.value.x}:{}), title: { text: array.dimensions[array.shape.length - 1] } }, yaxis: { title: { text: array.shape.length === 1 ? `${parsed.valueSemantics==='physical'?'物理值':'原始存储值'} ${parsed.units}` : array.dimensions[0] }, ...(zoomRange.value?.y?{range:[...zoomRange.value.y].reverse()}:array.shape.length === 2 ? { autorange: 'reversed' as const } : {}) } }, { responsive: true, displaylogo: false, displayModeBar: true,modeBarButtonsToRemove:['toImage'] });
     if (!load.isCurrent()) { library.purge(element); element.remove(); return; }
+    const xs=parsed.axes[parsed.axes.length-1]!.indices,ys=parsed.axes.length===2?parsed.axes[0]!.indices:null;
+    load.onDispose(bindPlotlyInteractions(element,{x:[Math.min(...xs),Math.max(...xs)],...(ys?{y:[Math.min(...ys),Math.max(...ys)] as NumericRange}:{}),coordinateSystem:'source-index'},(s,z)=>{selectedRange.value=s;zoomRange.value=z;publishContext();}));
     if (typeof ResizeObserver !== 'undefined') { const observer = new ResizeObserver(() => { if (load.isCurrent()) void library.Plots.resize(element); }); observer.observe(element); load.onDispose(() => observer.disconnect()); }
-  } catch (reason) { if (load.isCurrent()) error.value = reason instanceof Error ? reason.message : '数组绘图失败。'; }
+  } catch (reason) { if (load.isCurrent()) error.value = reason instanceof Error ? reason.message : '数组绘图失败。'; throw reason; }
 }
 async function loadWindow() {
+  clearContext();selectedRange.value=undefined;zoomRange.value=undefined;
   const request = scope.begin(); plotScope.begin(); data.value = undefined; error.value = ''; busy.value = true;
   try {
     if (!props.plugin.enabled || !version || !variable.value) throw new Error('请先检查目录并选择数值变量。');
     const kind = viewKind.value;
-    const selection = validateArraySelection(kind, { variable: variableId.value, decode: 'raw', selection: dimensions.value.map(d => d.mode === 'fixed' ? d.start : { start: d.start, stop: d.stop, step: d.step }) }, variable.value);
+    const selection = validateArraySelection(kind, { variable: variableId.value, decode: decode.value, selection: dimensions.value.map(d => d.mode === 'fixed' ? d.start : { start: d.start, stop: d.stop, step: d.step }) }, variable.value);
     const result = await requestVisualization(props.file, props.plugin, 'preview', { kind, version, ...selection }, request.signal);
     request.assertCurrent();
     if (result.kind !== 'array' || result.version !== version) throw new Error('文件版本已变化，请重新打开预览。');
@@ -96,7 +117,7 @@ async function loadWindow() {
     if (!returned || returned.id !== variable.value?.id || returned.dtype !== variable.value.dtype || returned.label !== variable.value.label
       || returned.reason !== variable.value.reason || JSON.stringify(returned.shape) !== JSON.stringify(variable.value.shape)
       || JSON.stringify(returned.chunks) !== JSON.stringify(variable.value.chunks)) throw new Error('返回变量与已检查的目录不一致。');
-    data.value = parsed; await draw(parsed); request.assertCurrent();
+    data.value = parsed; await draw(parsed); request.assertCurrent();publishContext();
   } catch (reason) { if (request.isCurrent()) error.value = reason instanceof Error ? reason.message : '数组窗口读取失败。'; }
   finally { if (request.isCurrent()) busy.value = false; }
 }

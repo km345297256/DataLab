@@ -46,8 +46,17 @@ def environment(monkeypatch):
 
 def payload():
     return {"contract_version": 2, "type": "tabular", "reader": "tabular", "kind": "table",
-        "media_type": "application/json", "table": {"columns": ["a", "b"], "rows": [["1", "2"]]},
+        "media_type": "application/json", "table": {"columns": ["a", "b"], "rows": [["1", "2"]],
+            "row_offset": 0, "column_offset": 0, "total_rows": 1, "total_columns": 2},
         "metadata": {}, "warnings": [], "sampled": False}
+
+
+def test_unsafe_integer_payload_must_be_exact_text_not_json_number():
+    value = payload(); value["table"]["rows"][0][0] = 2**53 + 1
+    with pytest.raises(ValueError, match="precision"):
+        module.validate_payload(value, "tabular", "table", 1024**2)
+    value["table"]["rows"][0][0] = str(2**53 + 1)
+    assert module.validate_payload(value, "tabular", "table", 1024**2) is value
 
 async def invoke(env, *, request=None, worker=None, user="owner", binary=False):
     return await module.extended_visualization(FileService(env[1]), env[0], "sandbox:test", "opaque", user,
@@ -68,7 +77,7 @@ async def test_catalog_has_one_protocol_without_version_negotiation(environment)
     app.dependency_overrides[get_visualization_catalog] = lambda: environment[0]
     with TestClient(app) as client:
         plugins = client.get('/visualizations').json()['data']['plugins']
-        assert len(plugins) == 83 and all(p['contract_version'] == 2 for p in plugins)
+        assert len(plugins) == 84 and all(p['contract_version'] == 2 for p in plugins)
         states = {plugin['id']: plugin['enabled'] for plugin in plugins}
         assert states['viz-docx'] is True
         assert states['viz-onlyoffice'] is False
@@ -155,3 +164,33 @@ async def test_missing_reader_is_runtime_failure_not_invalid_file(environment):
         await invoke(environment, worker=lambda *args, **kwargs: {
             "ok": False, "error": "未注册的扩展读取器、视图或格式。",
         })
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["table"].update(row_offset=1),
+    lambda r: r["table"].update(column_offset=1),
+    lambda r: r["table"].update(row_offset=True),
+    lambda r: r["table"].update(total_rows=None),
+    lambda r: r["table"].update(total_rows=0),
+    lambda r: r["table"].update(total_columns=103),
+    lambda r: r["table"].update(rows=[["1"]]),
+    lambda r: r.update(sampled=True),
+])
+def test_tabular_response_must_match_window_and_coverage(mutation):
+    result = payload()
+    mutation(result)
+    with pytest.raises(ValueError):
+        module.validate_requested_selection(result, "tabular", "table", {}, "csv", 8)
+
+
+def test_tabular_tail_and_unknown_total_are_explicitly_partial():
+    result = payload()
+    result["table"].update(row_offset=200, total_rows=201)
+    result["sampled"] = True
+    module.validate_requested_selection(result, "tabular", "table", {"row_offset": 200}, "csv", 4096)
+    result["sampled"] = False
+    with pytest.raises(ValueError):
+        module.validate_requested_selection(result, "tabular", "table", {"row_offset": 200}, "csv", 4096)
+    result["table"].update(row_offset=0, rows=[["1", "2"]] * 200, total_rows=None)
+    result["sampled"] = True
+    module.validate_requested_selection(result, "tabular", "table", {}, "csv", 4096)

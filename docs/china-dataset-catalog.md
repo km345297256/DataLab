@@ -1,13 +1,13 @@
 # 国内科学数据目录与访问边界
 
-记录日期：2026-09-07。面向本机 DataSeek 数据分析；使用入口、管理和导入方法见[数据集管理说明](dataset-management.md)。
+历史来源档案，记录日期：2026-09-07。下文记录原 DataSeek 的数据准备与验收；DataLab 已移除机构数据目录、登记及专用探查功能，历史操作入口和登记命令不再适用。保留本档案用于来源、许可证及样本范围追溯。
 
 ## 本批实际准备范围
 
 ScienceDB、国家青藏高原科学数据中心（TPDC）、国家基因组科学数据中心（NGDC/GWH）各完成 **10 个**，化学化工科学数据中心（ChemDC）已完成 **2 个，另 8 个待获取**；当前共 **32 个不同数据集**，真实实体文件保存在：
 
 ```text
-/Users/luchangfa/Documents/Codex/Data/open-catalog/<source>/<dataset_id>/
+<LOCAL_DATA_ROOT>/open-catalog/<source>/<dataset_id>/
 ```
 
 源标识分别为 `scidb`、`tpdc`、`ngdc`、`chemdc`。这是一批适合本机分析的代表性数据，不是下载四家机构的全部数据库，不是机构官方推荐榜单，也不是把同一个数据集的多个文件拆开充数。部分是单项研究全包，部分是明确标注的轻量子集。
@@ -122,7 +122,7 @@ TPDC 的 `metadata.fileSize` 是源文件总量，不一定等于网站动态打
 
 ## 导入与状态说明
 
-经过审阅的元数据清单位于 `backend/app/resources/external-datasets/<source>/<dataset_id>.json`；下载准备与管理员登记是分离步骤，浏览器不具备任意 URL 下载或将私人数据标为公开精选的能力。新目录先核验真实格式、全量文件、大小和哈希，再通过精确只读挂载的管理员命令校验/登记，操作示例见[数据集管理说明](dataset-management.md#管理员导入已准备的公开实体)。
+原元数据清单位于 `backend/app/resources/external-datasets/<source>/<dataset_id>.json`。历史准备过程分别执行下载、真实格式与哈希核验、只读挂载验证以及管理员登记；DataLab 不再提供该登记流程。
 
 ## 首批 30 集本机验收（2026-09-07）
 

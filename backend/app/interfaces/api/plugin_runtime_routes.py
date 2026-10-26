@@ -11,7 +11,8 @@ from app.domain.external.plugin_runtime import (
     PluginRuntime,
     PluginRuntimeError,
 )
-from app.interfaces.dependencies import get_plugin_runtime
+from app.interfaces.dependencies import get_plugin_runtime, get_current_user
+from app.domain.models.user import User, UserRole
 from app.interfaces.schemas.base import APIResponse
 from app.interfaces.schemas.plugin_runtime import (
     PluginRuntimeSnapshotResponse,
@@ -19,7 +20,7 @@ from app.interfaces.schemas.plugin_runtime import (
 )
 
 
-router = APIRouter(prefix="/plugins/runtime", tags=["plugins"])
+router = APIRouter(prefix="/plugins/runtime", tags=["plugins"], dependencies=[Depends(get_current_user)])
 _RELOAD_ACTION = "plugin-runtime-reload"
 _RELOAD_ACTION_HEADER = "X-AI-DataSeek-Action"
 _RELOAD_RESPONSE_LOCK = asyncio.Lock()
@@ -146,7 +147,10 @@ async def get_runtime_snapshot(
 )
 async def reload_runtime_snapshot(
     runtime: PluginRuntime | None = Depends(get_plugin_runtime),
+    current_user: User = Depends(get_current_user),
 ) -> APIResponse[PluginRuntimeSnapshotResponse]:
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
     if runtime is None:
         raise HTTPException(status_code=503, detail="Cordis plugin runtime is unavailable")
 

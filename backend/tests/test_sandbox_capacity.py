@@ -41,7 +41,8 @@ async def test_capacity_wait_retries_until_a_slot_is_available(monkeypatch):
         runtime_module,
         "get_settings",
         lambda: SimpleNamespace(
-            sandbox_capacity_wait_seconds=0.1,
+            # A stale deployment value must not restore the old deadline.
+            sandbox_capacity_wait_seconds=0,
             sandbox_capacity_poll_seconds=0.001,
         ),
     )
@@ -61,7 +62,7 @@ async def test_local_allocations_share_one_admission_critical_section(monkeypatc
     monkeypatch.setattr(runtime_module, "_SANDBOX_ADMISSION_LOCK", asyncio.Lock())
     monkeypatch.setattr(
         runtime_module,
-        "_wait_for_execution_node_candidates",
+        "_list_execution_node_candidates",
         AsyncMock(return_value=[node]),
     )
     active = 0
@@ -136,6 +137,9 @@ async def test_unavailable_resumed_sandbox_is_retired_before_replacement():
     class FakeRepository:
         async def save(self, _session):
             return None
+
+        async def compare_and_set_task_id(self, _session_id, **_kwargs):
+            return True
 
     service = AgentDomainService(
         agent_repository=object(),
@@ -308,6 +312,9 @@ async def test_missing_sandbox_is_idempotently_replaced_for_dataset_remount():
     class FakeRepository:
         async def save(self, _session):
             return None
+
+        async def compare_and_set_task_id(self, _session_id, **_kwargs):
+            return True
 
     service = AgentDomainService(
         agent_repository=object(),

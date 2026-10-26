@@ -2,8 +2,14 @@
 .gitignore
 .cache
 .local/
+.agents/
+.codex/
+.aws/
+outputs/
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 **/.DS_Store
 **/__pycache__

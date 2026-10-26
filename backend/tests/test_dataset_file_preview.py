@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.application.errors.exceptions import NotFoundError
@@ -23,8 +22,7 @@ from app.domain.models.visualization import VisualizationSnapshot
 from app.infrastructure.external.file.datasetfile import DatasetPreviewFileStorage
 from app.infrastructure.external.sandbox.node_health import LOCAL_DEFAULT_NODE_ID
 from app.infrastructure.repositories.mongo_dataset_preview_repository import MongoDatasetPreviewRepository
-from app.interfaces.api import dataset_routes
-from app.interfaces.schemas.dataset import dataset_response
+from app.domain.services.dataset_file_paths import public_dataset_file_path
 
 
 class Preferences:
@@ -185,18 +183,18 @@ async def test_unapproved_locations_never_reach_reader(env, field, value):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mount_name,inventory_prefix", [("data", "data/"), ("data", ""), ("", "private-source/"), ("", "")])
-async def test_host_inventory_prefix_resolves_from_actual_public_response(env, mount_name, inventory_prefix):
+async def test_host_inventory_prefix_resolves_from_logical_path(env, mount_name, inventory_prefix):
     location = env.datasets.dataset.locations[0]
     location.storage_type = DatasetStorageType.HOST_PATH
     location.source_path = "/allowed/private-source"
     location.mount_name = mount_name
     path = f"sources/{location.location_id}/{inventory_prefix}folder/data.nc"
     env.datasets.dataset.files[0].path = path
-    public = dataset_response(env.datasets.dataset)
-    assert public.locations == [] and public.files[0].path == "folder/data.nc"
-    response = await prepare(env, path=public.files[0].path)
+    paths = [str(public_dataset_file_path(item.path, env.datasets.dataset.locations)) for item in env.datasets.dataset.files]
+    assert paths[0] == "folder/data.nc"
+    response = await prepare(env, path=paths[0])
     assert env.state["reads"][0][1] == "folder/data.nc"
-    assert response.file.metadata["logical_path"] == public.files[0].path
+    assert response.file.metadata["logical_path"] == paths[0]
     assert location.location_id not in response.model_dump_json()
     assert "private-source" not in response.model_dump_json()
     assert "/allowed" not in response.model_dump_json()
@@ -215,10 +213,10 @@ async def test_colliding_public_paths_across_host_sources_are_rejected(env):
     second = first.model_copy(update={"location_id": "dsl_second", "source_path": "/allowed/two"})
     env.datasets.dataset.locations = [first, second]
     env.datasets.dataset.files = [DatasetFile(path=f"sources/{location.location_id}/data/folder/data.nc") for location in [first, second]]
-    public = dataset_response(env.datasets.dataset)
-    assert [item.path for item in public.files] == ["folder/data.nc", "folder/data.nc"]
+    paths = [str(public_dataset_file_path(item.path, env.datasets.dataset.locations)) for item in env.datasets.dataset.files]
+    assert paths == ["folder/data.nc", "folder/data.nc"]
     with pytest.raises(FileNotFoundError):
-        await prepare(env, path=public.files[0].path)
+        await prepare(env, path=paths[0])
     assert not env.repository.rows and not env.state["reads"]
 
 
@@ -228,7 +226,7 @@ async def test_new_public_path_collision_invalidates_existing_reference(env):
     first.storage_type = DatasetStorageType.HOST_PATH
     first.source_path, first.mount_name = "/allowed/one", "data"
     env.datasets.dataset.files = [DatasetFile(path=f"sources/{first.location_id}/data/folder/data.nc")]
-    file_id = (await prepare(env, path=dataset_response(env.datasets.dataset).files[0].path)).file.file_id
+    file_id = (await prepare(env, path=str(public_dataset_file_path(env.datasets.dataset.files[0].path, env.datasets.dataset.locations)))).file.file_id
     second = first.model_copy(update={"location_id": "dsl_second", "source_path": "/allowed/two"})
     env.datasets.dataset.locations.append(second)
     env.datasets.dataset.files.append(DatasetFile(path=f"sources/{second.location_id}/data/folder/data.nc"))
@@ -241,9 +239,9 @@ async def test_host_shapefile_roundtrip_keeps_public_sidecar_grouping(env):
     location.storage_type = DatasetStorageType.HOST_PATH
     location.source_path, location.mount_name = "/allowed/private-source", "data"
     env.datasets.dataset.files = [DatasetFile(path=f"sources/{location.location_id}/data/folder/roads.{suffix}") for suffix in ["shp", "dbf", "shx"]]
-    public = dataset_response(env.datasets.dataset)
-    response = await prepare(env, path=public.files[0].path, plugin="shapefile")
-    assert [info.metadata["logical_path"] for info in response.related_files] == [item.path for item in public.files]
+    paths = [str(public_dataset_file_path(item.path, env.datasets.dataset.locations)) for item in env.datasets.dataset.files]
+    response = await prepare(env, path=paths[0], plugin="shapefile")
+    assert [info.metadata["logical_path"] for info in response.related_files] == paths
     assert location.location_id not in response.model_dump_json() and "private-source" not in response.model_dump_json()
 
 
@@ -500,40 +498,3 @@ async def test_repository_upsert_is_deduplicated_expiring_and_no_file_collection
     assert set(update["$set"]) == {*row, "expires_at"}
     assert await repo.get("dataset-preview:opaque") is None
     assert "$gt" in collection.find_one.call_args.args[0]["expires_at"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("exception,status", [(FileNotFoundError("secret"), 404), (VisualizationDisabledError("secret"), 403), (ValueError("/private/server/path"), 422)])
-async def test_prepare_route_returns_safe_errors(monkeypatch, exception, status):
-    service = SimpleNamespace(prepare=AsyncMock(side_effect=exception))
-    monkeypatch.setattr(dataset_routes, "get_file_storage", lambda: SimpleNamespace(previews=service))
-    with pytest.raises(HTTPException) as caught:
-        await dataset_routes.prepare_dataset_file_preview("ds", DatasetFilePreviewRequest(path="a.nc", plugin_id="netcdf-map"), SimpleNamespace(is_disconnected=AsyncMock(return_value=False)), SimpleNamespace(id="owner"))
-    assert caught.value.status_code == status and "secret" not in caught.value.detail and "/private" not in caught.value.detail
-
-
-@pytest.mark.asyncio
-async def test_route_uses_public_metadata_contract_without_eager_download_urls(env, monkeypatch):
-    monkeypatch.setattr(dataset_routes, "get_file_storage", lambda: SimpleNamespace(previews=env.service))
-    response = await dataset_routes.prepare_dataset_file_preview("test-dataset", DatasetFilePreviewRequest(path="folder/data.nc", plugin_id="netcdf-map"),
-        SimpleNamespace(is_disconnected=AsyncMock(return_value=False)), SimpleNamespace(id="owner"))
-    payload = response.model_dump()["data"]
-    assert payload["file"]["metadata"]["logical_path"] == "folder/data.nc"
-    assert "file_path" not in payload["file"] and "user_id" not in payload["file"]
-    assert payload["file"]["file_url"] is None
-    assert payload["related_files"] == [payload["file"]]
-
-
-@pytest.mark.asyncio
-async def test_disconnected_prepare_route_cancels_without_materializing_reference(monkeypatch):
-    cancelled = asyncio.Event()
-    async def waiting(*args, **kwargs):
-        try:
-            await asyncio.Event().wait()
-        finally:
-            cancelled.set()
-    monkeypatch.setattr(dataset_routes, "get_file_storage", lambda: SimpleNamespace(previews=SimpleNamespace(prepare=waiting)))
-    with pytest.raises(asyncio.CancelledError):
-        await dataset_routes.prepare_dataset_file_preview("dataset", DatasetFilePreviewRequest(path="a.nc", plugin_id="netcdf-map"),
-            SimpleNamespace(is_disconnected=AsyncMock(return_value=True)), SimpleNamespace(id="owner"))
-    assert cancelled.is_set()

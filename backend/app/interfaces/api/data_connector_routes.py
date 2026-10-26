@@ -28,7 +28,6 @@ async def call(connector_id: str, request: ConnectorCall, scope=Depends(owned_se
 from pydantic import BaseModel, Field
 from typing import Literal
 from fastapi import HTTPException
-from app.interfaces.dependencies import get_agent_service
 
 
 class ImportSelection(BaseModel):
@@ -40,7 +39,7 @@ class ImportSelection(BaseModel):
 
 @router.post('/sessions/{session_id}/data-connectors/import')
 async def import_selection(request: ImportSelection, scope=Depends(owned_session),
-                           agent=Depends(get_agent_service), service=Depends(get_data_connector_service)):
+                           service=Depends(get_data_connector_service)):
     """Import only identifiers present in this owner's persisted successful search."""
     from io import BytesIO, StringIO
     import csv
@@ -63,7 +62,6 @@ async def import_selection(request: ImportSelection, scope=Depends(owned_session
         raise HTTPException(400, '每次最多下载 3 个数据包，请分批导入')
     if request.mode == 'download' and panel['connector_id'] in ('ncbi-geo', 'ncbi-sra') and (len(selected) != 1 or not request.file_ids):
         raise HTTPException(400, '请先查看文件列表，再逐文件下载')
-    _, sandbox = await agent.ensure_interactive_sandbox(session_id, owner)
     files = FileService(file_storage=get_file_storage())
     receipts, failures = [], []
     if request.mode == 'catalog':
@@ -76,7 +74,7 @@ async def import_selection(request: ImportSelection, scope=Depends(owned_session
         info = await files.upload_file(BytesIO(output.getvalue().encode('utf-8-sig')),
             f"{panel['connector_id']}-{digest}-catalog.csv", owner, 'text/csv',
             metadata={'source': 'connector_selection', 'connector_id': panel['connector_id']})
-        pending = [(info.file_id, info.filename)]
+        pending = [info.file_id]
     else:
         pending = []
         for row in selected:
@@ -87,24 +85,21 @@ async def import_selection(request: ImportSelection, scope=Depends(owned_session
                         raise HTTPException(400, '请先查看文件列表，再逐文件下载')
                     args['file_ids'] = request.file_ids
                 result = await service.call(owner, session_id, panel['connector_id'], 'acquire', args)
-                pending.extend((file.file_id, file.filename) for file in result.files)
+                pending.extend(file.file_id for file in result.files)
             except SourceConnectorError as error:
                 from app.domain.services.tools.data_discovery import connector_error_message
                 message = ('文件超过 64 MiB 上限，请选择较小文件。' if error.reason == 'download_too_large' and panel['connector_id'] != 'ncbi-datasets-v2' else connector_error_message(error.reason))
                 failures.append({'id': row['external_id'], 'message': message})
-    for file_id, filename in pending:
-        stream, info = await files.download_file(file_id, owner)
-        try:
-            path = '/home/ubuntu/upload/' + filename
-            result = await sandbox.file_upload(stream, path, filename)
-            if not result.success:
-                failures.append({'id': filename, 'message': '文件已下载，但导入沙盒失败，可重试'})
-                continue
-            info.file_path = path
-            await repository.upsert_connector_file(session_id, owner, info)
-            receipts.append({'file_id': file_id, 'filename': filename, 'size': info.size, 'content_type': info.content_type, 'upload_date': info.upload_date.isoformat() if info.upload_date else ''})
-        finally:
-            stream.close()
+    for file_id in pending:
+        info = await files.get_file_info(file_id, owner)
+        if info is None or info.user_id != owner or info.file_id != file_id:
+            raise HTTPException(403, '所选文件不存在或无权访问')
+        # Acquisition already committed the object. Selection records only an
+        # owned reference; execution will expose that object through a read-only
+        # mount instead of creating another copy in an interactive sandbox.
+        info.file_path = None
+        await repository.upsert_connector_file(session_id, owner, info)
+        receipts.append({'file_id': file_id, 'filename': info.filename, 'size': info.size, 'content_type': info.content_type, 'upload_date': info.upload_date.isoformat() if info.upload_date else ''})
     return APIResponse.success({'files': receipts, 'failures': failures})
 
 

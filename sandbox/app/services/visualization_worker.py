@@ -35,9 +35,12 @@ def label(value, maximum=96):
     return "".join(c for c in text if ord(c) >= 32)
 
 
-def numbers(values, significant=10):
+def numbers(values, significant=None):
     import numpy as np
-    array = np.ma.asarray(values, dtype=float).filled(float("nan")).ravel()
+    source = np.ma.asarray(values)
+    if source.dtype.kind in "iu" and any(abs(int(value)) > 2**53 - 1 for value in source.compressed()):
+        raise PreviewError("整数超出浏览器可精确表示的范围，请使用原始数据分析。")
+    array = source.astype(float).filled(float("nan")).ravel()
     return [
         (float(value) if significant is None else float(f"{float(value):.{significant}g}"))
         if math.isfinite(float(value)) else None for value in array
@@ -170,6 +173,10 @@ def netcdf_preview(path, kind, options):
                 raise PreviewError("此数据未找到具有独立一维经纬度的变量，请切换数值曲线视图。")
             raise PreviewError("未找到可预览的数值变量。")
         variable = variables[selected]
+        result["metadata"].update(value_semantics="physical", units=label(getattr(variable, "units", "")),
+                                  missing_value_policy="CF mask/scale applied; missing and non-finite values are null",
+                                  coordinate_semantics="numeric coordinate values or zero-based dimension indices",
+                                  calendar="")
         result["selected_variable"] = selected
         result["y_label"] = label(selected, 128) + (f" ({label(getattr(variable, 'units', ''))})" if getattr(variable, "units", "") else "")
         indices = options.get("indices", {})
@@ -193,6 +200,8 @@ def netcdf_preview(path, kind, options):
                     raise PreviewError("横轴坐标包含缺失值，请选择其他维度。")
                 result["x"] = x
                 result["x_label"] = axis + (f" ({label(getattr(coordinate, 'units', ''))})" if getattr(coordinate, "units", "") else "")
+                result["metadata"]["coordinate_units"] = label(getattr(coordinate, "units", ""))
+                result["metadata"]["coordinate_semantics"] = "numeric coordinate values; calendar dates are not converted"
                 calendar = getattr(coordinate, "calendar", None)
                 if calendar:
                     result["metadata"]["calendar"] = label(calendar)
@@ -246,7 +255,7 @@ def netcdf_preview(path, kind, options):
                           sampled=len(li) < len(lat) or len(lj) < len(lon))
             result["metadata"].update(crs="EPSG:4326", indices={d: int(indices.get(d, 0)) for d in variable.dimensions if d not in {lat_dim, lon_dim}},
                                        spatial_dimensions=[lat_dim, lon_dim],
-                                       value_label=label(selected, 128), units=label(getattr(variable, "units", "")))
+                                       value_label=label(selected, 128), coordinate_semantics="longitude/latitude in degrees")
         else:
             raise PreviewError("不支持的 NetCDF 视图。")
     if result["sampled"]:
@@ -278,6 +287,10 @@ def fits_preview(path, kind, options):
             raise PreviewError("未找到适用的非压缩数值图像 HDU；表格或压缩 HDU 请使用领域分析工具。")
         hdu = hdus[chosen]
         shape = hdu.shape
+        result["metadata"].update(value_semantics="physical", units=label(hdu.header.get("BUNIT", "")),
+                                  missing_value_policy="integer BLANK masked before BSCALE/BZERO; non-finite values are null",
+                                  coordinate_semantics="zero-based source pixel indices; no WCS conversion", calendar="",
+                                  source_shape=list(shape))
         dims = [f"axis{i}" for i in range(len(shape))]
         result["variables"] = [dict(name=f"HDU {chosen}", dimensions=[dict(name=d, size=int(s)) for d, s in zip(dims, shape)], shape=list(shape), units=label(hdu.header.get("BUNIT", "")))]
         result["selected_variable"] = f"HDU {chosen}"
@@ -303,6 +316,10 @@ def fits_preview(path, kind, options):
         # section reads only selected pixels. Disable automatic scaling before
         # slicing; apply physical scaling and integer BLANK masking afterward.
         raw = np.asarray(hdu.section[slicing])
+        if raw.dtype.kind in "iu":
+            finite_raw = raw[raw != hdu.header["BLANK"]] if "BLANK" in hdu.header else raw
+            if any(abs(int(value)) > 2**53 - 1 for value in finite_raw.flat):
+                raise PreviewError("整数超出浏览器可精确表示的范围，请使用原始数据分析。")
         values = raw.astype(float)
         if raw.dtype.kind in "iu" and "BLANK" in hdu.header:
             values[raw == hdu.header["BLANK"]] = np.nan
@@ -310,8 +327,12 @@ def fits_preview(path, kind, options):
         result["sampled"] = any(isinstance(s, slice) and (s.step or 1) > 1 for s in slicing)
         result["metadata"]["indices"] = {d: indices.get(d, 0) for d in dims if d not in keep}
         if kind == "image":
-            result.update(width=int(values.shape[1]), height=int(values.shape[0]), values=numbers(values), x_label="像素 X", y_label="像素 Y")
-            result["metadata"].update(spatial_dimensions=keep, orientation="array-row-zero-at-top")
+            steps = [slicing[dims.index(d)].step for d in keep]
+            result.update(width=int(values.shape[1]), height=int(values.shape[0]), values=numbers(values),
+                          x=list(range(0, shape[-1], steps[1])), y=list(range(0, shape[-2], steps[0])),
+                          x_label="原像素 X（从 0 开始）", y_label="原像素 Y（从 0 开始）")
+            result["metadata"].update(spatial_dimensions=keep, orientation="array-row-zero-at-top", strides=steps,
+                                      axis_coordinates="source pixel indices")
             result["warnings"].append("显示数组像素平面，第 0 行在上方；未应用 FITS 天文显示方向或 WCS 天空坐标。")
         else:
             dim = dims.index(keep[0])
@@ -360,6 +381,9 @@ def fastq_preview(data, options, truncated=False):
                   x_label="碱基位置", y_label="平均质量 (Phred+33)", sampled=truncated or stream.tell() < len(data) or max(lengths) > 500)
     result["metadata"].update(reads_sampled=reads, bases_sampled=bases, gc_percent=round(gc * 100 / bases, 3),
                                min_length=min(lengths), max_length=max(lengths), quality_encoding="Phred+33 (用户需确认)", position_counts=counts[:length])
+    result["metadata"].update(value_semantics="derived", units="Phred+33", calendar="",
+                               coordinate_semantics="one-based read positions",
+                               missing_value_policy="positions without contributing reads are omitted; counts vary by position")
     result["warnings"].append("按 Phred+33 解释质量；编码不能仅凭字符可靠推断。最多读取前 16 MiB、1,000 条记录和前 500 个碱基位置，结果不是全文件 QC。")
     return result
 

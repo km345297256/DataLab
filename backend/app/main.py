@@ -10,13 +10,13 @@ from app.infrastructure.storage.mongodb import get_mongodb
 from app.infrastructure.storage.redis import get_redis
 from app.interfaces.dependencies import (
     get_agent_service,
+    get_auth_service,
     get_jupyter_service,
     get_plugin_runtime,
 )
 from app.interfaces.api.routes import router
 from app.infrastructure.logging import setup_logging
 from app.interfaces.errors.exception_handlers import register_exception_handlers
-from app.interfaces.middleware.sso_auth import SSOAuthorizationMiddleware
 from app.interfaces.middleware.office_origin_guard import OfficeOriginGuard
 from app.infrastructure.models.documents import (
     AgentDocument,
@@ -25,7 +25,6 @@ from app.infrastructure.models.documents import (
     ApprovalRequestDocument,
     AuditLogDocument,
     DataCenterDatasetDocument,
-    DataProductDocument,
     ExecutionEnvironmentSnapshotDocument,
     ExecutionNodeDocument,
     FileUploadSessionDocument,
@@ -53,6 +52,7 @@ from app.infrastructure.models.documents import (
     WorkspaceMemberDocument,
 )
 from app.domain.services.safety.policy_store import ensure_safety_rule_seeds
+from app.domain.utils.shutdown import cancel_and_join, cleanup_steps, join_cleanup
 from app.infrastructure.external.file.spill_factory import get_spill_artifact_store
 from app.infrastructure.external.analysis_job_factory import get_analysis_job_service
 from app.infrastructure.models.analysis_job import AnalysisJobDocument
@@ -78,6 +78,7 @@ execution_node_monitor: ExecutionNodeMonitor | None = None
 jupyter_reaper_task: asyncio.Task | None = None
 spill_reaper_task: asyncio.Task | None = None
 analysis_job_monitor_task: asyncio.Task | None = None
+open_data_worker_task: asyncio.Task | None = None
 
 
 async def _maintain_analysis_jobs() -> None:
@@ -125,12 +126,84 @@ async def _reap_expired_spill_artifacts() -> None:
         await asyncio.sleep(interval)
 
 
+async def _cleanup_application(plugin_runtime) -> None:
+    """Settle consumers before dependencies, without skipping later resources."""
+    global execution_node_monitor, jupyter_reaper_task, spill_reaper_task, analysis_job_monitor_task
+
+    async def stop_background_tasks():
+        global jupyter_reaper_task, spill_reaper_task, analysis_job_monitor_task, open_data_worker_task
+        tasks = [task for task in (jupyter_reaper_task, spill_reaper_task, analysis_job_monitor_task, open_data_worker_task)
+                 if task is not None]
+        try:
+            await cancel_and_join(tasks)
+        finally:
+            jupyter_reaper_task = spill_reaper_task = analysis_job_monitor_task = None
+            open_data_worker_task = None
+
+    async def stop_node_monitor():
+        global execution_node_monitor
+        try:
+            if execution_node_monitor is not None:
+                await execution_node_monitor.stop()
+        finally:
+            execution_node_monitor = None
+
+    async def stop_pool():
+        pool = get_sandbox_pool()
+        try:
+            if pool is not None:
+                await pool.shutdown()
+        finally:
+            set_sandbox_pool(None)
+
+    async def stop_plugins():
+        if plugin_runtime is not None:
+            await plugin_runtime.shutdown()
+
+    async def close(name, operation):
+        try:
+            await operation()
+        except BaseException as error:
+            logger.error("Application cleanup failed resource=%s error_type=%s", name, type(error).__name__)
+            raise
+
+    # In particular, background maintenance cannot enqueue more work while its
+    # services drain. Runner/sandbox final writes still have both shared stores.
+    steps = (
+        ("background_tasks", stop_background_tasks),
+        ("node_monitor", stop_node_monitor),
+        ("sandbox_pool", stop_pool),
+        ("agent_service", lambda: get_agent_service().shutdown()),
+        ("analysis_jobs", lambda: get_analysis_job_service().shutdown()),
+        ("tool_approvals", lambda: get_tool_approval_service().shutdown()),
+        ("plugin_runtime", stop_plugins),
+        ("redis", lambda: get_redis().shutdown()),
+        ("mongodb", lambda: get_mongodb().shutdown()),
+    )
+    await cleanup_steps(*(lambda name=name, operation=operation: close(name, operation)
+                          for name, operation in steps))
+
+
+async def _shutdown_application(app: FastAPI, plugin_runtime) -> None:
+    task = getattr(app.state, "application_shutdown_task", None)
+    if task is None:
+        task = asyncio.create_task(_cleanup_application(plugin_runtime))
+        app.state.application_shutdown_task = task
+    await join_cleanup(task)
+
+
 # Create lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global execution_node_monitor, jupyter_reaper_task, spill_reaper_task, analysis_job_monitor_task
+    global execution_node_monitor, jupyter_reaper_task, spill_reaper_task, analysis_job_monitor_task, open_data_worker_task
     # Code executed on startup
     logger.info("Application startup - DataLab initializing")
+
+    if settings.auth_provider != "password":
+        raise RuntimeError("DataLab requires AUTH_PROVIDER=password")
+    if len(settings.jwt_secret_key) < 32 or settings.jwt_secret_key == "your-secret-key-here":
+        raise RuntimeError("Set JWT_SECRET_KEY to a persistent random secret of at least 32 characters")
+    app.state.application_shutdown_task = None
 
     # Initialize MongoDB and Beanie
     await get_mongodb().initialize()
@@ -171,12 +244,12 @@ async def lifespan(app: FastAPI):
             SafetyRuleDocument,
             SafetyRuleSeedStateDocument,
             DataCenterDatasetDocument,
-            DataProductDocument,
             TemporaryDatasetDocument,
             TaskFeedbackDocument,
             JupyterSessionDocument,
         ]
     )
+    await get_auth_service().bootstrap_admin()
     await ensure_safety_rule_seeds()
     logger.info("Successfully initialized Beanie")
     jupyter_reaper_task = asyncio.create_task(_reap_idle_jupyter_sessions())
@@ -232,6 +305,8 @@ async def lifespan(app: FastAPI):
                 type(exc).__name__,
             )
 
+    from app.application.services.open_data_service import run_open_data_worker
+    open_data_worker_task = asyncio.create_task(run_open_data_worker())
     get_agent_service().start_input_recovery()
     try:
         yield
@@ -239,59 +314,7 @@ async def lifespan(app: FastAPI):
         # Code executed on shutdown
         logger.info("Application shutdown - DataLab terminating")
 
-        if jupyter_reaper_task:
-            jupyter_reaper_task.cancel()
-            await asyncio.gather(jupyter_reaper_task, return_exceptions=True)
-            jupyter_reaper_task = None
-
-        if spill_reaper_task:
-            spill_reaper_task.cancel()
-            await asyncio.gather(spill_reaper_task, return_exceptions=True)
-            spill_reaper_task = None
-
-        pool = get_sandbox_pool()
-        if pool:
-            await pool.shutdown()
-            set_sandbox_pool(None)
-
-        if execution_node_monitor:
-            await execution_node_monitor.stop()
-            execution_node_monitor = None
-
-        logger.info("Cleaning up AgentService instance")
-        try:
-            await asyncio.wait_for(get_agent_service().shutdown(), timeout=30.0)
-            logger.info("AgentService shutdown completed successfully")
-        except asyncio.TimeoutError:
-            logger.warning("AgentService shutdown timed out after 30 seconds")
-        except Exception as error:
-            logger.error(
-                "Error during AgentService cleanup error_type=%s",
-                type(error).__name__,
-            )
-
-        try:
-            await get_analysis_job_service().shutdown()
-            await get_tool_approval_service().shutdown()
-        finally:
-            if analysis_job_monitor_task:
-                analysis_job_monitor_task.cancel()
-                await asyncio.gather(analysis_job_monitor_task, return_exceptions=True)
-                analysis_job_monitor_task = None
-
-        if plugin_runtime is not None:
-            try:
-                await plugin_runtime.shutdown()
-            except Exception as error:
-                logger.error(
-                    "Error during Cordis plugin runtime cleanup error_type=%s",
-                    type(error).__name__,
-                )
-
-        # Runner cleanup persists final sandbox/allocation state and may still
-        # consume Redis streams. Close shared stores only after it completes.
-        await get_redis().shutdown()
-        await get_mongodb().shutdown()
+        await _shutdown_application(app, plugin_runtime)
 
 app = FastAPI(title="DataLab", lifespan=lifespan)
 
@@ -304,11 +327,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# The supported deployment uses one built-in administrator and deliberately
-# sends no browser credentials. Keep the legacy SSO boundary available only
-# for deployments that explicitly select an authenticated provider.
-if settings.auth_provider != "none":
-    app.add_middleware(SSOAuthorizationMiddleware)
 app.add_middleware(OfficeOriginGuard)
 
 # Register exception handlers

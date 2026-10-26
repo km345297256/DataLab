@@ -1497,7 +1497,9 @@ async def test_lightweight_runner_persists_answer_and_done_without_sandbox():
             self.status = status
 
     class Advice:
-        def default_advice(self):
+        async def analyze(self, events, *, llm_overrides=None):
+            assert isinstance(repository.events[0], MessageEvent)
+            assert events[0].role == "user" and events[1] is repository.events[0]
             return SimpleNamespace()
 
         def to_payload(self, _advice):
@@ -1576,6 +1578,10 @@ async def test_controller_failure_is_not_presented_as_a_safety_violation():
     metadata = runner._session_repository.events[0].metadata
     assert "front_controller_error" in metadata
     assert "safety_review" not in metadata
+    assert metadata["analysis_outcome"]["status"] == "failed"
+    assert metadata["analysis_outcome"]["reason_code"] == "front_controller_unavailable"
+    assert metadata["execution_stage"] == "routing" and metadata["analysis_started"] is False
+    assert runner._session_repository.events[-1].advice is None
 
 
 async def _async_none():

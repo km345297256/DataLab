@@ -96,8 +96,18 @@ class ScientificVisualizationResult(BaseModel):
                     raise ValueError("Invalid map coordinate order")
                 if self.extent != [self.x[0], self.y[-1], self.x[-1], self.y[0]]:
                     raise ValueError("Invalid map extent")
-            elif self.x or self.y or self.extent is not None:
-                raise ValueError("Invalid image axes")
+            else:
+                shape, strides = self.metadata.get("source_shape"), self.metadata.get("strides")
+                if (self.reader != "fits" or self.extent is not None or not isinstance(shape, list) or not 2 <= len(shape) <= 8
+                    or any(type(size) is not int or not 0 < size <= 2**53 - 1 for size in shape)
+                    or not isinstance(strides, list) or len(strides) != 2
+                    or any(type(step) is not int or step < 1 for step in strides)
+                    or strides != [max(1, math.ceil(size / 128)) for size in shape[-2:]]
+                    or self.metadata.get("axis_coordinates") != "source pixel indices"
+                    or self.x != list(range(0, shape[-1], strides[1])) or self.y != list(range(0, shape[-2], strides[0]))
+                    or len(self.x) != self.width or len(self.y) != self.height
+                    or not any(variable.name == self.selected_variable and variable.shape == shape for variable in self.variables)):
+                    raise ValueError("Invalid source pixel coordinates")
         if any(v.shape != [d.size for d in v.dimensions] for v in self.variables):
             raise ValueError("Invalid variable shape")
         return self
@@ -117,6 +127,8 @@ def _safe_result_payload(payload):
         elif isinstance(value, float):
             if not math.isfinite(value):
                 raise ValueError("Non-finite preview value")
+        elif type(value) is int and abs(value) > 2**53 - 1:
+            raise ValueError("Integer preview would lose browser precision")
         elif isinstance(value, dict):
             for key, child in value.items():
                 visit(key, depth + 1)

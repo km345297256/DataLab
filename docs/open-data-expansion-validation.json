@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-21",
+  "branch": "datalab",
+  "status": "deployed_and_verified",
+  "enabled_automatic_sources": 13,
+  "new_sources": [
+    "sciencedb",
+    "borealis",
+    "dataverse-nl",
+    "recherche-data-gouv",
+    "pangaea",
+    "gbif"
+  ],
+  "selection_behavior": "No connector selection means automatic routing among enabled sources; explicit selections constrain search. It does not automatically query every source.",
+  "checks": {
+    "frontend": {
+      "passed": 3008,
+      "type_check": "passed",
+      "build": "passed",
+      "final_logo_type_check": "passed",
+      "final_logo_build": "passed",
+      "final_logo_browser": "passed"
+    },
+    "backend": {
+      "passed": 9773,
+      "skipped": 43
+    },
+    "sandbox": {
+      "passed": 6164,
+      "skipped": 84
+    },
+    "compose_config": "passed",
+    "backend_runtime_source_files_match": 522,
+    "deployed_connector_picker": {
+      "connectors": 14,
+      "official_logos_loaded": 14,
+      "france_logo_native_size": "180x180",
+      "france_logo_display_size": "28x28",
+      "keyboard_focus": "2px green",
+      "pointer_focus_outline": "none",
+      "page_errors": 0
+    }
+  },
+  "real_browser": {
+    "checks": [
+      "Shared catalog exposes validated new sources, preserves existing connectors and hides deferred integrations",
+      "borealis: explicit connector -> verified search -> right panel -> 377701 byte original file saved and downloaded",
+      "dataverse-nl: explicit connector -> verified search -> right panel -> 14103 byte original file saved and downloaded",
+      "recherche-data-gouv: explicit connector -> verified search -> right panel -> 60241 byte original file saved and downloaded",
+      "pangaea: explicit connector -> verified search -> right panel -> 44450 byte original file saved and downloaded",
+      "sciencedb: explicit connector -> verified search -> right panel -> 10416 byte original file saved and downloaded",
+      "gbif: explicit connector -> verified search -> right panel -> 72808 byte original file saved and downloaded"
+    ]
+  },
+  "provider_files": [
+    {
+      "source": "borealis",
+      "external_id": "doi:10.5683/SP3/YZBCGR",
+      "file": "borealis_971463_Sable_Island_Spotter_Wave_Data.csv",
+      "bytes": 377701,
+      "provider_checksum_verified": true
+    },
+    {
+      "source": "dataverse-nl",
+      "external_id": "doi:10.34894/2T18NN",
+      "file": "dataverse-nl_425460_Binary_classification_target.xlsx",
+      "bytes": 14103,
+      "provider_checksum_verified": true
+    },
+    {
+      "source": "recherche-data-gouv",
+      "external_id": "doi:10.57745/TJBYIY",
+      "file": "recherche-data-gouv_142268_AnimalOS_DataBase.xlsx",
+      "bytes": 60241,
+      "provider_checksum_verified": true
+    },
+    {
+      "source": "pangaea",
+      "external_id": "10.1594/PANGAEA.841672",
+      "file": "pangaea_841672.tab",
+      "bytes": 44450,
+      "provider_checksum_verified": false
+    },
+    {
+      "source": "sciencedb",
+      "external_id": "10.57760/sciencedb.016cy",
+      "file": "field_data.xlsx",
+      "bytes": 10416,
+      "provider_checksum_verified": true
+    },
+    {
+      "source": "gbif",
+      "external_id": "345820cc-a0a8-4d76-b7eb-fba85b21ad08",
+      "file": "Darwin Core archive ZIP",
+      "bytes": 72808,
+      "provider_checksum_verified": false,
+      "archive_integrity_verified": true
+    }
+  ],
+  "backend_image": "sha256:f87fc4ea974bb2511c53b100fcd776efe2922a8040551cffe8eb4255a329a2bc",
+  "deployment": "DataLab backend/frontend only; unchanged full V2 runtime reused, sandbox/Jupyter/DataSeek unchanged",
+  "source_note": "Availability is checked from actual files; inaccessible/metadata-only records are hidden. A verified subset is not a claim that the entire dataset was acquired.",
+  "no_git_commit_or_push": true,
+  "frontend_image": "sha256:9aaf9b27bb0cde91ec00ca839c4d4cb5347188bdf55045aa9ccda2d579ff8cd7"
+}

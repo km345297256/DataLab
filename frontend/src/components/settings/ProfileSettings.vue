@@ -11,7 +11,7 @@
                 <div class="flex flex-col gap-[6px]"><span
                         class="text-[var(--text-secondary)] text-sm leading-[22px]">{{ t('Name') }}</span>
                     <div
-                        class="group rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] placeholder:text-[var(--text-disable)] h-10 flex items-center gap-[10px] bg-[var(--fill-tsp-white-main)] pt-2 pr-3 pb-2 pl-4 focus-within:ring-[1.5px] focus-within:ring-[var(--border-dark)] w-full sm:w-[300px]">
+                        class="control-shell group rounded-[10px] overflow-hidden text-sm leading-[22px] text-[var(--text-primary)] placeholder:text-[var(--text-disable)] h-10 flex items-center gap-[10px] bg-[var(--fill-tsp-white-main)] pt-2 pr-3 pb-2 pl-4 w-full sm:w-[300px]">
                         <input 
                             maxlength="20"
                             class="h-full min-w-1 flex-1 bg-transparent disabled:cursor-not-allowed placeholder:text-[var(--text-disable)]"

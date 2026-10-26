@@ -37,6 +37,8 @@ class DatasetLocation(BaseModel):
 
 
 class DataCenterDataset(BaseModel):
+    """Stored dataset binding retained for historical read-only analysis."""
+
     dataset_id: str = Field(default_factory=lambda: f"ds_{uuid.uuid4().hex[:16]}")
     external_id: str = ""
     data_center_id: str
@@ -44,8 +46,7 @@ class DataCenterDataset(BaseModel):
     name: str
     name_key: str = ""
     description: str = ""
-    # Stable catalog classification used by the management surface. Existing
-    # Mongo documents predate this field and therefore retain the empty default.
+    # Retain existing document classifications without a schema migration.
     domain: str = ""
     temporal_coverage: str = ""
     spatial_coverage: str = ""
@@ -80,7 +81,7 @@ class MountedDataset(DataCenterDataset):
 
 
 class CuratedDatasetFile(BaseModel):
-    """One repository-owned file declaration in a bundled dataset seed."""
+    """One file in an offline scientific regression sample manifest."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -92,7 +93,7 @@ class CuratedDatasetFile(BaseModel):
 
 
 class CuratedDatasetSeed(BaseModel):
-    """Strict metadata contract for repository-bundled managed datasets."""
+    """Provenance contract for offline samples; it never registers a dataset."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

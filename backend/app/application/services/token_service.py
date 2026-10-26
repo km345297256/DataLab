@@ -1,4 +1,5 @@
 import jwt
+import secrets
 from datetime import datetime, timedelta, UTC
 from typing import Optional, Dict, Any
 from app.core.config import get_settings
@@ -25,12 +26,15 @@ class TokenService:
         
         payload = {
             "sub": user.id,  # Subject (user ID)
+            "password_version": hashlib.sha256((user.password_hash or "").encode()).hexdigest(),
+            "auth_version": user.auth_version,
             "fullname": user.fullname,
             "email": user.email,
             "role": user.role.value,
             "is_active": user.is_active,
             "iat": int(now.timestamp()),  # Issued at (timestamp)
             "exp": int(expire.timestamp()),  # Expiration time (timestamp)
+            "jti": secrets.token_urlsafe(24),
             "type": "access"
         }
         
@@ -53,9 +57,12 @@ class TokenService:
         
         payload = {
             "sub": user.id,  # Subject (user ID)
+            "password_version": hashlib.sha256((user.password_hash or "").encode()).hexdigest(),
+            "auth_version": user.auth_version,
             "fullname": user.fullname,
             "iat": int(now.timestamp()),  # Issued at (timestamp)
             "exp": int(expire.timestamp()),  # Expiration time (timestamp)
+            "jti": secrets.token_urlsafe(24),
             "type": "refresh"
         }
         
@@ -103,7 +110,7 @@ class TokenService:
         """Extract user information from JWT token"""
         payload = self.verify_token(token)
         
-        if not payload:
+        if not payload or payload.get("type") != "access":
             return None
         
         # Return user info from token payload
@@ -113,6 +120,8 @@ class TokenService:
             "email": payload.get("email"),
             "role": payload.get("role"),
             "is_active": payload.get("is_active", True),
+            "password_version": payload.get("password_version"),
+            "auth_version": payload.get("auth_version", 0),
             "token_type": payload.get("type", "access")
         }
     
@@ -230,11 +239,13 @@ class TokenService:
             True if valid, False if invalid
         """
         try:
-            logger.info(f"Verifying signed URL: {request_url}")
             # Parse URL and extract query parameters
             parsed_url = urllib.parse.urlparse(request_url)
             query_params = urllib.parse.parse_qs(parsed_url.query)
             
+            if any(len(query_params.get(key, [])) != 1 for key in ('signature', 'expires')):
+                return False
+
             # Extract required parameters
             signature = query_params.get('signature', [None])[0]
             expires_str = query_params.get('expires', [None])[0]

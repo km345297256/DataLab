@@ -3,7 +3,7 @@ import pytest
 from app.application.errors.exceptions import BadRequestError, ForbiddenError, UnauthorizedError, ValidationError
 from app.application.services.auth_service import AuthService
 from app.application.services.email_service import EmailService
-from app.domain.models.user import RegistrationStatus
+from app.domain.models.user import RegistrationStatus, User, UserRole
 from app.infrastructure.models.documents import UserDocument
 from app.interfaces.api.auth_routes import _build_email_verification_url
 
@@ -162,6 +162,7 @@ async def test_pending_registration_cannot_log_in():
 @pytest.mark.asyncio
 async def test_approved_registration_can_log_in():
     repo = FakeUserRepository()
+    repo.users["admin-1"] = User(id="admin-1", fullname="Administrator", email="admin@example.com", role=UserRole.ADMIN)
     auth_service = AuthService(repo, FakeTokenService())
     user = await auth_service.register_user(
         fullname="Approved User",
@@ -187,6 +188,8 @@ async def test_approved_registration_can_log_in():
 @pytest.mark.asyncio
 async def test_rejected_registration_cannot_log_in_or_be_reviewed_twice():
     repo = FakeUserRepository()
+    for admin_id in ("admin-1", "admin-2"):
+        repo.users[admin_id] = User(id=admin_id, fullname="Administrator", email=f"{admin_id}@example.com", role=UserRole.ADMIN)
     auth_service = AuthService(repo, FakeTokenService())
     user = await auth_service.register_user(
         fullname="Rejected User",

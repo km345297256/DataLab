@@ -1,0 +1,6 @@
+{
+  "artifact": "complex-r1t335lf/034-synthetic_reference_implementation-response.json",
+  "source_unchanged": true,
+  "adapter": "production SourceResponseAdapter, complete fenced Python wrapper removed only",
+  "sha256": "15adc9cb06775b25cdb078f6ba61882a93c321c525bbebe7be9e74b7191be309"
+}

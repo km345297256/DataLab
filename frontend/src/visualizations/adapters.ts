@@ -10,6 +10,7 @@ const trustedAdapters: Record<VisualizationAdapter, Component> = {
   'sequence-browser': markRaw(defineAsyncComponent(() => import('./extended/SequenceBrowserPreview.vue'))),
   'genome-tracks': markRaw(defineAsyncComponent(() => import('./extended/GenomeTracksPreview.vue'))),
   'blast-hits': markRaw(defineAsyncComponent(() => import('./extended/BlastHitsPreview.vue'))),
+  svg: markRaw(defineAsyncComponent(() => import('../components/filePreviews/SvgFilePreview.vue'))),
   image: markRaw(defineAsyncComponent(() => import('../components/filePreviews/ImageFilePreview.vue'))),
   tiff: markRaw(defineAsyncComponent(() => import('../components/filePreviews/TiffFilePreview.vue'))),
   shapefile: markRaw(defineAsyncComponent(() => import('../components/filePreviews/ShapefilePreview.vue'))),

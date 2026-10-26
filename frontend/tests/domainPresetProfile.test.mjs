@@ -97,7 +97,7 @@ test('missing tool runtime is displayed as legacy all without mutating defaults'
 });
 
 
-test('settings and plugins reuse existing surfaces and make experiments explicit', async () => {
+test('profile runtime settings remain explicit while the product catalog hides preset administration', async () => {
   const [settingsDialog, runtimeSettings, pluginsPage] = await Promise.all([
     readFile(new URL('../src/components/settings/SettingsDialog.vue', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/settings/AgentProfileRuntimeSettings.vue', import.meta.url), 'utf8'),
@@ -114,27 +114,21 @@ test('settings and plugins reuse existing surfaces and make experiments explicit
   assert.match(runtimeSettings, /Experimental/);
   assert.match(runtimeSettings, /never copies an API key/);
   assert.doesNotMatch(runtimeSettings, /localStorage|sessionStorage|api_key|api_base/);
-  assert.match(pluginsPage, /key: 'presets', label: t\('Domain Presets'\)/);
-  assert.match(pluginsPage, /preset\.initial_tools/);
-  assert.match(pluginsPage, /preset\.plugin_ids/);
-  assert.match(pluginsPage, /All mode means all tools in this preset/);
+  assert.doesNotMatch(pluginsPage, /key: 'presets'|getDomainPresetCatalog|preset\.initial_tools|preset\.plugin_ids/);
 });
 
 
-test('preset and selector entries open the existing editor without enabling experiments', async () => {
+test('the agent selector keeps profile editing while catalog query strings cannot open hidden settings', async () => {
   const [plugins, selector, settings] = await Promise.all([
     readFile(new URL('../src/pages/PluginsPage.vue', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/AgentSelector.vue', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/settings/AgentProfileRuntimeSettings.vue', import.meta.url), 'utf8'),
   ]);
-  assert.match(plugins, /@click="openSettingsDialog\('agent-profiles'\)"/);
-  assert.match(plugins, /Configure Agent \/ Enable pilots/);
-  assert.match(plugins, /settings !== 'agent-profiles'/);
-  assert.match(plugins, /delete query\.settings/);
+  assert.doesNotMatch(plugins, /openSettingsDialog|route\.query\.settings/);
   assert.match(selector, /function manageProfiles\(\)[\s\S]*?openSettingsDialog\('agent-profiles'\)/);
   assert.ok(settings.indexOf('v-model="draft.code_mode_enabled"') < settings.indexOf('Default without a profile'));
   assert.ok(settings.indexOf('v-model="draft.domain_subagents_enabled"') < settings.indexOf('Preset scope and tool counts'));
   assert.match(settings, /function useProfileInNewChat\(\)[\s\S]*?hasChanges\.value\) return;/);
-  assert.match(settings, /setSelectedProfile\(selectedProfile\.value\);\s*closeSettingsDialog\(\);\s*void router.push\('\/'\)/);
+  assert.match(settings, /setSelectedProfile\(selectedProfile\.value\);\s*closeSettingsDialog\(\);\s*void router.push\('\/chat'\)/);
   assert.doesNotMatch(plugins + selector, /code_mode_enabled\s*[:=]\s*true|domain_subagents_enabled\s*[:=]\s*true/);
 });

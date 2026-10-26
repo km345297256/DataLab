@@ -6,15 +6,14 @@ from app.interfaces.api.routes import router
 ROUTE_PATHS = {route.path for route in router.routes}
 
 
-def test_dataset_analysis_and_plugin_routes_remain_available():
+def test_exploration_library_and_plugin_routes_remain_available():
     expected_paths = {
         "/sessions",
-        "/datasets",
-        "/datasets/submissions",
-        "/datasets/{dataset_id}",
-        "/datasets/{dataset_id}/preview",
-        "/datasets/{dataset_id}/sessions",
-        "/datasets/{dataset_id}/suggested-questions",
+        "/data-library",
+        "/data-connectors",
+        "/auth/login",
+        "/auth/register",
+        "/auth/registrations",
         "/skills",
         "/mcp/servers",
         "/renderers",
@@ -29,6 +28,7 @@ def test_dataset_analysis_and_plugin_routes_remain_available():
 
 def test_removed_product_domains_are_not_routable():
     removed_prefixes = (
+        "/datasets",
         "/a2a",
         "/browser-connections",
         "/claw",
@@ -48,7 +48,6 @@ def test_removed_product_domains_are_not_routable():
         "/admin/users",
         "/admin/workspaces",
         "/api-keys",
-        "/auth",
     )
 
     assert not any(
@@ -56,3 +55,7 @@ def test_removed_product_domains_are_not_routable():
         for path in ROUTE_PATHS
         for prefix in removed_prefixes
     )
+
+
+def test_removed_institution_product_mutations_are_not_routable():
+    assert not any("/datasets/" in path or "/data-product-draft" in path for path in ROUTE_PATHS)

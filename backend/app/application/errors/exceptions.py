@@ -21,6 +21,11 @@ class BadRequestError(AppException):
         super().__init__(code=400, msg=msg, status_code=400)
 
 
+class ConflictError(AppException):
+    def __init__(self, msg: str = "Resource already exists"):
+        super().__init__(code=409, msg=msg, status_code=409)
+
+
 class ValidationError(AppException):
     def __init__(self, msg: str = "Validation error"):
         super().__init__(code=422, msg=msg, status_code=422)

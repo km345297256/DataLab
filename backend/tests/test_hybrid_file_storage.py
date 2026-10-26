@@ -1,5 +1,7 @@
 import asyncio
 import io
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -55,6 +57,55 @@ class _FakeStorage:
             "provider": self.name,
             "available": self.available,
         }
+
+
+@pytest.fixture
+def configured_storage_factory(monkeypatch):
+    from app.infrastructure.external.file import factory, datasetfile, retainedfile, miniofile
+    from app.infrastructure.repositories import mongo_data_library_repository
+
+    minio, gridfs = _FakeStorage("minio"), _FakeStorage("gridfs")
+    minio.init_large_upload = AsyncMock(return_value="multipart-session")
+    factory.get_file_storage.cache_clear()
+    monkeypatch.setattr(factory, "get_mongodb", lambda: object())
+    monkeypatch.setattr(factory, "GridFSFileStorage", lambda **kwargs: gridfs)
+    monkeypatch.setattr(miniofile, "MinIOFileStorage", lambda: minio)
+    monkeypatch.setattr(datasetfile, "DatasetPreviewFileStorage", lambda storage: storage)
+    monkeypatch.setattr(retainedfile, "RetainedFileStorage", lambda storage, repository: storage)
+    monkeypatch.setattr(mongo_data_library_repository, "MongoDataLibraryRepository", lambda: object())
+    yield factory, minio, gridfs
+    factory.get_file_storage.cache_clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", [None, "", "hybrid", "gridfs", "GRIDFS"])
+async def test_factory_legacy_setting_keeps_reads_but_all_new_writes_are_objects(configured_storage_factory, monkeypatch, provider):
+    factory, minio, gridfs = configured_storage_factory
+    monkeypatch.setattr(factory, "get_settings", lambda: SimpleNamespace(file_storage_provider=provider))
+    storage = factory.get_file_storage()
+    assert isinstance(storage, HybridFileStorage)
+    info = await storage.upload_file(io.BytesIO(b"data"), "input.csv", "owner")
+    assert info.file_id == "minio:new"
+    assert await storage.init_large_upload("large.csv", "owner", 8_000_000) == "multipart-session"
+    minio.init_large_upload.assert_awaited_once_with("large.csv", "owner", 8_000_000)
+    legacy_id = "507f1f77bcf86cd799439011"
+    stream, _ = await storage.download_file("gridfs:" + legacy_id, "owner")
+    stream.close()
+    assert gridfs.calls == [("download", legacy_id, "owner")]
+    assert minio.calls == [("upload", "input.csv", "owner", None, None)]
+
+
+def test_factory_explicit_minio_has_no_legacy_write_path(configured_storage_factory, monkeypatch):
+    factory, minio, _ = configured_storage_factory
+    monkeypatch.setattr(factory, "get_settings", lambda: SimpleNamespace(file_storage_provider="minio"))
+    assert factory.get_file_storage() is minio
+
+
+def test_factory_unknown_provider_fails_closed(configured_storage_factory, monkeypatch):
+    factory, _, _ = configured_storage_factory
+    monkeypatch.setattr(factory, "get_settings", lambda: SimpleNamespace(file_storage_provider="disk-cache"))
+    with pytest.raises(ValueError, match="Unsupported FILE_STORAGE_PROVIDER"):
+        factory.get_file_storage()
 
 
 def test_minio_metadata_encodes_non_ascii_values_for_headers():

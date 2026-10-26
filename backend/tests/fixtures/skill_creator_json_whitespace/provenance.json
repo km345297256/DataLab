@@ -1,0 +1,16 @@
+{
+  "scenario": "complex-vvrdrsak authored artificial evidence only",
+  "source_unchanged": true,
+  "files": [
+    {
+      "artifact": "022-method_review-request.json",
+      "file": "candidate.py.txt",
+      "sha256": "06e609773826879e272d6029a4a7cc97dee06462bafdcb2bd2152211745130d8"
+    },
+    {
+      "artifact": "038-synthetic_reference_review-request.json",
+      "file": "reference.py.txt",
+      "sha256": "c71526e06abcbe1bccbc930d1cb11f916f222280e4994b0fff96c8316a1e4bd8"
+    }
+  ]
+}

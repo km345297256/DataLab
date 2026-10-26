@@ -123,6 +123,15 @@ test('shell_wait shows the session and bounded wait instead of a raw tool name',
   assert.equal(detail.full, 'dataset-analysis · 30 秒');
 });
 
+test('atomic patch preview selects the target path rather than source hashes or replacement content', () => {
+  const detail = getToolDisplayDetail(tool({ name: 'file', function: 'file_apply_patch', args: {
+    base_sha256: 'a'.repeat(64), replacements: [{ old_str: 'old source', new_str: 'new source' }],
+    file: '/home/ubuntu/scripts/example.py',
+  } }));
+  assert.equal(detail.full, '/home/ubuntu/scripts/example.py');
+  assert.doesNotMatch(detail.preview, /old source|new source|aaaaaaaa/);
+});
+
 test('legacy stored events infer their function and toolkit', () => {
   const historic = tool({ name: 'dataset_unpack', function: '' });
 

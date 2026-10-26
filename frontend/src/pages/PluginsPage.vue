@@ -1,336 +1,16 @@
 <template>
   <div class="flex h-full w-full flex-col overflow-hidden bg-[var(--background-gray-main)]">
-    <div class="mobile-safe-top flex items-start gap-3 border-b border-[var(--border-main)] px-3 pb-4 sm:block sm:px-6 sm:py-5">
-      <button
-        v-if="!isLeftPanelShow"
-        type="button"
-        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-[var(--fill-tsp-gray-main)] sm:hidden"
-        :aria-label="t('Open navigation')"
-        @click="toggleLeftPanel"
-      >
-        <PanelLeft class="size-5 text-[var(--icon-secondary)]" />
-      </button>
-      <div class="min-w-0 flex-1">
-        <div class="text-2xl font-semibold text-[var(--text-primary)]">{{ t('Plugins') }}</div>
-        <div class="mt-1 text-sm text-[var(--text-tertiary)]">{{ t('Discover official and community plugins, then add them to your personal library.') }}</div>
-      </div>
-    </div>
-
-    <div class="border-b border-[var(--border-main)] bg-[var(--background-menu-white)] px-4 sm:px-6">
-      <select
-        :value="activeTab"
-        class="my-3 h-11 w-full rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] px-3 text-sm text-[var(--text-primary)] outline-none sm:hidden"
-        :aria-label="t('Plugin type')"
-        @change="setActiveTab(($event.target as HTMLSelectElement).value as PluginTab)"
-      >
-        <option v-for="tab in tabs" :key="tab.key" :value="tab.key">{{ tab.label }}</option>
-      </select>
-      <div class="mx-auto hidden max-w-[1080px] gap-2 overflow-x-auto py-3 sm:flex">
-        <button
-          v-for="tab in tabs"
-          :key="tab.key"
-          type="button"
-          class="shrink-0 rounded-xl px-4 py-2 text-sm transition-colors"
-          :class="activeTab === tab.key ? 'bg-[var(--fill-tsp-white-main)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-tertiary)] hover:bg-[var(--fill-tsp-white-light)]'"
-          @click="setActiveTab(tab.key)"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
-    </div>
-
+    <header class="mobile-safe-top flex items-start gap-3 border-b border-[var(--border-main)] px-3 pb-4 sm:px-6 sm:py-5">
+      <button v-if="!isLeftPanelShow" type="button" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-[var(--fill-tsp-gray-main)]" :aria-label="t('Open navigation')" @click="toggleLeftPanel"><PanelLeft class="size-5 text-[var(--icon-secondary)]" /></button>
+      <div class="min-w-0 flex-1"><h1 class="text-2xl font-semibold text-[var(--text-primary)]">{{ pageTitle }}</h1><p class="mt-1 text-sm leading-6 text-[var(--text-tertiary)]">{{ pageDescription }}</p></div>
+    </header>
     <div class="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
       <div class="mx-auto flex max-w-[1080px] flex-col gap-4 sm:gap-6">
-        <div v-if="!['credentials', 'connectors'].includes(activeTab)" class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-3 sm:p-4">
-          <label class="flex items-center gap-3 rounded-xl border border-[var(--border-main)] bg-[var(--background-gray-main)] px-3 py-2">
-            <Search :size="18" class="shrink-0 text-[var(--icon-secondary)]" />
-            <input
-              v-model="activeSearchQuery"
-              class="h-8 flex-1 bg-transparent text-sm text-[var(--text-primary)] outline-none"
-              :placeholder="activeSearchPlaceholder"
-            />
-          </label>
-          <div v-if="showSourceFilters" class="mt-3 flex gap-1 overflow-x-auto" role="tablist" :aria-label="t('Publisher')">
-            <button
-              v-for="source in sourceFilters"
-              :key="source.key"
-              type="button"
-              class="shrink-0 rounded-lg px-3 py-1.5 text-sm"
-              :class="pluginSource === source.key ? 'bg-[var(--Button-primary-black)] text-[var(--text-onblack)]' : 'text-[var(--text-secondary)] hover:bg-[var(--fill-tsp-white-light)]'"
-              @click="pluginSource = source.key"
-            >
-              {{ source.label }}
-            </button>
-          </div>
-        </div>
-
         <DataConnectorsPanel v-if="activeTab === 'connectors'" />
-        <ToolCredentialsPanel v-if="activeTab === 'credentials'" />
-
-        <section v-if="activeTab === 'presets'" class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-4 sm:p-5">
-          <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div class="min-w-0">
-              <h2 class="text-lg font-semibold text-[var(--text-primary)]">{{ t('Domain Presets') }}</h2>
-              <p class="mt-1 text-sm leading-5 text-[var(--text-tertiary)]">
-                {{ t('Presets define a trusted domain tool scope. Configure one on an Agent Profile in Settings.') }}
-              </p>
-            </div>
-            <div class="flex max-w-full shrink-0 flex-col items-start gap-2 sm:items-end">
-              <button
-                type="button"
-                class="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[var(--Button-primary-black)] px-4 py-2 text-sm font-medium text-[var(--text-onblack)]"
-                @click="openSettingsDialog('agent-profiles')"
-              >
-                <Settings2 :size="16" />
-                {{ t('Configure Agent / Enable pilots') }}
-              </button>
-              <span v-if="presetCatalog?.catalog_revision" class="max-w-full truncate rounded border border-[var(--border-main)] px-2 py-1 font-mono text-[11px] text-[var(--text-tertiary)]" :title="presetCatalog.catalog_revision">
-                {{ t('Revision') }} {{ shortPresetRevision }}
-              </span>
-            </div>
-          </div>
-
-          <div v-if="presetCatalog" class="mb-4 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-3">
-            <div class="text-xs font-medium text-[var(--text-primary)]">{{ t('Default without a profile') }}</div>
-            <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--text-secondary)]">
-              <span class="rounded border border-[var(--border-main)] bg-[var(--background-menu-white)] px-1.5 py-0.5">{{ presetName(presetCatalog.defaults.preset_id) }}</span>
-              <span class="rounded border border-[var(--border-main)] bg-[var(--background-menu-white)] px-1.5 py-0.5">{{ presetCatalog.defaults.selection_mode === 'on_demand' ? t('On demand') : t('All preset tools') }}</span>
-              <span class="rounded border border-[var(--border-main)] bg-[var(--background-menu-white)] px-1.5 py-0.5">{{ t('Code Mode') }}: {{ t(presetCatalog.defaults.code_mode_enabled ? 'Enabled' : 'Disabled') }}</span>
-              <span class="rounded border border-[var(--border-main)] bg-[var(--background-menu-white)] px-1.5 py-0.5">{{ t('Domain SubAgents') }}: {{ t(presetCatalog.defaults.domain_subagents_enabled ? 'Enabled' : 'Disabled') }}</span>
-            </div>
-          </div>
-
-          <div v-if="presetLoading" class="py-8 text-center text-sm text-[var(--text-tertiary)]">{{ t('Loading') }}...</div>
-          <div v-else-if="presetError" class="rounded-lg border border-[var(--function-error)]/30 bg-[var(--function-error)]/5 p-3 text-sm text-[var(--function-error)]">{{ presetError }}</div>
-          <div v-else-if="filteredPresets.length === 0" class="rounded-xl border border-dashed border-[var(--border-main)] py-8 text-center text-sm text-[var(--text-tertiary)]">
-            {{ t('No domain presets found') }}
-          </div>
-          <div v-else class="grid gap-3 lg:grid-cols-2">
-            <article v-for="preset in filteredPresets" :key="preset.id" class="min-w-0 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-4">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="break-words text-sm font-semibold text-[var(--text-primary)]">{{ preset.name }}</div>
-                  <div class="mt-0.5 font-mono text-[11px] text-[var(--text-tertiary)]">{{ preset.id }}</div>
-                </div>
-                <div class="flex shrink-0 gap-1 text-[11px] text-[var(--text-tertiary)]">
-                  <span class="rounded border border-[var(--border-main)] px-1.5 py-0.5">{{ preset.initial_tool_count }} / {{ preset.available_tool_count }}</span>
-                </div>
-              </div>
-              <p class="mt-2 break-words text-xs leading-5 text-[var(--text-tertiary)]">{{ preset.description }}</p>
-
-              <div v-if="preset.plugin_ids.length" class="mt-3">
-                <div class="text-[11px] font-medium text-[var(--text-secondary)]">{{ t('Included plugins') }}</div>
-                <div class="mt-1 flex flex-wrap gap-1">
-                  <span v-for="pluginId in preset.plugin_ids" :key="pluginId" class="max-w-full break-all rounded border border-[var(--border-main)] bg-[var(--background-menu-white)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-tertiary)]">{{ pluginId }}</span>
-                </div>
-              </div>
-
-              <div class="mt-3">
-                <div class="text-[11px] font-medium text-[var(--text-secondary)]">{{ t('Initial tools for on-demand mode') }}</div>
-                <div v-if="preset.initial_tools.length" class="mt-1 flex flex-wrap gap-1">
-                  <span v-for="toolName in preset.initial_tools" :key="toolName" class="max-w-full break-all rounded border border-[var(--border-main)] bg-[var(--background-menu-white)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-tertiary)]">{{ toolName }}</span>
-                </div>
-                <div v-else class="mt-1 text-[11px] text-[var(--text-tertiary)]">{{ t('No initial tools') }}</div>
-              </div>
-
-              <p class="mt-3 text-[11px] leading-4 text-[var(--text-tertiary)]">
-                {{ t('All mode means all tools in this preset. On-demand mode starts with the initial tools and expands within the same preset only.') }}
-              </p>
-            </article>
-          </div>
-        </section>
-
-        <section v-if="activeTab === 'runtime'" class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-4 sm:p-5">
-          <div class="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div class="min-w-0">
-              <h2 class="text-lg font-semibold text-[var(--text-primary)]">{{ t('Analysis Tools') }}</h2>
-              <p class="mt-1 text-sm text-[var(--text-tertiary)]">{{ t('Cordis-managed domain analysis tools available to the agent.') }}</p>
-            </div>
-            <button
-              type="button"
-              class="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-btn-main)] px-3 text-sm text-[var(--text-primary)] hover:bg-[var(--fill-tsp-white-light)] disabled:cursor-not-allowed disabled:opacity-60 sm:h-9 sm:w-auto"
-              :disabled="runtimeLoading || runtimeReloading"
-              @click="reloadRuntime"
-            >
-              <RefreshCw :size="15" :class="runtimeReloading ? 'animate-spin' : ''" />
-              {{ runtimeReloading ? t('Reloading...') : t('Reload runtime') }}
-            </button>
-          </div>
-
-          <div class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-            <div class="min-w-0 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-3">
-              <div class="text-xs text-[var(--text-tertiary)]">{{ t('Runtime status') }}</div>
-              <div class="mt-1 flex items-center gap-1.5 text-sm font-semibold text-[var(--text-primary)]">
-                <span class="size-2 rounded-full" :class="runtimeSnapshot?.status === 'healthy' && runtimeSnapshot.healthy ? 'bg-[var(--function-success)]' : 'bg-[var(--function-error)]'"></span>
-                {{ runtimeStatusLabel }}
-              </div>
-            </div>
-            <div class="min-w-0 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-3">
-              <div class="text-xs text-[var(--text-tertiary)]">{{ t('Revision') }}</div>
-              <div class="mt-1 truncate font-mono text-sm font-semibold text-[var(--text-primary)]" :title="runtimeSnapshot?.revision || undefined">
-                {{ runtimeRevision }}
-              </div>
-            </div>
-            <div class="min-w-0 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-3">
-              <div class="text-xs text-[var(--text-tertiary)]">{{ t('Plugin count') }}</div>
-              <div class="mt-1 text-sm font-semibold text-[var(--text-primary)]">{{ runtimeSnapshot?.plugin_count ?? '—' }}</div>
-            </div>
-            <div class="min-w-0 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-3">
-              <div class="text-xs text-[var(--text-tertiary)]">{{ t('Tool count') }}</div>
-              <div class="mt-1 text-sm font-semibold text-[var(--text-primary)]">{{ runtimeSnapshot?.tool_count ?? '—' }}</div>
-            </div>
-          </div>
-
-          <div v-if="runtimeSnapshot?.last_error" class="mb-4 rounded-lg border border-[var(--function-error)]/30 bg-[var(--function-error)]/5 p-3 text-sm text-[var(--function-error)]">
-            <div class="font-medium">{{ t('Last reload error') }}</div>
-            <div class="mt-1 break-words text-xs leading-5">{{ runtimeSnapshot.last_error }}</div>
-          </div>
-          <div v-if="runtimeError" class="mb-4 rounded-lg border border-[var(--function-error)]/30 bg-[var(--function-error)]/5 p-3 text-sm text-[var(--function-error)]">
-            {{ runtimeError }}
-          </div>
-
-          <div v-if="runtimeLoading" class="py-8 text-center text-sm text-[var(--text-tertiary)]">{{ t('Loading') }}...</div>
-          <div v-else-if="filteredRuntimePlugins.length === 0" class="rounded-xl border border-dashed border-[var(--border-main)] py-8 text-center text-sm text-[var(--text-tertiary)]">
-            {{ t('No analysis tools found') }}
-          </div>
-          <div v-else class="grid gap-3 lg:grid-cols-2">
-            <article v-for="plugin in pagedRuntimePlugins" :key="plugin.plugin" class="min-w-0 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-4">
-              <div class="flex min-w-0 items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="break-words text-sm font-semibold text-[var(--text-primary)]">{{ plugin.plugin }}</div>
-                  <div class="mt-1 text-xs text-[var(--text-tertiary)]">{{ t('Version') }} {{ plugin.version }}</div>
-                </div>
-                <span class="shrink-0 rounded border border-[var(--border-main)] px-1.5 py-0.5 text-[11px] text-[var(--text-tertiary)]">
-                  {{ plugin.tool_count }} {{ t('Tools') }}
-                </span>
-              </div>
-
-              <div v-if="plugin.errors.length" class="mt-3 rounded-lg border border-[var(--function-error)]/30 bg-[var(--function-error)]/5 p-2.5 text-xs text-[var(--function-error)]">
-                <div class="font-medium">{{ t('Plugin errors') }}</div>
-                <ul class="mt-1 list-disc space-y-1 pl-4">
-                  <li v-for="error in plugin.errors" :key="error" class="break-words">{{ error }}</li>
-                </ul>
-              </div>
-
-              <div v-if="plugin.tools.length" class="mt-3 space-y-2">
-                <div v-for="tool in plugin.tools" :key="tool.name" class="rounded-lg border border-[var(--border-main)] bg-[var(--background-menu-white)] p-2.5">
-                  <div class="break-words font-mono text-xs font-semibold text-[var(--text-primary)]">{{ tool.name }}</div>
-                  <div v-if="tool.description" class="mt-1 break-words text-xs leading-5 text-[var(--text-tertiary)]">{{ tool.description }}</div>
-                  <div v-if="tool.scopes.length" class="mt-2 flex flex-wrap gap-1">
-                    <span v-for="scope in tool.scopes" :key="scope" class="max-w-full break-all rounded border border-[var(--border-main)] px-1.5 py-0.5 text-[11px] text-[var(--text-tertiary)]">{{ scope }}</span>
-                  </div>
-                </div>
-              </div>
-              <div v-else class="mt-3 text-xs text-[var(--text-tertiary)]">{{ t('No tools registered') }}</div>
-            </article>
-          </div>
-          <div v-if="runtimeTotalPages > 1" class="mt-4 flex items-center justify-end gap-2">
-            <button class="rounded-lg border border-[var(--border-main)] px-2 py-1 text-xs text-[var(--text-secondary)] disabled:opacity-40" :disabled="runtimePage === 1" @click="runtimePage--">{{ t('Previous') }}</button>
-            <span class="text-xs text-[var(--text-tertiary)]">{{ runtimePage }} / {{ runtimeTotalPages }}</span>
-            <button class="rounded-lg border border-[var(--border-main)] px-2 py-1 text-xs text-[var(--text-secondary)] disabled:opacity-40" :disabled="runtimePage === runtimeTotalPages" @click="runtimePage++">{{ t('Next') }}</button>
-          </div>
-        </section>
-
-        <section v-if="activeTab === 'mcp'" class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-4 sm:p-5">
-          <div class="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 class="text-lg font-semibold text-[var(--text-primary)]">{{ t('MCP Tools') }}</h2>
-              <p class="mt-1 text-sm text-[var(--text-tertiary)]">{{ t('Add stdio, SSE, or streamable HTTP MCP servers') }}</p>
-            </div>
-            <button
-              class="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-btn-main)] px-3 text-sm text-[var(--text-primary)] hover:bg-[var(--fill-tsp-white-light)] sm:h-9 sm:w-auto"
-              @click="startCreateMcp"
-            >
-              <Plus :size="15" />
-              {{ t('Add') }}
-            </button>
-          </div>
-
-          <div v-if="mcpEditing" ref="mcpEditorRef" class="mb-4 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-4">
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                {{ t('Name') }}
-                <input v-model="mcpForm.name" :disabled="mcpEditingExisting" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" />
-              </label>
-              <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                {{ t('Transport') }}
-                <select v-model="mcpForm.transport" class="h-9 rounded-lg border border-[var(--border-main)] bg-[var(--background-menu-white)] px-2 text-sm text-[var(--text-primary)] outline-none">
-                  <option value="stdio">stdio</option>
-                  <option value="sse">sse</option>
-                  <option value="streamable-http">streamable-http</option>
-                </select>
-              </label>
-              <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] md:col-span-2">
-                {{ t('Description') }}
-                <textarea v-model="mcpForm.description" rows="4" class="min-h-[96px] resize-y rounded-lg border border-[var(--border-main)] bg-transparent px-2 py-2 text-sm leading-5 text-[var(--text-primary)] outline-none" />
-              </label>
-              <label v-if="mcpForm.transport === 'stdio'" class="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                {{ t('Command') }}
-                <input v-model="mcpForm.command" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" />
-              </label>
-              <label v-if="mcpForm.transport === 'stdio'" class="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                {{ t('Args') }}
-                <input v-model="mcpArgsText" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" />
-              </label>
-              <label v-if="mcpForm.transport !== 'stdio'" class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] md:col-span-2">
-                URL
-                <input v-model="mcpForm.url" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" />
-              </label>
-              <label v-if="mcpForm.transport !== 'stdio'" class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] md:col-span-2">
-                Headers JSON
-                <textarea v-model="mcpHeadersText" class="min-h-[84px] rounded-lg border border-[var(--border-main)] bg-transparent px-2 py-2 font-mono text-xs text-[var(--text-primary)] outline-none" placeholder='{"Authorization":"Bearer token","X-API-Key":"key"}'></textarea>
-              </label>
-              <label class="flex items-center gap-2 text-sm text-[var(--text-secondary)] md:col-span-2">
-                <input v-model="mcpForm.enabled" type="checkbox" class="h-4 w-4 accent-[var(--Button-primary-black)]" />
-                {{ t('Enabled') }}
-              </label>
-            </div>
-            <div class="mt-4 flex justify-end gap-2">
-              <button class="rounded-[10px] border border-[var(--border-btn-main)] px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--fill-tsp-white-dark)]" @click="mcpEditing = false">
-                {{ t('Cancel') }}
-              </button>
-              <button class="rounded-[10px] bg-[var(--Button-primary-black)] px-3 py-2 text-sm text-[var(--text-onblack)] hover:opacity-90" :disabled="mcpSaving" @click="saveMcp">
-                {{ mcpSaving ? t('Saving...') : t('Save') }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="mcpLoading" class="py-8 text-center text-sm text-[var(--text-tertiary)]">{{ t('Loading') }}...</div>
-          <div v-else-if="filteredMcpServers.length === 0" class="rounded-xl border border-dashed border-[var(--border-main)] py-8 text-center text-sm text-[var(--text-tertiary)]">{{ t('No MCP servers yet') }}</div>
-          <div v-else class="grid gap-3 md:grid-cols-2">
-            <article v-for="server in pagedMcpServers" :key="server.name" class="min-h-[124px] rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-4 transition-colors hover:bg-[var(--fill-tsp-white-light)]" :class="canManageMcp(server) ? 'cursor-pointer' : ''" @click="canManageMcp(server) && startEditMcp(server)">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <div class="truncate text-sm font-semibold text-[var(--text-primary)]">{{ server.name }}</div>
-                    <span class="rounded border border-[var(--border-main)] px-1.5 py-0.5 text-[11px] text-[var(--text-tertiary)]">{{ server.transport }}</span>
-                    <span v-if="!server.enabled" class="text-[11px] text-[var(--text-tertiary)]">{{ t('Disabled') }}</span>
-                    <span class="rounded border border-[var(--border-main)] px-1.5 py-0.5 text-[11px] text-[var(--text-tertiary)]">{{ t(server.source === 'official' ? 'Official' : server.source === 'community' ? 'Community' : 'Personal') }}</span>
-                  </div>
-                  <div class="description-clamp mt-2 text-xs leading-5 text-[var(--text-tertiary)]">{{ server.description || server.url || server.command || t('No description') }}</div>
-                </div>
-                <div class="flex shrink-0 gap-1">
-                  <button
-                    class="flex size-8 items-center justify-center rounded-md border border-[var(--border-main)] disabled:opacity-60"
-                    :disabled="pluginUpdating === `mcp:${server.name}` || isOwnedMcp(server)"
-                    :title="t(server.installed && !isOwnedMcp(server) ? 'Remove from my plugins' : server.installed ? 'Installed' : 'Add to my plugins')"
-                    @click.stop="toggleMcpInstallation(server)"
-                  ><Check v-if="server.installed" :size="15" /><Plus v-else :size="15" /></button>
-                  <template v-if="canManageMcp(server)">
-                    <button class="rounded-md p-1 hover:bg-[var(--fill-tsp-white-dark)]" :title="t('Edit')" @click.stop="startEditMcp(server)"><Pencil :size="14" /></button>
-                    <button class="rounded-md p-1 text-[var(--function-error)] hover:bg-[var(--fill-tsp-white-dark)]" :title="t('Delete')" @click.stop="deleteMcp(server.name)"><Trash2 :size="14" /></button>
-                  </template>
-                </div>
-              </div>
-            </article>
-          </div>
-          <div v-if="mcpTotalPages > 1" class="mt-4 flex items-center justify-end gap-2">
-            <button class="rounded-lg border border-[var(--border-main)] px-2 py-1 text-xs text-[var(--text-secondary)] disabled:opacity-40" :disabled="mcpPage === 1" @click="mcpPage--">{{ t('Previous') }}</button>
-            <span class="text-xs text-[var(--text-tertiary)]">{{ mcpPage }} / {{ mcpTotalPages }}</span>
-            <button class="rounded-lg border border-[var(--border-main)] px-2 py-1 text-xs text-[var(--text-secondary)] disabled:opacity-40" :disabled="mcpPage === mcpTotalPages" @click="mcpPage++">{{ t('Next') }}</button>
-          </div>
-        </section>
-
+        <div v-else class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-3 sm:p-4">
+          <label class="control-shell flex items-center gap-3 rounded-xl border border-[var(--border-main)] bg-[var(--background-gray-main)] px-3 py-2"><Search :size="18" class="shrink-0 text-[var(--icon-secondary)]" /><input v-model="skillSearchQuery" class="h-8 min-w-0 flex-1 bg-transparent text-sm text-[var(--text-primary)] outline-none" :placeholder="t('Search skills')" /></label>
+          <div class="mt-3 flex gap-1 overflow-x-auto" role="tablist" :aria-label="t('Publisher')"><button v-for="source in sourceFilters" :key="source.key" type="button" class="shrink-0 rounded-lg px-3 py-1.5 text-sm" :class="pluginSource === source.key ? 'bg-[var(--Button-primary-black)] text-[var(--text-onblack)]' : 'text-[var(--text-secondary)] hover:bg-[var(--fill-tsp-white-light)]'" @click="pluginSource = source.key">{{ source.label }}</button></div>
+        </div>
         <section v-if="activeTab === 'skills'" class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-4 sm:p-5">
           <div class="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -379,7 +59,7 @@
                     v-if="canManageSkillScope(skill)"
                     :value="skill.scope"
                     class="h-8 rounded-md border border-[var(--border-main)] bg-[var(--background-menu-white)] px-2 text-xs text-[var(--text-secondary)] outline-none disabled:opacity-50"
-                    :disabled="skillScopeUpdating === skill.id"
+                    :disabled="skillScopeUpdating === skill.id || deletingSkillId === skill.id"
                     :aria-label="t('Skill visibility')"
                     @click.stop
                     @change.stop="changeSkillScope(skill, ($event.target as HTMLSelectElement).value as 'user' | 'global')"
@@ -388,6 +68,15 @@
                     <option value="global">{{ t('Global') }}</option>
                   </select>
                   <button
+                    v-if="canDeletePersonalSkill(skill)"
+                    type="button"
+                    class="flex h-8 items-center gap-1 rounded-md border border-[var(--border-main)] px-2 text-xs text-[var(--function-error)] hover:bg-[var(--fill-tsp-white-light)] disabled:opacity-50"
+                    :disabled="Boolean(deletingSkillId) || skillScopeUpdating === skill.id"
+                    :aria-label="t('Delete skill named', { name: skill.title || skill.name })"
+                    @click.stop="requestDeleteSkill(skill)"
+                  ><LoaderCircle v-if="deletingSkillId === skill.id" :size="14" class="animate-spin" /><Trash2 v-else :size="14" />{{ t(deletingSkillId === skill.id ? 'Deleting skill...' : 'Delete') }}</button>
+                  <button
+                    v-else
                     class="flex size-8 items-center justify-center rounded-md border border-[var(--border-main)] disabled:opacity-60"
                     :disabled="pluginUpdating === `skill:${skill.id}` || canManageSkillScope(skill)"
                     :title="t(skill.installed && !canManageSkillScope(skill) ? 'Remove from my plugins' : skill.installed ? 'Installed' : 'Add to my plugins')"
@@ -408,113 +97,8 @@
           </div>
         </section>
 
-        <VisualizationPluginsPanel v-if="activeTab === 'renderers'" :query="rendererSearchQuery" />
-        <section v-if="activeTab === 'renderers'" class="rounded-xl border border-[var(--border-main)] bg-[var(--background-menu-white)] p-4 sm:p-5">
-          <div class="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 class="text-lg font-semibold text-[var(--text-primary)]">历史渲染器配置</h2>
-              <p class="mt-1 text-sm text-[var(--text-tertiary)]">保留旧配置的查看、编辑和删除。这些记录未适配可视化协议，不执行其中的 URL 或组件入口；实际预览请使用上方 Cordis 插件。</p>
-            </div>
-            <button
-              class="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border-btn-main)] px-3 text-sm text-[var(--text-primary)] hover:bg-[var(--fill-tsp-white-light)] sm:h-9 sm:w-auto"
-              @click="startCreateRenderer"
-            >
-              <Plus :size="15" />
-              {{ t('Add') }}
-            </button>
-          </div>
-
-          <div v-if="rendererEditing" ref="rendererEditorRef" class="mb-4 rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-4">
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                {{ t('Name') }}
-                <input v-model="rendererForm.name" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" />
-              </label>
-              <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)]">
-                {{ t('Type') }}
-                <select v-model="rendererForm.kind" class="h-9 rounded-lg border border-[var(--border-main)] bg-[var(--background-menu-white)] px-2 text-sm text-[var(--text-primary)] outline-none">
-                  <option value="api">api</option>
-                  <option value="component">component</option>
-                </select>
-              </label>
-              <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] md:col-span-2">
-                {{ t('Description') }}
-                <textarea v-model="rendererForm.description" rows="4" class="min-h-[96px] resize-y rounded-lg border border-[var(--border-main)] bg-transparent px-2 py-2 text-sm leading-5 text-[var(--text-primary)] outline-none" />
-              </label>
-              <label class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] md:col-span-2">
-                {{ t('Extensions') }}
-                <input v-model="rendererExtensionsText" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" placeholder="png, csv, html" />
-              </label>
-              <label v-if="rendererForm.kind === 'api'" class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] md:col-span-2">
-                API URL
-                <input v-model="rendererForm.api_url" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" />
-              </label>
-              <label v-if="rendererForm.kind === 'component'" class="flex flex-col gap-1 text-xs text-[var(--text-secondary)] md:col-span-2">
-                {{ t('Entry') }}
-                <input v-model="rendererForm.entry" class="h-9 rounded-lg border border-[var(--border-main)] bg-transparent px-2 text-sm text-[var(--text-primary)] outline-none" placeholder="iframe or package entry" />
-              </label>
-              <label class="flex items-center gap-2 text-sm text-[var(--text-secondary)] md:col-span-2">
-                <input v-model="rendererForm.enabled" type="checkbox" class="h-4 w-4 accent-[var(--Button-primary-black)]" />
-                {{ t('Enabled') }}
-              </label>
-            </div>
-            <div class="mt-4 flex justify-end gap-2">
-              <button class="rounded-[10px] border border-[var(--border-btn-main)] px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--fill-tsp-white-dark)]" @click="rendererEditing = false">
-                {{ t('Cancel') }}
-              </button>
-              <button class="rounded-[10px] bg-[var(--Button-primary-black)] px-3 py-2 text-sm text-[var(--text-onblack)] hover:opacity-90" :disabled="rendererSaving" @click="saveRenderer">
-                {{ rendererSaving ? t('Saving...') : t('Save') }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="rendererLoading" class="py-8 text-center text-sm text-[var(--text-tertiary)]">{{ t('Loading') }}...</div>
-          <div v-else-if="filteredRenderers.length === 0" class="rounded-xl border border-dashed border-[var(--border-main)] py-8 text-center text-sm text-[var(--text-tertiary)]">{{ t('No renderers found') }}</div>
-          <div v-else class="grid gap-3 md:grid-cols-2">
-            <article
-              v-for="renderer in pagedRenderers"
-              :key="renderer.id"
-              class="min-h-[124px] rounded-lg border border-[var(--border-main)] bg-[var(--background-gray-main)] p-4 transition-colors"
-              :class="canManageRenderer(renderer) ? 'cursor-pointer hover:bg-[var(--fill-tsp-white-light)]' : ''"
-              :title="canManageRenderer(renderer) ? t('Edit') : renderer.description"
-              @click="canManageRenderer(renderer) && startEditRenderer(renderer)"
-            >
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="truncate text-sm font-semibold text-[var(--text-primary)]">{{ renderer.name }}</div>
-                  <div class="description-clamp mt-2 text-xs leading-5 text-[var(--text-tertiary)]">{{ renderer.description || t('No description') }}</div>
-                </div>
-                <span class="shrink-0 rounded border border-[var(--border-main)] px-1.5 py-0.5 text-[11px] text-[var(--text-tertiary)]">{{ renderer.kind }}</span>
-              </div>
-              <div class="mt-3 flex flex-wrap gap-1">
-                <span v-for="extension in renderer.extensions" :key="extension" class="rounded border border-[var(--border-main)] px-1.5 py-0.5 text-[11px] text-[var(--text-tertiary)]">.{{ extension }}</span>
-              </div>
-              <div class="mt-3 flex items-center justify-between gap-2">
-                <span class="text-[11px] text-[var(--text-tertiary)]">{{ t(renderer.source === 'official' ? 'Official' : 'Personal') }}</span>
-                <div class="flex shrink-0 gap-1">
-                  <button
-                    class="flex size-8 items-center justify-center rounded-md border border-[var(--border-main)] disabled:opacity-60"
-                    :disabled="pluginUpdating === `renderer:${renderer.id}` || renderer.kind === 'builtin' || isOwnedRenderer(renderer)"
-                    :title="t(renderer.installed && renderer.kind !== 'builtin' && !isOwnedRenderer(renderer) ? 'Remove from my plugins' : renderer.installed ? 'Installed' : 'Add to my plugins')"
-                    @click.stop="toggleRendererInstallation(renderer)"
-                  ><Check v-if="renderer.installed" :size="15" /><Plus v-else :size="15" /></button>
-                  <template v-if="canManageRenderer(renderer)">
-                    <button class="rounded-md p-1 hover:bg-[var(--fill-tsp-white-dark)]" :title="t('Edit')" @click.stop="startEditRenderer(renderer)"><Pencil :size="14" /></button>
-                    <button class="rounded-md p-1 text-[var(--function-error)] hover:bg-[var(--fill-tsp-white-dark)]" :title="t('Delete')" @click.stop="deleteRenderer(renderer.id)"><Trash2 :size="14" /></button>
-                  </template>
-                </div>
-              </div>
-            </article>
-          </div>
-          <div v-if="rendererTotalPages > 1" class="mt-4 flex items-center justify-end gap-2">
-            <button class="rounded-lg border border-[var(--border-main)] px-2 py-1 text-xs text-[var(--text-secondary)] disabled:opacity-40" :disabled="rendererPage === 1" @click="rendererPage--">{{ t('Previous') }}</button>
-            <span class="text-xs text-[var(--text-tertiary)]">{{ rendererPage }} / {{ rendererTotalPages }}</span>
-            <button class="rounded-lg border border-[var(--border-main)] px-2 py-1 text-xs text-[var(--text-secondary)] disabled:opacity-40" :disabled="rendererPage === rendererTotalPages" @click="rendererPage++">{{ t('Next') }}</button>
-          </div>
-        </section>
       </div>
     </div>
-
     <Dialog v-model:open="skillDetailOpen">
       <DialogContent class="w-[min(1100px,calc(100vw-32px))]">
         <DialogHeader>
@@ -523,6 +107,14 @@
             {{ selectedSkillDetail.skill.description }}
           </p>
           <SkillMetadata v-if="selectedSkillDetail" :skill="selectedSkillDetail.skill" />
+          <button
+            v-if="selectedSkillDetail && canDeletePersonalSkill(selectedSkillDetail.skill)"
+            type="button"
+            class="mt-3 inline-flex items-center gap-1.5 self-start rounded-lg border border-[var(--border-main)] px-3 py-2 text-xs text-[var(--function-error)] disabled:opacity-50"
+            :disabled="Boolean(deletingSkillId) || savingSkillFile"
+            :aria-label="t('Delete skill named', { name: selectedSkillDetail.skill.title || selectedSkillDetail.skill.name })"
+            @click="requestDeleteSkill(selectedSkillDetail.skill)"
+          ><Trash2 :size="14" />{{ t(deletingSkillId ? 'Deleting skill...' : 'Delete') }}</button>
           <p v-if="selectedSkillDetail?.skill.format === 'data-skill-v1'" class="mt-2 break-all text-xs text-[var(--text-tertiary)]">
             {{ selectedSkillDetail.skill.package_id }} · {{ t('Skill release immutable') }}
             <br />SHA-256: {{ selectedSkillDetail.skill.package_sha256 }}
@@ -572,140 +164,75 @@
         </div>
       </DialogContent>
     </Dialog>
+    <PersonalSkillDeleteDialog :skill="skillToDelete" :busy="Boolean(deletingSkillId)" :error="deleteError" @confirm="confirmDeleteSkill" @cancel="cancelDeleteSkill" />
   </div>
 </template>
 
 <script setup lang="ts">
 import DataConnectorsPanel from '@/components/DataConnectorsPanel.vue';
 import SkillMetadata from '@/components/SkillMetadata.vue';
+import PersonalSkillDeleteDialog from '@/components/PersonalSkillDeleteDialog.vue';
 import { skillCategories, filterSkillCatalog } from '@/utils/skillCatalog';
-import { computed, defineComponent, h, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { computed, defineComponent, h, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRoute, useRouter } from 'vue-router';
-import { Check, Plus, Pencil, Trash2, Upload, Folder, FileText, Search, PanelLeft, RefreshCw, Settings2 } from 'lucide-vue-next';
+import { useRoute } from 'vue-router';
+import { Check, Plus, Upload, Folder, FileText, Search, PanelLeft, Trash2, LoaderCircle } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { deleteMCPServer, installMCPServer, listMCPCatalog, saveMCPServer, uninstallMCPServer, type MCPServerInfo, type MCPTransport } from '@/api/mcp';
 import { getSkillDetail, installSkill, listSkillCatalog, uninstallSkill, updateSkillFile, updateSkillScope, uploadSkill, type SkillDetailResponse, type SkillFileContent, type SkillFileNode, type SkillInfo } from '@/api/skill';
-import { createRendererConfig, deleteRendererConfig, installRenderer, listRendererCatalog, uninstallRenderer, updateRendererConfig, type RendererInfo, type RendererRequest } from '@/api/renderer';
-import { getPluginRuntime, reloadPluginRuntime, type PluginRuntimePlugin, type PluginRuntimeSnapshot } from '@/api/pluginRuntime';
-import { getDomainPresetCatalog, type DomainPreset, type DomainPresetCatalog } from '@/api/domainPreset';
-import ToolCredentialsPanel from '@/components/ToolCredentialsPanel.vue';
-import VisualizationPluginsPanel from '@/visualizations/VisualizationPluginsPanel.vue';
-import { listBuiltinRenderers, listRenderers, rendererDefinitionsFromConfigs, type RendererDefinition } from '@/renderers/registry';
 import { showErrorToast, showSuccessToast } from '@/utils/toast';
 import { useLeftPanel } from '@/composables/useLeftPanel';
 import { useAuth } from '@/composables/useAuth';
-import { useSettingsDialog } from '@/composables/useSettingsDialog';
+import { usePersonalSkillDeletion } from '@/composables/usePersonalSkillDeletion';
 
 const { t } = useI18n();
 const route = useRoute();
-const router = useRouter();
-const { openSettingsDialog } = useSettingsDialog();
 const { isLeftPanelShow, toggleLeftPanel } = useLeftPanel();
 const { currentUser } = useAuth();
+// Only route metadata controls the product page. Legacy tab/settings query
+// parameters cannot reveal hidden runtime administration categories.
+const activeTab = computed(() => route.meta.catalogType === 'connectors' ? 'connectors' : 'skills');
+const pageTitle = computed(() => activeTab.value === 'connectors' ? '数据连接器' : '分析技能库');
+const pageDescription = computed(() => activeTab.value === 'connectors'
+  ? '了解可用的开放数据源，在对话中检索、获取并保存数据。'
+  : '发现并管理可复用的分析技能，在分析数据时按需使用。');
+type PluginSource = 'all' | 'official' | 'personal';
+const pluginSource = ref<PluginSource>('all');
+const sourceFilters = computed<Array<{ key: PluginSource; label: string }>>(() => [
+  { key: 'all', label: t('All') }, { key: 'official', label: t('Official') }, { key: 'personal', label: t('Personal') },
+]);
+
 const PAGE_SIZE = 6;
 
-type PluginTab = 'connectors' | 'skills' | 'mcp' | 'renderers' | 'runtime' | 'presets' | 'credentials';
-const tabs = computed<Array<{ key: PluginTab; label: string }>>(() => [
-  { key: 'skills', label: t('Skills') },
-  { key: 'connectors', label: '数据连接器' },
-  { key: 'mcp', label: t('MCP') },
-  { key: 'renderers', label: '可视化插件' },
-  { key: 'runtime', label: t('Analysis Tools') },
-  { key: 'presets', label: t('Domain Presets') },
-  { key: 'credentials', label: t('Credentials') },
-]);
-const tabKeys = new Set<PluginTab>(['connectors', 'skills', 'mcp', 'renderers', 'runtime', 'presets', 'credentials']);
-const routeTab = typeof route.query.tab === 'string' && tabKeys.has(route.query.tab as PluginTab)
-  ? route.query.tab as PluginTab
-  : 'skills';
-const activeTab = ref<PluginTab>(routeTab);
-type PluginSource = 'all' | 'official' | 'personal' | 'community';
-const pluginSource = ref<PluginSource>('all');
-const showSourceFilters = computed(() => ['skills', 'mcp', 'renderers'].includes(activeTab.value));
-const sourceFilters = computed<Array<{ key: PluginSource; label: string }>>(() => {
-  const filters: Array<{ key: PluginSource; label: string }> = [
-    { key: 'all', label: t('All') },
-    { key: 'official', label: t('Official') },
-    { key: 'personal', label: t('Personal') },
-  ];
-  if (activeTab.value === 'mcp' && currentUser.value?.role === 'admin') {
-    filters.push({ key: 'community', label: t('Community') });
-  }
-  return filters;
-});
 const pluginUpdating = ref<string | null>(null);
+
 const skillSearchQuery = ref('');
-const mcpSearchQuery = ref('');
-const rendererSearchQuery = ref('');
-const runtimeSearchQuery = ref('');
-const presetSearchQuery = ref('');
-const activeSearchQuery = computed({
-  get: () => ({
-    skills: skillSearchQuery.value,
-    mcp: mcpSearchQuery.value,
-    renderers: rendererSearchQuery.value,
-    runtime: runtimeSearchQuery.value,
-    presets: presetSearchQuery.value,
-    credentials: '',
-    connectors: '',
-  })[activeTab.value],
-  set: (value: string) => {
-    if (activeTab.value === 'skills') skillSearchQuery.value = value;
-    else if (activeTab.value === 'mcp') mcpSearchQuery.value = value;
-    else if (activeTab.value === 'renderers') rendererSearchQuery.value = value;
-    else if (activeTab.value === 'runtime') runtimeSearchQuery.value = value;
-    else if (activeTab.value === 'presets') presetSearchQuery.value = value;
-  },
-});
-const activeSearchPlaceholder = computed(() => ({
-  skills: t('Search skills'),
-  mcp: t('Search MCP servers'),
-  renderers: t('Search renderers'),
-  runtime: t('Search analysis tools'),
-  presets: t('Search domain presets'),
-  credentials: '',
-  connectors: '',
-})[activeTab.value]);
-
-const setActiveTab = (tab: PluginTab) => {
-  activeTab.value = tab;
-  router.replace({ query: { ...route.query, tab } });
-};
-
-const mcpServers = ref<MCPServerInfo[]>([]);
-const mcpLoading = ref(false);
-const mcpSaving = ref(false);
-const mcpEditing = ref(false);
-const mcpEditingExisting = ref(false);
-const mcpArgsText = ref('');
-const mcpHeadersText = ref('');
-const mcpEditorRef = ref<HTMLElement>();
-const mcpPage = ref(1);
-const mcpForm = reactive<MCPServerInfo>({
-  name: '',
-  transport: 'stdio',
-  enabled: true,
-  description: '',
-  command: '',
-  args: [],
-  url: '',
-});
 
 const skills = ref<SkillInfo[]>([]);
+
 const skillLoading = ref(false);
+
 const skillUploading = ref(false);
+
 const skillFileInput = ref<HTMLInputElement>();
+
 const skillDetailOpen = ref(false);
+
 const selectedSkillDetail = ref<SkillDetailResponse | null>(null);
+
 const selectedSkillFilePath = ref('');
+
 const skillPage = ref(1);
+
 const skillCategoryFilter = ref('');
+
 const skillDomainFilter = ref('');
+
 const skillInstalledOnly = ref(false);
+
 const skillDomains = computed(() => [...new Set(skills.value.flatMap(skill => skill.domains || []))].sort());
+
 const resetSkillFilters = () => {
   skillCategoryFilter.value = '';
   skillDomainFilter.value = '';
@@ -713,55 +240,30 @@ const resetSkillFilters = () => {
   skillSearchQuery.value = '';
   pluginSource.value = 'all';
 };
+
 const editingSkillFile = ref(false);
+
 const savingSkillFile = ref(false);
+
 const skillFileDraft = ref('');
+
 const skillScopeUpdating = ref<string | null>(null);
-const rendererConfigs = ref<RendererInfo[]>([]);
-const renderers = ref<RendererDefinition[]>(listRenderers());
-const rendererPage = ref(1);
-const rendererEditing = ref(false);
-const rendererLoading = ref(false);
-const rendererSaving = ref(false);
-const rendererEditingId = ref<string | null>(null);
-const rendererEditorRef = ref<HTMLElement>();
-const rendererExtensionsText = ref('');
-const rendererForm = reactive<RendererRequest>({
-  name: '',
-  description: '',
-  kind: 'api',
-  extensions: [],
-  enabled: true,
-  api_url: '',
-  entry: '',
-  config: {},
-  is_global: false,
-});
-const runtimeSnapshot = ref<PluginRuntimeSnapshot | null>(null);
-const runtimeLoading = ref(false);
-const runtimeReloading = ref(false);
-const runtimeError = ref('');
-const runtimePage = ref(1);
-const presetCatalog = ref<DomainPresetCatalog | null>(null);
-const presetLoading = ref(false);
-const presetError = ref('');
+let skillLoadRevision = 0;
 
-const normalizedMcpSearch = computed(() => mcpSearchQuery.value.trim().toLowerCase());
+const { canDeletePersonalSkill, deletingSkillId, skillToDelete, deleteError, requestDeleteSkill, confirmDeleteSkill, cancelDeleteSkill } = usePersonalSkillDeletion((skill) => {
+  skillLoadRevision += 1;
+  skillLoading.value = false;
+  skills.value = skills.value.filter(item => item.id !== skill.id);
+  if (selectedSkillDetail.value?.skill.id === skill.id) {
+    skillDetailOpen.value = false;
+    selectedSkillDetail.value = null;
+    selectedSkillFilePath.value = '';
+    editingSkillFile.value = false;
+    skillFileDraft.value = '';
+  }
+});
+
 const normalizedSkillSearch = computed(() => skillSearchQuery.value.trim().toLowerCase());
-const normalizedRendererSearch = computed(() => rendererSearchQuery.value.trim().toLowerCase());
-const normalizedRuntimeSearch = computed(() => runtimeSearchQuery.value.trim().toLowerCase());
-const normalizedPresetSearch = computed(() => presetSearchQuery.value.trim().toLowerCase());
-
-const filteredMcpServers = computed(() => {
-  const query = normalizedMcpSearch.value;
-  return mcpServers.value.filter((server) => (pluginSource.value === 'all' || server.source === pluginSource.value) && (!query || [
-    server.name,
-    server.description,
-    server.transport,
-    server.command,
-    server.url,
-  ].some((value) => String(value || '').toLowerCase().includes(query))));
-});
 
 const filteredSkills = computed(() => filterSkillCatalog(skills.value, {
   query: normalizedSkillSearch.value, source: pluginSource.value,
@@ -769,375 +271,27 @@ const filteredSkills = computed(() => filterSkillCatalog(skills.value, {
   installed: skillInstalledOnly.value,
 }));
 
-const filteredRenderers = computed(() => {
-  const query = normalizedRendererSearch.value;
-  return renderers.value.filter((renderer) => (pluginSource.value === 'all' || renderer.source === pluginSource.value) && (!query || [
-    renderer.name,
-    renderer.description,
-    renderer.kind,
-    ...(renderer.extensions || []),
-  ].some((value) => String(value || '').toLowerCase().includes(query))));
-});
-
-const filteredRuntimePlugins = computed<PluginRuntimePlugin[]>(() => {
-  const query = normalizedRuntimeSearch.value;
-  const plugins = runtimeSnapshot.value?.plugins || [];
-  if (!query) return plugins;
-  return plugins.filter((plugin) => [
-    plugin.plugin,
-    plugin.version,
-    ...plugin.tools.flatMap((tool) => [tool.name, tool.description, ...tool.scopes]),
-    ...plugin.errors,
-  ].some((value) => String(value || '').toLowerCase().includes(query)));
-});
-
-const filteredPresets = computed<DomainPreset[]>(() => {
-  const query = normalizedPresetSearch.value;
-  const presets = presetCatalog.value?.presets || [];
-  if (!query) return presets;
-  return presets.filter((preset) => [
-    preset.id,
-    preset.name,
-    preset.description,
-    ...preset.plugin_ids,
-    ...preset.initial_tools,
-  ].some((value) => String(value || '').toLowerCase().includes(query)));
-});
-
-const shortPresetRevision = computed(() => {
-  const revision = presetCatalog.value?.catalog_revision || '';
-  return revision.length > 12 ? revision.slice(0, 12) : revision;
-});
-
-const presetName = (presetId: string) => presetCatalog.value?.presets.find((preset) => preset.id === presetId)?.name || presetId;
-
-const runtimeRevision = computed(() => {
-  const revision = runtimeSnapshot.value?.revision;
-  if (!revision) return '—';
-  return revision.length > 12 ? revision.slice(0, 12) : revision;
-});
-
-const runtimeStatusLabel = computed(() => {
-  if (!runtimeSnapshot.value) return t('Unavailable');
-  if (runtimeSnapshot.value.status === 'error') return t('Error');
-  if (runtimeSnapshot.value.healthy) return t('Healthy');
-  return t('Unavailable');
-});
-
-const mcpTotalPages = computed(() => Math.max(1, Math.ceil(filteredMcpServers.value.length / PAGE_SIZE)));
 const skillTotalPages = computed(() => Math.max(1, Math.ceil(filteredSkills.value.length / PAGE_SIZE)));
-const rendererTotalPages = computed(() => Math.max(1, Math.ceil(filteredRenderers.value.length / PAGE_SIZE)));
-const runtimeTotalPages = computed(() => Math.max(1, Math.ceil(filteredRuntimePlugins.value.length / PAGE_SIZE)));
-const pagedMcpServers = computed(() => filteredMcpServers.value.slice((mcpPage.value - 1) * PAGE_SIZE, mcpPage.value * PAGE_SIZE));
+
 const pagedSkills = computed(() => filteredSkills.value.slice((skillPage.value - 1) * PAGE_SIZE, skillPage.value * PAGE_SIZE));
-const pagedRenderers = computed(() => filteredRenderers.value.slice((rendererPage.value - 1) * PAGE_SIZE, rendererPage.value * PAGE_SIZE));
-const pagedRuntimePlugins = computed(() => filteredRuntimePlugins.value.slice((runtimePage.value - 1) * PAGE_SIZE, runtimePage.value * PAGE_SIZE));
 
 const selectedSkillFile = computed<SkillFileContent | null>(() => {
   if (!selectedSkillDetail.value || !selectedSkillFilePath.value) return null;
   return selectedSkillDetail.value.files.find((file) => file.path === selectedSkillFilePath.value) || null;
 });
 
-const loadRuntime = async () => {
-  runtimeLoading.value = true;
-  runtimeError.value = '';
-  try {
-    runtimeSnapshot.value = await getPluginRuntime();
-  } catch (error) {
-    console.error('Failed to load analysis tools:', error);
-    runtimeError.value = t('Failed to load analysis tools');
-    showErrorToast(runtimeError.value);
-  } finally {
-    runtimeLoading.value = false;
-  }
-};
-
-const loadPresets = async () => {
-  presetLoading.value = true;
-  presetError.value = '';
-  try {
-    presetCatalog.value = await getDomainPresetCatalog();
-  } catch {
-    presetError.value = t('Failed to load domain presets');
-  } finally {
-    presetLoading.value = false;
-  }
-};
-
-const reloadRuntime = async () => {
-  runtimeReloading.value = true;
-  runtimeError.value = '';
-  try {
-    runtimeSnapshot.value = await reloadPluginRuntime();
-    if (runtimeSnapshot.value.status === 'error') {
-      showErrorToast(t('Failed to reload analysis tools'));
-    } else {
-      showSuccessToast(t('Analysis tools reloaded'));
-    }
-  } catch (error) {
-    console.error('Failed to reload analysis tools:', error);
-    runtimeError.value = t('Failed to reload analysis tools');
-    showErrorToast(runtimeError.value);
-  } finally {
-    runtimeReloading.value = false;
-  }
-};
-
-const resetMcpForm = () => {
-  mcpForm.name = '';
-  mcpForm.transport = 'stdio';
-  mcpForm.enabled = true;
-  mcpForm.description = '';
-  mcpForm.command = '';
-  mcpForm.args = [];
-  mcpForm.url = '';
-  mcpForm.headers = undefined;
-  mcpForm.env = undefined;
-  mcpArgsText.value = '';
-  mcpHeadersText.value = '';
-};
-
-const loadMcpServers = async () => {
-  mcpLoading.value = true;
-  try {
-    mcpServers.value = await listMCPCatalog();
-  } catch (error) {
-    console.error('Failed to load MCP servers:', error);
-    showErrorToast(t('Failed to load MCP servers'));
-  } finally {
-    mcpLoading.value = false;
-  }
-};
-
-const isOwnedMcp = (server: MCPServerInfo) => (server.owner_user_id || server.user_id) === currentUser.value?.id;
-const canManageMcp = (server: MCPServerInfo) => isOwnedMcp(server);
-const toggleMcpInstallation = async (server: MCPServerInfo) => {
-  if (isOwnedMcp(server)) return;
-  const key = `mcp:${server.name}`;
-  pluginUpdating.value = key;
-  try {
-    const updated = server.installed
-      ? await uninstallMCPServer(server.name)
-      : await installMCPServer(server.name);
-    Object.assign(server, updated);
-    showSuccessToast(t(updated.installed ? 'Plugin added' : 'Plugin removed'));
-  } catch (error) {
-    console.error('Failed to update MCP installation:', error);
-    showErrorToast(t('Failed to update plugin'));
-  } finally {
-    pluginUpdating.value = null;
-  }
-};
-
-const loadRenderers = async () => {
-  rendererLoading.value = true;
-  try {
-    rendererConfigs.value = await listRendererCatalog();
-    renderers.value = [...listBuiltinRenderers(), ...rendererDefinitionsFromConfigs(rendererConfigs.value)];
-  } catch (error) {
-    console.error('Failed to load renderers:', error);
-    showErrorToast(t('Failed to load renderers'));
-  } finally {
-    rendererLoading.value = false;
-  }
-};
-
-const isOwnedRenderer = (renderer: RendererDefinition) => (renderer.owner_user_id || renderer.user_id) === currentUser.value?.id;
-const canManageRenderer = (renderer: RendererDefinition) => isOwnedRenderer(renderer);
-const toggleRendererInstallation = async (renderer: RendererDefinition) => {
-  if (renderer.kind === 'builtin' || isOwnedRenderer(renderer)) return;
-  const key = `renderer:${renderer.id}`;
-  pluginUpdating.value = key;
-  try {
-    const updated = renderer.installed
-      ? await uninstallRenderer(renderer.id)
-      : await installRenderer(renderer.id);
-    Object.assign(renderer, updated);
-    showSuccessToast(t(updated.installed ? 'Plugin added' : 'Plugin removed'));
-  } catch (error) {
-    console.error('Failed to update renderer installation:', error);
-    showErrorToast(t('Failed to update plugin'));
-  } finally {
-    pluginUpdating.value = null;
-  }
-};
-
-const startCreateMcp = () => {
-  resetMcpForm();
-  mcpEditingExisting.value = false;
-  mcpEditing.value = true;
-  nextTick(() => mcpEditorRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-};
-
-const startEditMcp = (server: MCPServerInfo) => {
-  mcpForm.name = server.name;
-  mcpForm.transport = server.transport;
-  mcpForm.enabled = server.enabled;
-  mcpForm.description = server.description || '';
-  mcpForm.command = server.command || '';
-  mcpForm.args = server.args || [];
-  mcpForm.url = server.url || '';
-  mcpForm.headers = server.headers;
-  mcpForm.env = server.env;
-  mcpArgsText.value = (server.args || []).join(' ');
-  mcpHeadersText.value = server.headers ? JSON.stringify(server.headers, null, 2) : '';
-  mcpEditingExisting.value = true;
-  mcpEditing.value = true;
-  nextTick(() => mcpEditorRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-};
-
-const parseArgs = () => mcpArgsText.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
-const parseStringMap = (value: string, label: string): Record<string, string> | undefined => {
-  if (!value.trim()) return undefined;
-  const parsed = JSON.parse(value);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-  for (const [key, item] of Object.entries(parsed)) {
-    if (typeof item !== 'string') {
-      throw new Error(`${label}.${key} must be a string`);
-    }
-  }
-  return parsed as Record<string, string>;
-};
-
-const saveMcp = async () => {
-  if (!mcpForm.name.trim()) {
-    showErrorToast(t('Name is required'));
-    return;
-  }
-  mcpSaving.value = true;
-  try {
-    const headers = mcpForm.transport !== 'stdio' ? parseStringMap(mcpHeadersText.value, 'headers') : undefined;
-    await saveMCPServer({
-      name: mcpForm.name.trim(),
-      transport: mcpForm.transport as MCPTransport,
-      enabled: mcpForm.enabled,
-      description: mcpForm.description || undefined,
-      command: mcpForm.transport === 'stdio' ? mcpForm.command : undefined,
-      args: mcpForm.transport === 'stdio' ? parseArgs() : undefined,
-      url: mcpForm.transport !== 'stdio' ? mcpForm.url : undefined,
-      headers,
-      env: mcpForm.env,
-    });
-    await loadMcpServers();
-    mcpEditing.value = false;
-    showSuccessToast(t('MCP server saved'));
-  } catch (error) {
-    console.error('Failed to save MCP server:', error);
-    showErrorToast(t('Failed to save MCP server'));
-  } finally {
-    mcpSaving.value = false;
-  }
-};
-
-const deleteMcp = async (name: string) => {
-  try {
-    mcpServers.value = await deleteMCPServer(name);
-    showSuccessToast(t('MCP server deleted'));
-  } catch (error) {
-    console.error('Failed to delete MCP server:', error);
-    showErrorToast(t('Failed to delete MCP server'));
-  }
-};
-
-const resetRendererForm = () => {
-  rendererForm.name = '';
-  rendererForm.description = '';
-  rendererForm.kind = 'api';
-  rendererForm.extensions = [];
-  rendererForm.enabled = true;
-  rendererForm.api_url = '';
-  rendererForm.entry = '';
-  rendererForm.config = {};
-  rendererForm.is_global = false;
-  rendererExtensionsText.value = '';
-};
-
-const parseRendererExtensions = () => rendererExtensionsText.value
-  .split(/[\s,，]+/)
-  .map((extension) => extension.trim().toLowerCase().replace(/^\./, ''))
-  .filter(Boolean);
-
-const startCreateRenderer = () => {
-  resetRendererForm();
-  rendererEditingId.value = null;
-  rendererEditing.value = true;
-  nextTick(() => rendererEditorRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-};
-
-const startEditRenderer = (renderer: RendererDefinition) => {
-  if (!renderer.editable) return;
-  rendererEditingId.value = renderer.id;
-  rendererForm.name = renderer.name;
-  rendererForm.description = renderer.description;
-  rendererForm.kind = renderer.kind === 'builtin' ? 'api' : renderer.kind;
-  rendererForm.extensions = [...renderer.extensions];
-  rendererForm.enabled = renderer.enabled;
-  rendererForm.api_url = renderer.api_url || '';
-  rendererForm.entry = renderer.entry || '';
-  rendererForm.config = renderer.config || {};
-  rendererForm.is_global = renderer.scope === 'global';
-  rendererExtensionsText.value = renderer.extensions.join(', ');
-  rendererEditing.value = true;
-  nextTick(() => rendererEditorRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-};
-
-const saveRenderer = async () => {
-  if (!rendererForm.name.trim()) {
-    showErrorToast(t('Name is required'));
-    return;
-  }
-  if (parseRendererExtensions().length === 0) {
-    showErrorToast(t('Extensions are required'));
-    return;
-  }
-  const payload: RendererRequest = {
-    ...rendererForm,
-    name: rendererForm.name.trim(),
-    extensions: parseRendererExtensions(),
-    api_url: rendererForm.kind === 'api' ? rendererForm.api_url || null : null,
-    entry: rendererForm.kind === 'component' ? rendererForm.entry || null : null,
-  };
-  rendererSaving.value = true;
-  try {
-    if (rendererEditingId.value) {
-      await updateRendererConfig(rendererEditingId.value, payload);
-      showSuccessToast(t('Renderer saved'));
-    } else {
-      await createRendererConfig(payload);
-      showSuccessToast(t('Renderer saved'));
-    }
-    rendererEditing.value = false;
-    await loadRenderers();
-  } catch (error) {
-    console.error('Failed to save renderer:', error);
-    showErrorToast(t('Failed to save renderer'));
-  } finally {
-    rendererSaving.value = false;
-  }
-};
-
-const deleteRenderer = async (id: string) => {
-  try {
-    await deleteRendererConfig(id);
-    await loadRenderers();
-    showSuccessToast(t('Renderer deleted'));
-  } catch (error) {
-    console.error('Failed to delete renderer:', error);
-    showErrorToast(t('Failed to delete renderer'));
-  }
-};
-
 const loadSkills = async () => {
+  const revision = ++skillLoadRevision;
   skillLoading.value = true;
   try {
-    skills.value = await listSkillCatalog();
+    const result = await listSkillCatalog();
+    if (revision === skillLoadRevision) skills.value = result;
   } catch (error) {
+    if (revision !== skillLoadRevision) return;
     console.error('Failed to load skills:', error);
     showErrorToast(t('Failed to load skills'));
   } finally {
-    skillLoading.value = false;
+    if (revision === skillLoadRevision) skillLoading.value = false;
   }
 };
 
@@ -1165,7 +319,7 @@ const toggleSkillInstallation = async (skill: SkillInfo) => {
 };
 
 const changeSkillScope = async (skill: SkillInfo, scope: 'user' | 'global') => {
-  if (!canManageSkillScope(skill) || skill.scope === scope) return;
+  if (!canManageSkillScope(skill) || skill.scope === scope || deletingSkillId.value === skill.id) return;
   const previousScope = skill.scope;
   skillScopeUpdating.value = skill.id;
   try {
@@ -1213,13 +367,17 @@ const firstFilePath = (nodes: SkillFileNode[]): string => {
 };
 
 const openSkill = async (name: string) => {
+  const revision = skillLoadRevision;
   try {
-    selectedSkillDetail.value = await getSkillDetail(name);
+    const detail = await getSkillDetail(name);
+    if (revision !== skillLoadRevision) return;
+    selectedSkillDetail.value = detail;
     selectedSkillFilePath.value = firstFilePath(selectedSkillDetail.value.tree);
     editingSkillFile.value = false;
     skillFileDraft.value = '';
     skillDetailOpen.value = true;
   } catch (error) {
+    if (revision !== skillLoadRevision) return;
     console.error('Failed to load skill detail:', error);
     showErrorToast(t('Failed to load skill detail'));
   }
@@ -1263,11 +421,6 @@ const saveSkillFile = async () => {
 
 const isMarkdownFile = (path: string) => path.toLowerCase().endsWith('.md') || path.toLowerCase().endsWith('.markdown');
 
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
-
 const renderMarkdown = (content: string) => DOMPurify.sanitize(marked.parse(content || '') as string);
 
 const SkillTreeNode = defineComponent({
@@ -1306,80 +459,14 @@ const SkillTreeNode = defineComponent({
   },
 });
 
-watch(mcpSearchQuery, () => {
-  mcpPage.value = 1;
-});
-
-watch([skillSearchQuery, skillCategoryFilter, skillDomainFilter, skillInstalledOnly], () => {
-  skillPage.value = 1;
-});
-
-watch(rendererSearchQuery, () => {
-  rendererPage.value = 1;
-});
-
-watch(runtimeSearchQuery, () => {
-  runtimePage.value = 1;
-});
-
-watch(pluginSource, () => {
-  mcpPage.value = 1;
-  skillPage.value = 1;
-  rendererPage.value = 1;
-});
-
+marked.setOptions({ breaks: true, gfm: true });
+watch([skillSearchQuery, skillCategoryFilter, skillDomainFilter, skillInstalledOnly, pluginSource], () => { skillPage.value = 1; });
+watch(filteredSkills, () => { if (skillPage.value > skillTotalPages.value) skillPage.value = skillTotalPages.value; });
 watch(activeTab, (tab) => {
-  if (tab !== 'mcp' && pluginSource.value === 'community') {
-    pluginSource.value = 'all';
-  }
-});
-
-watch(() => route.query.tab, (tab) => {
-  if (typeof tab === 'string' && tabKeys.has(tab as PluginTab) && tab !== activeTab.value) {
-    activeTab.value = tab as PluginTab;
-  }
-});
-
-// A navigational shortcut only: opening the editor never saves or enables a pilot.
-watch(() => route.query.settings, (settings) => {
-  if (settings !== 'agent-profiles') return;
-  openSettingsDialog('agent-profiles');
-  const query = { ...route.query };
-  delete query.settings;
-  void router.replace({ query });
+  skillDetailOpen.value = false;
+  if (tab === 'skills') void loadSkills();
 }, { immediate: true });
-
-watch(filteredMcpServers, () => {
-  if (mcpPage.value > mcpTotalPages.value) mcpPage.value = mcpTotalPages.value;
-});
-
-watch(filteredSkills, () => {
-  if (skillPage.value > skillTotalPages.value) skillPage.value = skillTotalPages.value;
-});
-
-watch(filteredRenderers, () => {
-  if (rendererPage.value > rendererTotalPages.value) rendererPage.value = rendererTotalPages.value;
-});
-
-watch(filteredRuntimePlugins, () => {
-  if (runtimePage.value > runtimeTotalPages.value) runtimePage.value = runtimeTotalPages.value;
-});
-
-onMounted(() => {
-  loadMcpServers();
-  loadSkills();
-  loadRenderers();
-  loadRuntime();
-  loadPresets();
-});
 </script>
-
 <style scoped>
-.description-clamp {
-  display: -webkit-box;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
+.description-clamp { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 </style>

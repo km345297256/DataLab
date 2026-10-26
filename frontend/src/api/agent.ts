@@ -129,28 +129,36 @@ export const chatWithSession = async (
   mcpServers?: string[],
   agentProfileId?: string | null,
   callbacks?: SSECallbacks<AgentSSEEvent['data']>,
-  datasetIds?: string[],
+  _datasetIds?: string[],
   clientMessageId?: string,
   resumeFrom?: string,
+  inputFileIds?: string[],
+  timestamp?: number,
+  observeClientMessageId?: string,
   dataConnectors?: string[],
+  visualizationContexts?: import('../visualizations/viewContext').VisualizationViewContext[],
+  clarificationId?: string,
 ): Promise<() => void> => {
   const effectiveClientMessageId = message || resumeFrom
     ? clientMessageId || createClientMessageId()
     : undefined;
   const recovery = createAgentStreamRecovery({
     message,
-    timestamp: Math.floor(Date.now() / 1000),
+    timestamp: timestamp ?? Math.floor(Date.now() / 1000),
     event_id: eventId,
     event_seq: eventSeq,
     // A continuation is an explicit command, not a rewritten user request.
     // Its original objective, inputs and capabilities are restored by the server.
-    ...(resumeFrom ? { resume_from: resumeFrom } : {
+    ...(observeClientMessageId ? { observe_client_message_id: observeClientMessageId }
+      : resumeFrom ? { resume_from: resumeFrom } : {
       agent_profile_id: agentProfileId,
       attachments,
       skills,
       mcp_servers: mcpServers,
       data_connectors: dataConnectors,
-      dataset_ids: datasetIds,
+      input_file_ids: inputFileIds,
+      visualization_contexts: visualizationContexts,
+      clarification_id: clarificationId,
     }),
     client_message_id: effectiveClientMessageId,
   });
@@ -181,16 +189,32 @@ export function createClientMessageId(): string {
   return `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
 
+export interface InputReceiptResponse {
+  client_message_id: string;
+  accepted: boolean;
+  event_seq?: number | null;
+  state?: 'pending' | 'claimed' | 'running' | 'completed' | 'cancelled' | 'interrupted' | null;
+}
+
+/** Owner-only observation, never proof that an unobserved request cannot still commit. */
+export async function getInputReceipt(sessionId: string, clientMessageId: string, signal?: AbortSignal): Promise<InputReceiptResponse> {
+  const response = await apiClient.get<ApiResponse<InputReceiptResponse>>(
+    `/sessions/${encodeURIComponent(sessionId)}/inputs/${encodeURIComponent(clientMessageId)}`, { signal },
+  );
+  return response.data.data;
+}
+
 /**
  * View Shell session output
  * @param sessionId Session ID
  * @param shellSessionId Shell session ID
  * @returns Shell session output content
  */
-export async function viewShellSession(sessionId: string, shellSessionId: string): Promise<ShellViewResponse> {
+export async function viewShellSession(sessionId: string, shellSessionId: string, page?: { output_id: string; cursor: number; max_bytes?: number }, signal?: AbortSignal): Promise<ShellViewResponse> {
   const response = await apiClient.post<ApiResponse<ShellViewResponse>>(
     `/sessions/${sessionId}/shell`,
-    { session_id: shellSessionId }
+    { session_id: shellSessionId, ...page },
+    { signal }
   );
   return response.data.data;
 }
@@ -221,6 +245,18 @@ export async function getSessionFiles(sessionId: string, options: SessionFileSor
   const response = await apiClient.get<ApiResponse<FileInfo[]>>(
     `/sessions/${sessionId}/files`,
     { params: options }
+  );
+  return response.data.data;
+}
+
+export interface SessionAnalysisInputs {
+  files: FileInfo[];
+  selected_file_ids: string[];
+}
+
+export async function getSessionAnalysisInputs(sessionId: string, signal?: AbortSignal): Promise<SessionAnalysisInputs> {
+  const response = await apiClient.get<ApiResponse<SessionAnalysisInputs>>(
+    `/sessions/${encodeURIComponent(sessionId)}/analysis-inputs`, { signal },
   );
   return response.data.data;
 }
@@ -285,39 +321,6 @@ export async function saveTaskFeedback(
 
 export async function deleteTaskFeedback(sessionId: string): Promise<void> {
   await apiClient.delete<ApiResponse<TaskFeedbackResponse>>(`/sessions/${sessionId}/feedback`);
-}
-
-export interface DataProductDraft {
-  source_session_id: string;
-  suggested_name: string;
-  suggested_description: string;
-  generation_method: string;
-  files: import('./dataset').DataProductFile[];
-}
-
-export async function getDataProductDraft(sessionId: string): Promise<DataProductDraft> {
-  const response = await apiClient.get<ApiResponse<DataProductDraft>>(
-    '/sessions/' + encodeURIComponent(sessionId) + '/data-product-draft',
-  );
-  return response.data.data;
-}
-
-export async function createDataProduct(
-  sessionId: string,
-  datasetId: string,
-  payload: {
-    name: string;
-    description: string;
-    generation_method: string;
-    selected_file_ids: string[];
-    primary_file_id?: string | null;
-  },
-): Promise<import('./dataset').DataProduct> {
-  const response = await apiClient.post<ApiResponse<import('./dataset').DataProduct>>(
-    '/sessions/' + encodeURIComponent(sessionId) + '/datasets/' + encodeURIComponent(datasetId) + '/data-products',
-    payload,
-  );
-  return response.data.data;
 }
 
 /**

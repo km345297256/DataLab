@@ -23,7 +23,7 @@ export interface AnalysisOutcome {
   scope?: 'step';
   status: 'succeeded' | 'partial' | 'failed';
   reason_code: string;
-  missing: Array<{ kind: string; min_count: number; label: string }>;
+  missing: Array<{ kind: string; min_count: number; label: string; formats?: string[] }>;
   can_resume: boolean;
   resume_from?: string;
   /** Absent on older history; these are file diagnostics, not replacement answers. */

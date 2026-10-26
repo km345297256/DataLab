@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import * as vue from 'vue';
 import { renderToString } from '@vue/server-renderer';
+import { PopoverRoot, PopoverTrigger, PopoverContent } from 'reka-ui';
 import { compileScript, parse } from '@vue/compiler-sfc';
 import ts from 'typescript';
+import * as presentation from '../src/utils/planPresentation.ts';
 
 const source = readFileSync(new URL('../src/components/PlanPanel.vue', import.meta.url), 'utf8');
 const script = compileScript(parse(source).descriptor, { id: 'plan-status-test', inlineTemplate: true });
@@ -22,6 +24,8 @@ new Function('require', 'module', 'exports', compiled)((name) => {
   if (name === 'lucide-vue-next') return { ChevronUp: icon, ChevronDown: icon, Clock: icon, CircleX: icon };
   if (name === './icons/StepSuccessIcon.vue') return { default: icon };
   if (name === './DataRunHistory.vue') return { default: icon };
+  if (name === './ui/popover') return { Popover: PopoverRoot, PopoverTrigger, PopoverContent };
+  if (name === '@/utils/planPresentation') return presentation;
   if (name === '@/utils/taskProgress') return taskProgress;
   if (name === '@/composables/useDataRuns') return { useDataRuns: () => ({ runs: vue.ref(currentRun ? [currentRun] : []), loading: vue.ref(false), error: vue.ref(''), nextBefore: vue.ref(null), load() {} }) };
   assert.fail(`Unexpected dependency: ${name}`);

@@ -3,10 +3,25 @@ import json
 import logging
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
 logger = logging.getLogger(__name__)
+
+
+class ModelRequestCapability(BaseModel):
+    """Operator-verified capability for one exact provider/model identity.
+
+    This is request sizing, never a cumulative task quota. No capacity or
+    image support is inferred from a model name or compatible API endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    context_tokens: int | None = Field(default=None, ge=4096, le=2_000_000)
+    max_output_tokens: int | None = Field(default=None, ge=1, le=2_000_000)
+    vision: bool | None = None
+    image_token_strategy: Literal["reserve", "deepseek_v41"] = "reserve"
+    image_tokens: int = Field(default=4096, ge=1, le=131_072)
 
 
 def _parse_extra_headers() -> dict | None:
@@ -33,11 +48,17 @@ class Settings(BaseSettings):
     model_name: str = "gpt-4o"
     model_provider: str = "openai"
     temperature: float = 0.7
+    # Legacy configuration accepted for compatibility; production requests ignore
+    # role/profile budgets and use verified model capacities or provider defaults.
     max_tokens: int = 2000
     # Per-request engineering limits, not cumulative task quotas or advertised
     # provider capacities. Offline token estimates include tool definitions.
     model_context_capacity_tokens: int = Field(default=131_072, ge=4096, le=2_000_000)
     model_context_safety_tokens: int = Field(default=2048, ge=256, le=65_536)
+    # JSON mapping: {"provider": {"exact-model-name": {"context_tokens": ...}}}.
+    # Unlisted identities retain the global engineering ceiling. An explicit
+    # capability can only narrow that ceiling, not silently enlarge it.
+    model_request_capabilities: dict[str, dict[str, ModelRequestCapability]] = Field(default_factory=dict)
     # Analysis has no total tool/call/token/time quota. The removed MODEL_TASK_*
     # and ANALYSIS_BUDGET_* environment values intentionally have no effect.
     model_trace_store_timeout_seconds: float = Field(default=3.0, ge=0.1, le=30)
@@ -47,8 +68,7 @@ class Settings(BaseSettings):
     tool_preset_id: str = "general"
     code_mode_enabled: bool = False
     domain_subagents_enabled: bool = False
-    # Execution responses often contain a complete script or structured result.
-    # Keep a larger floor than planner responses so valid output is not cut off.
+    # Legacy setting; retained for old configuration readers, never enforced.
     execution_max_tokens: int = 4096
     # Direct one-shot model calls may use the client's small built-in retry
     # budget. BaseAgent disables that inner loop and owns its bounded policy.
@@ -56,19 +76,8 @@ class Settings(BaseSettings):
     llm_retry_attempts: int = 4
     llm_retry_base_seconds: float = 1.0
     llm_retry_max_seconds: float = 8.0
-    # Once the bounded tool budget is exhausted, the Agent gets one tool-free
-    # turn to synthesize the evidence it already collected. Keep this separate
-    # from provider/network retries and from the dataset quicklook synthesis
-    # deadline, which has its own larger professional-analysis budget.
-    agent_finalization_timeout_seconds: float = 45.0
-    # Lightweight dataset routing runs before any sandbox allocation. A slow or
-    # unavailable classifier must fall back to the normal Agent path promptly.
-    dataset_request_resolver_timeout_seconds: float = 8.0
-    # Suggested questions are optional page bootstrap data. Keep their model
-    # call below the browser API timeout so an unavailable provider can fall
-    # back to local questions without turning the whole panel into an error.
-    dataset_suggested_question_timeout_seconds: float = 8.0
-
+    # Analysis, routing and final review wait until completion or explicit
+    # cancellation. Removed *_TIMEOUT_SECONDS values cannot reinstate a quota.
     # System-owned safety gate. It always runs before Planner and is not part
     # of a user-editable Agent profile. If review is unavailable, it fails closed.
     safety_review_model_provider: str | None = None
@@ -77,7 +86,6 @@ class Settings(BaseSettings):
     safety_review_model_api_key: str | None = None
     safety_review_temperature: float = 0.0
     safety_review_max_tokens: int = 600
-    safety_review_timeout_seconds: float = 20.0
 
     # Vision model configuration
     vision_model_name: str | None = None
@@ -86,6 +94,16 @@ class Settings(BaseSettings):
     vision_model_api_key: str | None = None
     vision_temperature: float | None = None
     vision_max_tokens: int | None = None
+    vision_max_images: int = Field(default=16, ge=1, le=64)
+    vision_max_source_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, le=128 * 1024 * 1024)
+    vision_max_source_pixels: int = Field(default=40_000_000, ge=1024, le=100_000_000)
+    vision_max_image_edge: int = Field(default=2048, ge=256, le=8192)
+    # Base64 data-URL bytes across one physical model request, not raw bytes.
+    vision_max_request_bytes: int = Field(default=20 * 1024 * 1024, ge=1024, le=128 * 1024 * 1024)
+    # Explicit opt-in: MCP media stays text-only unless the active route also
+    # declares vision=True and private spill storage is available.
+    mcp_image_results_enabled: bool = False
+    mcp_image_result_max_tokens: int = Field(default=12_500, ge=1024, le=65_536)
     
     # MongoDB configuration
     mongodb_uri: str = "mongodb://mongodb:27017"
@@ -94,9 +112,9 @@ class Settings(BaseSettings):
     mongodb_password: str | None = None
 
     # File storage configuration
-    # "gridfs" keeps legacy MongoDB GridFS behavior, "minio" stores new files in MinIO,
-    # "hybrid" writes new files to MinIO and reads legacy GridFS ObjectId files.
-    file_storage_provider: str = "gridfs"
+    # All providers write new files to MinIO. "hybrid" also reads legacy GridFS
+    # ObjectIds; the old "gridfs" setting is a compatibility alias for hybrid.
+    file_storage_provider: str = "hybrid"
     minio_endpoint: str = "minio:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
@@ -127,7 +145,6 @@ class Settings(BaseSettings):
     spill_max_artifact_bytes: int = 32 * 1024 * 1024
     spill_preview_bytes: int = 12_000
     spill_read_chunk_bytes: int = 16_000
-    spill_store_timeout_seconds: float = 5.0
     spill_artifact_retention_hours: int = 168
     spill_reaper_interval_seconds: int = 300
     spill_artifact_identity_key: str | None = None
@@ -140,6 +157,9 @@ class Settings(BaseSettings):
     # Optional root that exposes the machine filesystem inside the Docker
     # daemon's mount namespace (Snap Docker uses /var/lib/snapd/hostfs).
     dataset_docker_host_root: str = ""
+    # Opt in only on hosts requiring AppArmor stacking for NNP helper starts.
+    # Stack docker-default with the daemon's confinement; never use unconfined.
+    docker_apparmor_stack_default: bool = False
 
     # Data-center SSO and analysis-tool usage reporting.
     sso_uid_url: str = "https://space.4fair.cn/oidc-server/sso/uid"
@@ -158,7 +178,8 @@ class Settings(BaseSettings):
     sandbox_isolation: str = "session"  # "session" creates one sandbox per session; "shared" uses SANDBOX_ADDRESS
     sandbox_image: str | None = None
     sandbox_name_prefix: str | None = None
-    sandbox_ttl_minutes: int | None = 30
+    # Analysis sandboxes have no elapsed-time expiry. Their lifecycle is owned
+    # by task completion, explicit stop, and inactive-container reclamation.
     sandbox_network: str | None = None  # Docker network bridge name
     sandbox_chrome_args: str | None = ""
     sandbox_https_proxy: str | None = None
@@ -166,6 +187,12 @@ class Settings(BaseSettings):
     sandbox_no_proxy: str | None = None
     sandbox_pool_size: int = 0  # 0=disabled, >0=number of pre-warmed containers
     sandbox_docker_create_timeout_seconds: int = 60
+    # FUSE lives in a dedicated helper, never in the untrusted analysis image.
+    # Its HTTP grant authorizes only the files selected for that sandbox.
+    object_mount_image: str = "rclone/rclone:1.75.2@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5"
+    object_mount_backend_url: str = "http://backend:8000"
+    object_mount_host_root: str = "/var/lib/datalab/object-mounts"
+    object_mount_start_timeout_seconds: int = 30
     # The local execution node is system-managed. Keep the limit optional so
     # existing installations that manage it through the admin API retain their
     # current value; deployments can opt into an explicit host budget.
@@ -174,6 +201,10 @@ class Settings(BaseSettings):
     # receives a private container, kernel token and writable Docker volume.
     jupyter_name_prefix: str = "ai-dataseek-jupyter"
     jupyter_image: str = "ai-dataseek-jupyter:latest"
+    # Optional host archive. Empty preserves existing Docker named work volumes.
+    # The backend must see this same host root at the private storage mount.
+    jupyter_workspaces_host_root: str = ""
+    jupyter_workspaces_storage_root: str = "/data/jupyter-workspaces"
     jupyter_memory_limit: str = "2g"
     jupyter_nano_cpus: int = 2_000_000_000
     jupyter_pids_limit: int = 256
@@ -181,9 +212,8 @@ class Settings(BaseSettings):
     # task's Sandbox browser. It has no published host port.
     jupyter_network_disabled: bool = False
     jupyter_ttl_minutes: int = 60
-    # A short bounded queue absorbs normal bursts instead of surfacing a raw
-    # scheduler capacity error to the user.
-    sandbox_capacity_wait_seconds: float = 60.0
+    # Capacity admission waits until a slot is available or the user cancels.
+    # This controls polling only, never a task/queue deadline.
     sandbox_capacity_poll_seconds: float = 1.0
     # Paused containers preserve a session filesystem but still retain host
     # memory and Docker metadata. Reclaim them after an inactivity window.
@@ -218,7 +248,9 @@ class Settings(BaseSettings):
     
     # Auth configuration
     server_host: str | None = None
-    auth_provider: str = "none"  # Authentication is permanently disabled.
+    auth_provider: str = "password"  # DataLab requires an individual account.
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: str | None = None
     password_salt: str | None = None
     password_hash_rounds: int = 10
     password_hash_algorithm: str = "pbkdf2_sha256"
@@ -317,8 +349,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SPILL_READ_CHUNK_BYTES is too large for SPILL_MAX_INLINE_BYTES"
             )
-        if self.spill_store_timeout_seconds <= 0:
-            raise ValueError("SPILL_STORE_TIMEOUT_SECONDS must be positive")
         if self.spill_artifact_retention_hours <= 0:
             raise ValueError("SPILL_ARTIFACT_RETENTION_HOURS must be positive")
         if self.spill_reaper_interval_seconds <= 0:

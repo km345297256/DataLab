@@ -13,6 +13,10 @@ MAX_CHUNK_BYTES = 4 * 1024**2
 MAX_DECODED_BYTES = 16 * 1024**2
 VALUE_SEMANTICS = "raw storage values; no CF scale/add_offset or finite fill masking"
 WARNING = "仅显示显式选择的原始存储值；未应用 CF 缩放、偏移或有限填充值掩膜。非有限值显示为空。"
+PHYSICAL_SEMANTICS = "physical values; scalar CF scale/add_offset after finite fill masking"
+PHYSICAL_WARNING = "仅对当前切片应用受支持的标量 CF 缩放、偏移和填充值掩膜；不转换时间日历或地理坐标，非有限值显示为空。"
+RAW_MISSING = "non-finite values are null; finite fill values retained"
+PHYSICAL_MISSING = "finite fill values masked before scale/add_offset; non-finite values are null"
 _REASONS = {"", "link", "alias", "depth", "type", "shape", "storage", "filter", "chunk"}
 _ID = re.compile(r"v-[0-9a-f]{32}\Z")
 _DTYPE = re.compile(r"[<>=|][iufb][1248]\Z")
@@ -49,7 +53,7 @@ def validate_array_window_options(kind, options):
         if options:
             _fail()
         return {}
-    if set(options) != {"variable", "selection", "decode"} or options["decode"] != "raw" or not isinstance(options["variable"], str) or not _ID.fullmatch(options["variable"]):
+    if set(options) != {"variable", "selection", "decode"} or not isinstance(options["decode"], str) or options["decode"] not in {"raw", "physical"} or not isinstance(options["variable"], str) or not _ID.fullmatch(options["variable"]):
         _fail()
     selection = options["selection"]
     if not isinstance(selection, list) or not 1 <= len(selection) <= 8:
@@ -82,9 +86,12 @@ def validate_array_window_payload(result, *, kind=None, options=None, fmt=None,
         or type(result["contract_version"]) is not int or result["contract_version"] != 2
         or result["type"] != "array-window" or result["reader"] != "array-window"
         or result["media_type"] != "application/json" or result["sampled"] is not False
-        or result["warnings"] != [WARNING] or kind is not None and view != kind):
+        or kind is not None and view != kind):
         _fail()
     selected = validate_array_window_options(view, result["selected"])
+    physical = selected.get("decode") == "physical"
+    if result["warnings"] != [PHYSICAL_WARNING if physical else WARNING]:
+        _fail()
     if options is not None and selected != validate_array_window_options(view, options):
         _fail()
     choices = result["choices"]
@@ -108,11 +115,15 @@ def validate_array_window_payload(result, *, kind=None, options=None, fmt=None,
             _fail()
         variables[item["id"]] = item
     metadata = result["metadata"]
-    if not isinstance(metadata, dict) or set(metadata) != {"format", "container", "input_mode", "value_semantics", "source_bytes", "read_bytes", "read_requests", "chunks_touched", "decoded_chunk_bytes", "catalog_truncated", "attributes", "nonfinite_values", "coordinates", "limits"}:
+    if not isinstance(metadata, dict) or set(metadata) != {"format", "container", "input_mode", "value_semantics", "units", "calendar", "missing_value_policy", "coordinate_semantics", "source_bytes", "read_bytes", "read_requests", "chunks_touched", "decoded_chunk_bytes", "catalog_truncated", "attributes", "nonfinite_values", "coordinates", "limits"}:
         _fail()
     if (not isinstance(metadata["format"], str) or metadata["format"] not in {"h5", "hdf5", "hdf", "nc", "nc4", "netcdf", "mat"}
         or fmt is not None and metadata["format"] != fmt or metadata["container"] != "HDF5" or metadata["input_mode"] != "window"
-        or metadata["value_semantics"] != VALUE_SEMANTICS or not _integer(metadata["source_bytes"], MAX_SOURCE_BYTES, 256)
+        or metadata["value_semantics"] != (PHYSICAL_SEMANTICS if physical else VALUE_SEMANTICS)
+        or metadata["missing_value_policy"] != (PHYSICAL_MISSING if physical else RAW_MISSING)
+        or metadata["coordinate_semantics"] != "zero-based dimension indices"
+        or not _label(metadata["units"]) or not _label(metadata["calendar"])
+        or not _integer(metadata["source_bytes"], MAX_SOURCE_BYTES, 256)
         or not _integer(metadata["read_bytes"], 8 * 1024**2, 1) or not _integer(metadata["read_requests"], 128, 1)
         or metadata["read_bytes"] < metadata["read_requests"] or not _integer(metadata["chunks_touched"], 128)
         or not _integer(metadata["decoded_chunk_bytes"], MAX_DECODED_BYTES) or type(metadata["catalog_truncated"]) is not bool
@@ -125,7 +136,9 @@ def validate_array_window_payload(result, *, kind=None, options=None, fmt=None,
         if expected is not None and (type(expected) is not int or metadata[key] != expected):
             _fail()
     attrs = metadata["attributes"]
-    if not isinstance(attrs, dict) or set(attrs) - {"units", "scale_factor", "add_offset", "_FillValue", "missing_value"} or any(not (_label(value) if key == "units" else _finite(value)) for key, value in attrs.items()):
+    if not isinstance(attrs, dict) or set(attrs) - {"units", "calendar", "scale_factor", "add_offset", "_FillValue", "missing_value"} or any(not (_label(value) if key in {"units", "calendar"} else _finite(value)) for key, value in attrs.items()):
+        _fail()
+    if metadata["units"] != attrs.get("units", "") or metadata["calendar"] != attrs.get("calendar", ""):
         _fail()
     if view == "tree":
         tree = result["tree"]
@@ -176,8 +189,8 @@ def validate_array_window_payload(result, *, kind=None, options=None, fmt=None,
             or array["shape"] != expected_shape or not isinstance(array["shape"], list) or any(type(v) is not int for v in array["shape"])
             or array["dimensions"] != ["index_" + str(a["dimension"]) for a in axes]
             or not isinstance(array["values"], list) or len(array["values"]) != math.prod(expected_shape)
-            or any(value is not None and (not _finite(value) or variable["dtype"][1] in {"i", "u", "b"} and type(value) is not int
-                or variable["dtype"][1] == "u" and value < 0 or variable["dtype"][1] == "b" and value not in {0, 1}) for value in array["values"])
+            or any(value is not None and (not _finite(value) or not physical and (variable["dtype"][1] in {"i", "u", "b"} and type(value) is not int
+                or variable["dtype"][1] == "u" and value < 0 or variable["dtype"][1] == "b" and value not in {0, 1})) for value in array["values"])
             or sum(value is None for value in array["values"]) != metadata["nonfinite_values"]):
             _fail()
     try:

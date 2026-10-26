@@ -34,7 +34,7 @@ PLUGINS = {"viz-mysql-sdi":"mysql-sdi", "viz-sst-records":"sst-records"}
 
 def fixtures():
     client, container = docker.from_env(timeout=30), None
-    name = "ai-dataseek-physical-fixtures-" + uuid.uuid4().hex
+    name = "datalab-physical-fixtures-" + uuid.uuid4().hex
     code = """import os,json,base64,hashlib
 from pathlib import Path
 assert os.getuid()==65534
@@ -52,7 +52,7 @@ print(json.dumps(result),flush=True)
             network_mode="none",read_only=True,cap_drop=["ALL"],security_opt=["no-new-privileges:true"],
             mem_limit="128m",memswap_limit="128m",nano_cpus=500000000,pids_limit=16,
             environment={"SPEC":json.dumps(SPEC),"PYTHONDONTWRITEBYTECODE":"1"},
-            labels={"ai-dataseek.component":"visualization-http-fixture","ai-dataseek.fixture-run":name},
+            labels={"datalab.component":"visualization-http-fixture","datalab.fixture-run":name},
             log_config={"type":"json-file","config":{"max-size":"1m","max-file":"1"}})
         container.reload();assert not container.attrs.get("Mounts")
         assert container.attrs["HostConfig"]["NetworkMode"]=="none" and container.attrs["HostConfig"]["ReadonlyRootfs"]
@@ -72,7 +72,7 @@ print(json.dumps(result),flush=True)
                 try: container=client.containers.get(name)
                 except docker.errors.NotFound: pass
             if container is not None:
-                container.reload();assert container.attrs["Config"]["Labels"].get("ai-dataseek.fixture-run")==name
+                container.reload();assert container.attrs["Config"]["Labels"].get("datalab.fixture-run")==name
                 _remove_worker(container)
         finally: client.close()
 
@@ -105,7 +105,7 @@ async def acceptance(database, client, data, user_id):
             return v
     try:
         catalog=await api("GET","/api/v1/visualizations")
-        assert catalog["engine"]=="cordis" and len(catalog["plugins"])==83
+        assert catalog["engine"]=="cordis" and len(catalog["plugins"])==84
         by_id={p["id"]:p for p in catalog["plugins"]}
         for plugin,reader in PLUGINS.items():
             p=by_id[plugin];assert p["reader"]==reader and p["adapter"]=="physical-database" and p["contract_version"]==2

@@ -56,7 +56,10 @@ const files = [...resources].map(([file_id, bytes], index) => ({
 }));
 const manifest = JSON.parse(await readFile(resolve(frontend, '../plugin-host/visualizations/shapefile.json'), 'utf8'));
 let effectivePlugin = { ...manifest, id: 'test-shapefile-host-refresh', enabled: true };
+const overBudgetPlugin = { ...manifest, id: 'test-shapefile-too-small', name: 'Synthetic limited view', enabled: true,
+  priority: effectivePlugin.priority + 1, limits: { ...manifest.limits, max_input_bytes: 128 } };
 let revision = '2'.repeat(64);
+let catalogStatus = 200;
 const hostPath = resolve(frontend, 'src/visualizations/VisualizationHost.vue');
 const adaptersPath = resolve(frontend, 'src/visualizations/adapters.ts');
 const shapePath = resolve(frontend, 'src/components/filePreviews/ShapefilePreview.vue');
@@ -111,7 +114,7 @@ const cssName = (await readdir(resolve(frontend, 'dist/assets'))).find(name => /
 assert.ok(cssName, 'Run the ordinary frontend build once before this check');
 const css = await readFile(resolve(frontend, 'dist/assets', cssName));
 const output = await mkdtemp(join(tmpdir(), 'dataseek-shapefile-host-refresh-'));
-const report = { name: 'shapefile-host-refresh', passed: false, errors: [], consoleErrors: [], externalAttempts: [], unexpectedRequests: [], catalogRequests: [], byteRequests: [], checks: {} };
+const report = { name: 'shapefile-host-refresh', passed: false, errors: [], consoleErrors: [], expectedDirectoryErrors: [], externalAttempts: [], unexpectedRequests: [], catalogRequests: [], byteRequests: [], checks: {} };
 let holdNextGeometry = false, heldRequest = null;
 const systemChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const browser = await chromium.launch({ executablePath: process.env.VISUALIZATION_BROWSER_EXECUTABLE || (existsSync(systemChrome) ? systemChrome : undefined),
@@ -120,7 +123,11 @@ const context = await browser.newContext({ viewport: { width: 1160, height: 860 
 const page = await context.newPage();
 page.setDefaultTimeout(10000); page.setDefaultNavigationTimeout(30000);
 page.on('pageerror', error => report.errors.push(error.message));
-page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push(message.text()); });
+page.on('console', message => {
+  if (message.type() !== 'error') return;
+  if (catalogStatus === 503 && /API request failed 503|Failed to load resource.*503/.test(message.text())) report.expectedDirectoryErrors.push(message.text());
+  else report.consoleErrors.push(message.text());
+});
 await page.addInitScript(() => {
   // Observation only: forward native fetch unchanged, including its AbortSignal.
   window.__byteFetches = [];
@@ -143,8 +150,9 @@ await context.route('**/*', async route => {
   if (url.pathname === '/__shapefile_host_refresh__/project.css') return route.fulfill({ contentType: 'text/css', body: css });
   if (request.method() === 'GET' && url.pathname === '/api/v1/visualizations') {
     report.catalogRequests.push({ time: Date.now(), revision, version: effectivePlugin.version, enabled: effectivePlugin.enabled, maxInputBytes: effectivePlugin.limits.max_input_bytes });
+    if (catalogStatus !== 200) return route.fulfill({ status: catalogStatus, contentType: 'application/json', body: JSON.stringify({ code: catalogStatus, msg: 'Synthetic directory outage' }) });
     // Serialize afresh for every real HTTP poll; the app receives new objects.
-    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: { engine: 'cordis', revision, plugins: [effectivePlugin] } }) });
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: { engine: 'cordis', revision, plugins: [{ ...overBudgetPlugin, enabled: effectivePlugin.enabled }, effectivePlugin] } }) });
   }
   if (request.method() === 'POST' && url.pathname === `/api/v1/files/${fixtureId}/visualization`) {
     const body = request.postDataJSON(), resourceId = body.options?.resource_id || fixtureId;
@@ -205,6 +213,9 @@ try {
   await page.waitForFunction(() => window.harnessReady);
   await readyAtFirstPage(); await settle();
   assert.equal(report.byteRequests.length, 3);
+  assert.equal(await page.getByRole('combobox', { name: '选择可视化插件' }).inputValue(), effectivePlugin.id);
+  assert.equal(await page.getByRole('option', { name: /Synthetic limited view.*暂不可用/ }).count(), 1);
+  report.checks.availableDefault = { skippedOverBudgetPriority: true, unavailableChoiceVisible: true };
   const target = await map.evaluate((svg, [x, y]) => { const p = new DOMPoint(x, -y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y }; }, points[124]);
   await page.mouse.click(target.x, target.y);
   await page.locator('tr[data-record-index="124"][aria-selected="true"]').waitFor();
@@ -235,6 +246,18 @@ try {
   report.checks.equivalentPolling = { actualPolls: 2, intervalMilliseconds: timedPolls, totalByteRequests: 3, selection: [124], page: 2, viewBox: preserved.viewBox, samePreviewScope: true, replacementObjectsConfirmed: true };
   await page.screenshot({ path: join(output, 'state-preserved-after-two-polls.png') });
 
+  catalogStatus = 503;
+  await refresh();
+  await page.getByText('插件目录暂时无法更新，已保留当前预览。', { exact: false }).waitFor();
+  assert.equal(report.byteRequests.length, 3, 'Directory failure cannot restart the reader');
+  assert.deepEqual(await state(), preserved, 'A transient failure keeps DOM, zoom, selection and page');
+  catalogStatus = 200;
+  await refresh();
+  assert.equal(await page.getByText('插件目录暂时无法更新，已保留当前预览。', { exact: false }).count(), 0);
+  assert.equal(report.byteRequests.length, 3, 'Unchanged recovery cannot restart the reader');
+  assert.deepEqual(await state(), preserved);
+  report.checks.transientDirectoryRecovery = { retainedPreviewScope: true, retainedInteractions: true, noExtraByteReads: true, staleNoticeCleared: true };
+
   let previousBytes = report.byteRequests.length;
   await refresh(true); await assertReload(previousBytes, 'explicitManualRefresh');
   previousBytes = report.byteRequests.length;
@@ -260,7 +283,7 @@ try {
   const pendingFetchIndex = await page.evaluate(() => window.__byteFetches.length - 1);
   effectivePlugin = { ...effectivePlugin, enabled: false };
   await refresh();
-  await page.getByText('此格式没有已启用的可视化插件。', { exact: false }).waitFor();
+  await page.getByText('此格式暂不支持在线预览，可下载原始文件。', { exact: true }).waitFor();
   await page.waitForFunction(index => window.__byteFetches[index].aborted, pendingFetchIndex);
   assert.equal(await map.count(), 0);
   heldRequest.release(); await heldRequest.done; await settle();
